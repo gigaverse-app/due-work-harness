@@ -30,13 +30,14 @@ the same outcome. It finds commit boundaries itself; you don't name them.
 ```python
 from due_work_harness import CallableDelivery, ExternalCall, HandoffHistory, assert_crash_at_every_commit_converges
 
+
 def test_placing_an_order_survives_any_death():
     assert_crash_at_every_commit_converges(
-        CallableDelivery(name="orders", recover=run_workers_until_idle),   # what production runs after a crash
+        CallableDelivery(name="orders", recover=run_workers_until_idle),  # what production runs after a crash
         HandoffHistory(
             name="place order",
             arrange=new_cart,
-            transition=place_order,                                          # your real view or service method
+            transition=place_order,  # your real view or service method
             observe=lambda cart: (order_status(cart), mailbox.count(cart)),  # include what external systems saw
             external_calls=(ExternalCall(mailer, "send"),),
         ),
@@ -125,6 +126,11 @@ production, and the harness shows each fix working.
 Alpha. The proofs were extracted from a production codebase, where they guard
 its background workflows in CI; the public API may still change before 1.0.
 Python 3.12+. Architecture: [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Development
+
+Managed with [uv](https://docs.astral.sh/uv/) (`uv sync --all-extras`), linted with Ruff and
+type-checked with [Pyrefly](https://pyrefly.org/). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

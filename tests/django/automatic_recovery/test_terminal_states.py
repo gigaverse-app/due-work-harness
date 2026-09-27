@@ -503,6 +503,7 @@ def test_an_execution_that_ignores_its_identity_is_refused_unless_declared_tick_
         ),
     )
     assert_sweep_bindings_are_production_bound(tick_bound)
+    assert tick_bound.lifecycle is not None, "the tick-bound sweep declares a lifecycle"
     thin = replace(tick_bound, lifecycle=replace(tick_bound.lifecycle, inline_tick_because="inline"))
     with pytest.raises(AssertionError, match="inline_tick_because carries no real reason"):
         assert_sweep_bindings_are_production_bound(thin)

@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, ClassVar, Literal, Protocol, TypeGuard, get_args
 
 type ObservationOutcome = Literal["passed", "failed", "skipped", "xfail", "xpass"]
 type ObservationPhase = Literal["setup", "call", "teardown"]
@@ -145,7 +145,13 @@ def record_observations() -> Iterator[list[ObservationCheck]]:
         _recording.reset(token)
 
 
-def _is_pydantic_model(value: object) -> bool:
+class _PydanticModel(Protocol):
+    """The one thing read from a Pydantic model: its declared field names."""
+
+    model_fields: ClassVar[Mapping[str, object]]
+
+
+def _is_pydantic_model(value: object) -> TypeGuard[_PydanticModel]:
     # Pydantic is optional: if it was never imported, no value can be one of its models.
     pydantic = sys.modules.get("pydantic")
     return pydantic is not None and isinstance(value, pydantic.BaseModel)

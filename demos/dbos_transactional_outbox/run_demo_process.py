@@ -18,6 +18,7 @@ import os
 import sys
 import time
 from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, os.environ["DEMO_DIR"])
 import transactional_enqueue as demo  # noqa: E402
@@ -50,6 +51,8 @@ def serve(_app: object, **_kwargs: object) -> None:
     os._exit(3)
 
 
-demo.time = SimpleNamespace(sleep=send)
-demo.uvicorn = SimpleNamespace(run=serve)
-demo.main()
+with (
+    mock.patch.object(demo, "time", SimpleNamespace(sleep=send)),
+    mock.patch.object(demo, "uvicorn", SimpleNamespace(run=serve)),
+):
+    demo.main()
