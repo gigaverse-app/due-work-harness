@@ -66,6 +66,12 @@ due_work_harness/
   gap_probes.py          executable KnownGap probes
   crash_histories.py     HandoffHistory, ExternalCall, Delivery, histories and verdict
   process_histories.py   deaths of a real child process (stdlib only)
+  exemptions.py          exempt_due_work_suite: a proven "losing this is fine"
+  coverage/              the static check: every handoff site has one disposition (stdlib only)
+    sites.py             site kinds per framework
+    scan.py              discovery, declarations and rules
+    config.py            [tool.due-work-harness]
+    cli.py               due-work-harness check | sites | baseline
   evidence/              observation reports
   safety/                ReplaySafeEffect, BoundedRetry
   profiles/
@@ -83,6 +89,9 @@ due_work_harness/
     procrastinate.py  worker recovery, stalled-job arrangement, periodic evidence
     dbos.py    relaunch helper
 demos/       the harness run against unmodified upstream demo applications
+examples/adopter/  a minimal adopting project, run by CI through the actions
+check/action.yml   GitHub Action: the static coverage check
+test/action.yml    GitHub Action: the generated due_work suites
 tests/core   self-tests with no framework installed
 tests/django self-tests against PostgreSQL through the Django integration
 ```

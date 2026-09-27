@@ -173,3 +173,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.build.outputs.tag }}
         run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  move-major-tag:
+    # `uses: gigaverse-app/due-work-harness/check@v0` follows the latest v0.x.y release.
+    needs: [build, publish-pypi]
+    if: always() && needs.publish-pypi.result == 'success' && needs.build.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.build.outputs.tag }}
+      - env:
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          MAJOR="${TAG%%.*}"
+          git tag --force "$MAJOR" "$TAG"
+          git push --force origin "refs/tags/$MAJOR"

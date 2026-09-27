@@ -1321,6 +1321,8 @@ def _coherence_cases(contract: DueWorkContract) -> list[Any]:
 def _install_suite(cls: type, params: list[Any], test_name: str, doc: str) -> type:
     assert not hasattr(cls, test_name), f"{cls.__name__} already defines {test_name}, so the suite would shadow it"
 
+    # Every generated case carries the `due_work` mark, so CI can run exactly the harness's suites.
+    @pytest.mark.due_work
     @pytest.mark.parametrize("case", params)
     def run_case(self: Any, case: ContractCase, request: pytest.FixtureRequest) -> None:
         for fixture in case.fixtures:

@@ -1,0 +1,83 @@
+name: due-work-harness check
+description: >-
+  Fail unless every handoff site in the project (on_commit callbacks, Celery
+  publications, procrastinate deferrals, DBOS workflow starts) has exactly one
+  disposition. Static: it imports neither the project nor its tests.
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  working-directory:
+    description: The project directory, holding pyproject.toml with [tool.due-work-harness].
+    default: "."
+  base-ref:
+    description: >-
+      Git ref whose baseline this one may only shrink from. Defaults to the pull
+      request's base commit; empty outside pull requests. Set to "" to skip.
+    default: ${{ github.event.pull_request.base.sha }}
+  version:
+    description: >-
+      due-work-harness version to run. Default: the version pinned in the project's
+      uv.lock, else the latest release.
+    default: ""
+  package:
+    description: Package spec or path to install instead of the release (for testing the action itself).
+    default: due-work-harness
+  python-version:
+    description: Python to run the check with.
+    default: "3.12"
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Resolve the harness version
+      id: spec
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERSION: ${{ inputs.version }}
+        PACKAGE: ${{ inputs.package }}
+      run: |
+        if [[ "$PACKAGE" != "due-work-harness" ]]; then
+          echo "spec=$PACKAGE" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [[ -z "$VERSION" && -f uv.lock ]]; then
+          VERSION=$(uv run --no-project python - <<'PY'
+        import tomllib
+        with open("uv.lock", "rb") as lock:
+            packages = tomllib.load(lock).get("package", [])
+        print(next((p.get("version", "") for p in packages if p.get("name") == "due-work-harness"), ""))
+        PY
+        )
+        fi
+        echo "spec=due-work-harness${VERSION:+==$VERSION}" >> "$GITHUB_OUTPUT"
+    - name: Fetch the base commit
+      if: inputs.base-ref != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BASE: ${{ inputs.base-ref }}
+      run: git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --quiet --depth=1 origin "$BASE"
+    - name: Check every handoff site is accounted for
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SPEC: ${{ steps.spec.outputs.spec }}
+        BASE: ${{ inputs.base-ref }}
+      run: |
+        set -o pipefail
+        status=0
+        uvx --from "$SPEC" due-work-harness check ${BASE:+--base-ref "$BASE"} | tee due-work-check.txt || status=$?
+        {
+          echo "### due-work-harness check"
+          echo '```'
+          cat due-work-check.txt
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+        rm -f due-work-check.txt
+        exit "$status"

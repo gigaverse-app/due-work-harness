@@ -1,0 +1,63 @@
+name: due-work-harness test
+description: >-
+  Run the suites due-work-harness generates for the project (contracts, safety
+  profiles, exemptions: every case marked due_work) with the project's own uv
+  environment, and summarize them. Databases or brokers the suites need are the
+  calling job's services.
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  working-directory:
+    description: The project directory.
+    default: "."
+  sync-args:
+    description: Extra arguments for `uv sync --locked`, for example "--all-extras".
+    default: ""
+  pytest-args:
+    description: Extra arguments for pytest, for example "--ds=myproject.settings".
+    default: ""
+  python-version:
+    description: Python version for the environment; empty uses the project's .python-version.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install the project from its lock
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SYNC_ARGS: ${{ inputs.sync-args }}
+      run: |
+        # shellcheck disable=SC2086 # the arguments are a list
+        uv sync --locked $SYNC_ARGS
+    - name: Run the generated due-work suites
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PYTEST_ARGS: ${{ inputs.pytest-args }}
+      run: |
+        status=0
+        # shellcheck disable=SC2086 # the arguments are a list
+        uv run --no-sync pytest -m due_work -rxX --junitxml=due-work-results.xml $PYTEST_ARGS || status=$?
+        uv run --no-sync python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+        import xml.etree.ElementTree as ET
+        from pathlib import Path
+
+        path = Path("due-work-results.xml")
+        print("### due-work-harness suites")
+        if not path.exists():
+            print("No results: pytest did not run.")
+        else:
+            root = ET.parse(path).getroot()
+            suite = root if root.tag == "testsuite" else root.find("testsuite")
+            get = lambda key: int(suite.get(key, 0))
+            print(f"{get('tests')} case(s): {get('failures')} failed, {get('errors')} errors, {get('skipped')} skipped or xfailed")
+        PY
+        rm -f due-work-results.xml
+        exit "$status"

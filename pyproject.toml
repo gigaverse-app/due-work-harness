@@ -37,6 +37,9 @@ dbos = ["dbos>=2.0"]
 Homepage = "https://github.com/gigaverse-app/due-work-harness"
 Issues = "https://github.com/gigaverse-app/due-work-harness/issues"
 
+[project.scripts]
+due-work-harness = "due_work_harness.coverage.cli:main"
+
 [project.entry-points.pytest11]
 due_work_harness = "due_work_harness.pytest_plugin"
 
