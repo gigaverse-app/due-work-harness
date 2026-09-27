@@ -35,9 +35,9 @@ inputs:
 runs:
   using: composite
   steps:
+    # No python-version here: setup-uv would export UV_PYTHON to every later step of the
+    # caller's job. The check's Python is passed to its own uvx call instead.
     - uses: astral-sh/setup-uv@v7
-      with:
-        python-version: ${{ inputs.python-version }}
     - name: Resolve the harness version
       id: spec
       shell: bash
@@ -73,10 +73,11 @@ runs:
       env:
         SPEC: ${{ steps.spec.outputs.spec }}
         BASE: ${{ inputs.base-ref }}
+        PYTHON: ${{ inputs.python-version }}
       run: |
         set -o pipefail
         status=0
-        uvx --from "$SPEC" due-work-harness check ${BASE:+--base-ref "$BASE"} | tee due-work-check.txt || status=$?
+        uvx --python "$PYTHON" --from "$SPEC" due-work-harness check ${BASE:+--base-ref "$BASE"} | tee due-work-check.txt || status=$?
         {
           echo "### due-work-harness check"
           echo '```'

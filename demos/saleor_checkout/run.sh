@@ -15,7 +15,8 @@ repo="$(cd "$here/../.." && pwd)"
 saleor="$repo/demos/.upstream/saleor"
 export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$saleor/.venv}"
 
-(cd "$saleor" && uv sync --frozen --quiet)
+# Saleor's own requires-python picks its interpreter, whatever a caller set in UV_PYTHON.
+(cd "$saleor" && env -u UV_PYTHON uv sync --frozen --quiet)
 # The harness takes its version from git tags; a checkout without them still installs.
 SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DUE_WORK_HARNESS="${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DUE_WORK_HARNESS:-0.0.0}" \
   uv pip install --quiet --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps -e "$repo"
