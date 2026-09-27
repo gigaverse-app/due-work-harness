@@ -87,8 +87,42 @@ INVOCATION_AUTHORING_OPERATIONS = SELECTION_AUTHORING_OPERATIONS | TRANSITION_AU
 #: root-owned probe (``gap_probes.DisprovenCapability``) that first proves the
 #: bindings it feeds are production-bound. A test-side ``pytest.raises`` around
 #: a shared proof can "prove" anything by feeding the proof a synthetic
-#: implementation and celebrating the failure.
+#: implementation and celebrating the failure. ``AssertionError`` counts only
+#: where an ``except`` clause matches it: *raising* it is what every ``assert``
+#: does once pytest rewrites the test module, so its bare name proves nothing.
 ASSERTION_INVERSION_NAMES = frozenset({"raises", "AssertionError", "suppress"})
+
+
+def _catches_assertion_error(code: CodeType) -> bool:
+    """
+    Whether ``code`` (or a function nested in it) matches ``AssertionError`` in an ``except`` clause.
+
+    From each load of the name, the first of ``CHECK_EXC_MATCH`` (the clause's
+    type test, reached through any tuple of types) and ``RAISE_VARARGS`` (a
+    ``raise``, which pytest's rewritten asserts compile to) decides.
+    """
+    instructions = list(dis.get_instructions(code))
+    for index, instruction in enumerate(instructions):
+        if instruction.argval != "AssertionError" or not instruction.opname.startswith("LOAD_"):
+            continue
+        following = (later.opname for later in instructions[index + 1 :])
+        if (
+            next((name for name in following if name in ("CHECK_EXC_MATCH", "RAISE_VARARGS")), None)
+            == "CHECK_EXC_MATCH"
+        ):
+            return True
+    return any(isinstance(constant, CodeType) and _catches_assertion_error(constant) for constant in code.co_consts)
+
+
+def _inversion_names(code: CodeType) -> set[str]:
+    names = set(code.co_names)
+    for constant in code.co_consts:
+        if isinstance(constant, CodeType):
+            names |= set(constant.co_names)
+    found = names & (ASSERTION_INVERSION_NAMES - {"AssertionError"})
+    if _catches_assertion_error(code):
+        found.add("AssertionError")
+    return found
 
 
 def callable_code(binding: Callable[..., Any]) -> CodeType | None:
@@ -463,10 +497,7 @@ def authored_inversion_names(binding: Callable[..., Any], *, seen: set[int] | No
     if code is None or not is_test_code(code) or is_harness_owned(code):
         return set()
 
-    inverted = set(code.co_names) & ASSERTION_INVERSION_NAMES
-    for constant in code.co_consts:
-        if isinstance(constant, CodeType):
-            inverted.update(set(constant.co_names) & ASSERTION_INVERSION_NAMES)
+    inverted = _inversion_names(code)
     for nested in _nested_test_callables(binding):
         inverted.update(authored_inversion_names(nested, seen=seen))
     return inverted

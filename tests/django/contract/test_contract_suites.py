@@ -13,14 +13,18 @@ from typing import Any
 import pytest
 
 from due_work_harness.contract import (
+    Adoption,
     Claim,
+    Decline,
     DueWorkContract,
+    KnownGap,
     NotApplicable,
     Profile,
     SafetyContract,
     SafetyProfile,
     ScheduledSelection,
     contract_cases,
+    safety_contract_cases,
     scheduled_selection_cases,
     scheduled_selection_suite,
 )
@@ -85,3 +89,35 @@ def test_the_django_host_gives_cross_connection_proofs_real_commits() -> None:
     for name in ("A-assert_in_flight_work_is_not_duplicated", "B-assert_claim_is_exclusive_across_connections"):
         assert _django_db(params[name]).kwargs.get("transaction") is True, name
     assert _django_db(params["B-assert_claim_is_exclusive"]).kwargs.get("transaction") is False
+
+
+@pytest.mark.parametrize("transactional", [True, False], ids=["transactional", "rolled-back"])
+def test_a_declines_proof_and_a_known_gaps_probe_run_with_the_contracts_database(transactional: bool) -> None:
+    # A probe that needs real commits must not run inside a test transaction: its
+    # arrangement would be invisible to the production path it drives, and a strict
+    # xfail would pass for the wrong reason.
+    safety = SafetyContract(
+        name="self-test contract",
+        adoption=Adoption.LEGACY,
+        transactional=transactional,
+        profiles={
+            SafetyProfile.REPLAY_SAFE_EXECUTION: Decline(_WHY, prove=reference_derivation_binding),
+            SafetyProfile.BOUNDED_RETRY: KnownGap(_WHY, detect=reference_derivation_binding),
+        },
+    )
+    contract = DueWorkContract(
+        name="self-test contract",
+        adoption=Adoption.LEGACY,
+        transactional=transactional,
+        profiles={
+            **{profile: NotApplicable(_WHY) for profile in Profile},
+            Profile.B: Decline(_WHY, prove=reference_derivation_binding),
+            Profile.C: KnownGap(_WHY, detect=reference_derivation_binding),
+        },
+        safety=safety,
+    )
+    params = [*contract_cases(contract), *safety_contract_cases(safety)]
+    probing = {param.id: param for param in params if param.id.endswith(("-declined", "-known_gap"))}
+    assert set(probing) == {"B-declined", "C-known_gap", "REPLAY_SAFE_EXECUTION-declined", "BOUNDED_RETRY-known_gap"}
+    for case_id, param in probing.items():
+        assert _django_db(param).kwargs.get("transaction") is transactional, case_id

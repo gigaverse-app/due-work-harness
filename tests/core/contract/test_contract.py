@@ -506,6 +506,38 @@ def test_a_detect_that_inverts_an_assertion_locally_is_refused() -> None:
         _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=inverted_detect)))
 
 
+def _catching_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except AssertionError:
+        return
+
+
+def _catching_among_other_types_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except (ValueError, AssertionError):
+        return
+
+
+@pytest.mark.parametrize("detect", [_catching_detect, _catching_among_other_types_detect], ids=["alone", "in-a-tuple"])
+def test_a_detect_that_catches_an_assertion_error_is_refused(detect: Any) -> None:
+    with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*AssertionError"):
+        _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=detect)))
+
+
+def _arranging_detect() -> None:
+    arranged = [1]
+    # pytest rewrites this assert to raise AssertionError: raising is not inverting.
+    assert arranged, "the arrangement is in place"
+    assert_the_reference_capability_exists()
+
+
+def test_a_detect_whose_own_asserts_pytest_rewrote_is_accepted() -> None:
+    assert "AssertionError" in _arranging_detect.__code__.co_names, "this module's asserts are rewritten by pytest"
+    _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=_arranging_detect)))
+
+
 def test_a_locally_minted_assert_name_does_not_count_as_delegation() -> None:
     """
     The delegation check resolves referenced callables; a test-module helper
