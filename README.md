@@ -149,6 +149,7 @@ commit:
 | Saleor checkout | With the Payments API, a death between capturing the payment and creating the order charges the customer with no order; after 90 days the payment belongs to nothing | Saleor's Transactions API with automatic completion of paid checkouts |
 | | A death after the order commits leaves it unconfirmed, its history empty or half-written | — |
 | | A failing `order_created` callback, no death at all, makes Django skip the confirmation | — |
+| | Automatic completion dispatches a paid checkout again while its completion is still in flight, and reports no backlog | — |
 
 The coverage scan finds the same handoffs statically: the create view's `.defer` and `index_book`'s in the
 procrastinate demo, and `DBOS.start_workflow` in DBOS's other outbox variant. A handoff made in SQL, as

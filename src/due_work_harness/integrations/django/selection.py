@@ -24,10 +24,11 @@ answers them for a ``due_work`` binding that returns a Django ``QuerySet``:
 import json
 from collections.abc import Callable, Collection
 from typing import Any
+from unittest import mock
 
 from django.conf import settings
 from django.db import DEFAULT_DB_ALIAS, connections, transaction
-from django.db.models import QuerySet
+from django.db.models import Model, QuerySet
 from django.test.utils import CaptureQueriesContext
 
 from due_work_harness.integrations.postgres_plans import index_served_verdict, scan_counts
@@ -131,3 +132,29 @@ class DjangoSelectionInspector(HarnessModel):
             f"DjangoSelectionInspector reads QuerySets; the selection is {type(selection).__name__}"
         )
         return selection
+
+
+def selection_built_by(tick: Callable[[], object], model: type[Model]) -> QuerySet[Any]:
+    """
+    The first ``model`` QuerySet a production tick evaluates, captured as it runs and returned unevaluated.
+
+    For a sweep whose selection is built inline in its tick rather than in a
+    callable of its own: binding ``due_work`` to this observes the production
+    query instead of restating it, so the query cannot drift from the tick's.
+    Run ``tick`` with its dispatches held (for Celery,
+    :func:`due_work_harness.integrations.celery.held_publications`), so observing
+    the selection hands off nothing. Each call runs the tick again, so the query
+    reflects the current time and data, as production's next tick would.
+    """
+    captured: list[QuerySet[Any]] = []
+    fetch_all = QuerySet._fetch_all
+
+    def observed(queryset: QuerySet[Any]) -> None:
+        if queryset.model is model and not captured:
+            captured.append(queryset.all())
+        fetch_all(queryset)
+
+    with mock.patch.object(QuerySet, "_fetch_all", observed):
+        tick()
+    assert captured, f"the tick evaluated no {model.__name__} query, so there is no selection to observe"
+    return captured[0]

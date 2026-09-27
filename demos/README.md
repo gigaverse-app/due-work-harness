@@ -40,7 +40,7 @@ contracts, since the demo's fix cannot change them.
 | --- | --- | --- | --- | --- |
 | procrastinate | B ownership (its workers, heartbeats and reclaim recipe), D retention (`remove_old_jobs`), replay safety, bounded retry | **in procrastinate:** `finish_job` does not check the worker, so a worker presumed dead finishes a job another worker has since fetched; **in the demo:** the create-book handoff, a transaction held during slow work, no stalled-job reclaim scheduled, no attempt recorded before the slow call (C) | `CreateBookView.form_valid` | `DEMO_WITH_ITS_FIXES`: `ATOMIC_REQUESTS`, and procrastinate's `retry_stalled_jobs` recipe |
 | DBOS | D retention (`garbage_collect`), bounded retry (the step's budget), recovery through real process deaths | a death after the send, before DBOS records the step, notifies twice (C, replay) | nothing: its enqueue is SQL, which a static scan cannot see | — |
-| Saleor | D retention (`delete_expired_checkouts`), claimed so the harness shows where it fails | `delete_expired_checkouts` deletes a checkout holding a captured Payments API payment (D); no sweep recovers lost after-commit work (A); the capture is never reconciled (C); nothing records that a confirmation is owed (F); the complete-checkout handoff | `_post_create_order_actions` (its two `on_commit` sites) | `CHECKOUT_WITH_AUTOMATIC_COMPLETION`: the Transactions API with automatic completion, which claims D and passes |
+| Saleor | A recovery (automatic completion: 13 proofs, its selection observed from the tick it runs rather than restated), D retention (`delete_expired_checkouts`), claimed so the harness shows where each fails | automatic completion dispatches a paid checkout again while its completion is still in flight, and reports no backlog (A); `delete_expired_checkouts` deletes a checkout holding a captured Payments API payment (D); no sweep recovers lost after-commit work (A); the capture is never reconciled (C); nothing records that a confirmation is owed (F); the complete-checkout handoff | `_post_create_order_actions` (its two `on_commit` sites) | `CHECKOUT_WITH_AUTOMATIC_COMPLETION`: the Transactions API with automatic completion, which claims D and passes |
 
 ## Results
 
@@ -116,6 +116,11 @@ due-work-harness check --root demos/saleor_checkout
   graphql-core 2 executor waits on a promise that a simulated death (a
   `BaseException`) never resolves, where a real death never reaches the
   resolver. Recovery is every task in Saleor's `CELERY_BEAT_SCHEDULE`, at one
-  hour, one day, 31 and 91 days. Confirmations are counted at
+  hour, one day, 31 and 91 days. Profile A binds `due_work` to the query
+  Saleor's own `trigger_automatic_checkout_completion_task` evaluates, captured
+  as it runs with its dispatches held
+  (`integrations.django.selection.selection_built_by`), because Saleor builds
+  that selection inline: observing it proves Saleor's query, where restating it
+  would prove a copy. Confirmations are counted at
   `PluginsManager.notify`, the seam Saleor's own tests mock. Production
   packages are `saleor` and `django`.

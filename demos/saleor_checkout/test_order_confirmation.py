@@ -33,9 +33,11 @@ past every expiry Saleor configures.
 
 from collections import Counter
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
+from unittest import mock
 from uuid import UUID
 
 import pytest
@@ -52,7 +54,12 @@ from saleor.checkout.complete_checkout import _post_create_order_actions, comple
 from saleor.checkout.fetch import fetch_checkout_info, fetch_checkout_lines
 from saleor.checkout.models import Checkout, CheckoutMetadata
 from saleor.checkout.payment_utils import update_checkout_payment_statuses
-from saleor.checkout.tasks import delete_expired_checkouts
+from saleor.checkout.tasks import (
+    AUTOMATIC_COMPLETION_BATCH_SIZE,
+    automatic_checkout_completion_task,
+    delete_expired_checkouts,
+    trigger_automatic_checkout_completion_task,
+)
 from saleor.checkout.tests.utils import add_variant_to_checkout
 from saleor.core.notify import NotifyEventType
 from saleor.graphql.core.utils import to_global_id_or_none
@@ -82,6 +89,9 @@ from due_work_harness import (
     due_work_contract_suite,
 )
 from due_work_harness.crash_histories import assert_histories_converge, crash_histories
+from due_work_harness.integrations.celery import celery_beat_evidence, held_publications
+from due_work_harness.integrations.django.selection import selection_built_by
+from due_work_harness.profiles.automatic_recovery import DueWorkSweep, InFlightExecution
 
 #: Far enough ahead for every age-based task Saleor schedules to act: the longest,
 #: deleting a user's checkout, waits USER_CHECKOUTS_TIMEDELTA (90 days).
@@ -171,12 +181,19 @@ def saleor_shop(
     _SHOPS.pop()
 
 
+#: The channel's automatic_completion_delay: how long a fully paid checkout waits before Saleor completes it.
+COMPLETION_DELAY = timedelta(minutes=5)
+
+
 @pytest.fixture
-def automatic_completion(saleor_shop: Shop) -> None:
-    """The channel opts into Saleor's automatic completion of fully paid checkouts, with no delay."""
+def automatic_completion(saleor_shop: Shop) -> Iterator[None]:
+    """The channel opts into Saleor's automatic completion of fully paid checkouts, after COMPLETION_DELAY."""
     saleor_shop.channel.automatically_complete_fully_paid_checkouts = True
-    saleor_shop.channel.automatic_completion_delay = 0
+    saleor_shop.channel.automatic_completion_delay = int(COMPLETION_DELAY.total_seconds() // 60)
     saleor_shop.channel.save()
+    DISPATCHED.clear()
+    COMPLETIONS.clear()
+    yield
 
 
 type Handle = tuple[UUID, Any]
@@ -505,16 +522,100 @@ COMPLETE_PAID_CHECKOUT = HandoffHistory(
     observe=order_and_money,
 )
 
+#: The checkouts the most recent tick dispatched for completion, in dispatch order.
+DISPATCHED: list[UUID] = []
+#: Every completion dispatched for a checkout, held or run: each is an execution in production.
+COMPLETIONS: Counter[UUID] = Counter()
+
+
+def completion_selection() -> Any:
+    """Saleor's selection, observed: the query its own tick evaluates, with the tick's dispatches held."""
+    with held_publications():
+        return selection_built_by(trigger_automatic_checkout_completion_task, Checkout)
+
+
+def run_completion_tick() -> int:
+    """Saleor's tick, as its beat schedule runs it, with each completion it dispatches recorded."""
+    DISPATCHED.clear()
+    dispatch = automatic_checkout_completion_task.apply_async
+
+    def recorded(args: Any = None, kwargs: Any = None, **options: Any) -> Any:
+        # EXTERNAL SEAM: the completion task's publication, recorded on its way through.
+        DISPATCHED.append(args[0])
+        COMPLETIONS[args[0]] += 1
+        return dispatch(args=args, kwargs=kwargs, **options)
+
+    # mock, not pytest's MonkeyPatch: on undo MonkeyPatch writes the bound method back onto the
+    # task instance, where it would shadow every later class-level patch of Task.apply_async.
+    with mock.patch.object(automatic_checkout_completion_task, "apply_async", recorded):
+        trigger_automatic_checkout_completion_task()
+    return len(DISPATCHED)
+
+
+def owed_completion(age: timedelta = timedelta(0)) -> Checkout:
+    """A fully paid checkout that nobody completed, last changed ``age`` ago: Saleor owes it an order."""
+    checkout_pk, _ = pay_with_transactions()
+    Checkout.objects.filter(pk=checkout_pk).update(last_change=timezone.now() - age)
+    return Checkout.objects.get(pk=checkout_pk)
+
+
+def given_up_completion(age: timedelta = timedelta(0)) -> list[Checkout]:
+    """A fully paid checkout past AUTOMATIC_CHECKOUT_COMPLETION_OLDEST_MODIFIED, which Saleor stops retrying."""
+    return [owed_completion(settings.AUTOMATIC_CHECKOUT_COMPLETION_OLDEST_MODIFIED + timedelta(minutes=1) + age)]
+
+
+@contextmanager
+def completion_in_flight(checkout: Checkout, tick: Callable[[], int]) -> Iterator[None]:
+    """The checkout's completion dispatched by the real tick and not yet run: a message waiting for a worker."""
+    with held_publications():
+        tick()
+        yield
+
+
+def automatic_completion_sweep() -> DueWorkSweep:
+    # ARRANGE: fully paid checkouts, aged into and past Saleor's windows (owed_completion, given_up_completion).
+    # REAL PRODUCTION: Saleor's trigger_automatic_checkout_completion_task, its selection observed as it runs.
+    # EXTERNAL SEAM: the completion task's Celery dispatch, recorded, and held while one is in flight.
+    # OBSERVE: the checkouts each tick dispatched, and every completion dispatched per checkout.
+    return DueWorkSweep(
+        name="saleor automatic checkout completion",
+        due_work=completion_selection,
+        run_tick=run_completion_tick,
+        make_owed=owed_completion,
+        make_terminal=given_up_completion,
+        recovery_delay=COMPLETION_DELAY,
+        page_size=AUTOMATIC_COMPLETION_BATCH_SIZE,
+        assert_scheduled=celery_beat_evidence("saleor.checkout.tasks.trigger_automatic_checkout_completion_task"),
+        in_flight=InFlightExecution(
+            make_owed=lambda: owed_completion(COMPLETION_DELAY + timedelta(minutes=1)),
+            start=completion_in_flight,
+            execution_count_for=lambda checkout: COMPLETIONS[checkout.pk],
+        ),
+        dispatched_ids=lambda: list(DISPATCHED),
+        identity_of=lambda checkout: checkout.pk,
+    )
+
+
 CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
     name="saleor checkout, Transactions API with automatic completion",
+    adoption=Adoption.LEGACY,
     transactional=True,
     fixtures=("saleor_shop", "automatic_completion"),
     profiles={
-        Profile.A: Decline(
-            "Saleor's recovery is trigger_automatic_checkout_completion_task, which the handoff history below "
-            "runs among the beat tasks and proves end to end. Its selection is built inline in the task, so no "
-            "sweep can be bound without restating the query in a test; extracting it into a callable would let "
-            "this contract claim profile A"
+        # Saleor's selection is built inline in its tick, so the sweep observes the query the
+        # tick evaluates instead of restating it (selection_built_by).
+        Profile.A: Claim(
+            gaps={
+                "assert_in_flight_work_is_not_duplicated": (
+                    "the selection orders by last_automatic_completion_attempt but never excludes a recent one, "
+                    "so a paid checkout whose completion is dispatched and not yet run is dispatched again by the "
+                    "next tick, a minute later"
+                ),
+                "assert_outstanding_work_is_observable": (
+                    "nothing reports how many fully paid checkouts await automatic completion, so a stalled "
+                    "completion task is indistinguishable from an idle one"
+                ),
+            }
         ),
         Profile.B: Decline("completion serialises on the checkout row lock; it holds no lease"),
         Profile.C: Decline(
@@ -536,6 +637,7 @@ CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
             SafetyProfile.BOUNDED_RETRY: NotApplicable("automatic completion retries on the beat schedule, unbounded"),
         },
     ),
+    sweep=automatic_completion_sweep,
     retention=retention_of_transactions_checkouts,
     handoffs=(COMPLETE_PAID_CHECKOUT,),
     handoff_delivery=SALEOR,

@@ -24,6 +24,7 @@ return before running it, which leaves every history agreeing on unfinished
 work.
 """
 
+import time
 from collections.abc import Callable, Iterable, Sequence
 from datetime import timedelta
 from typing import Any
@@ -125,6 +126,7 @@ def ownership(
     defer: Callable[[], int],
     queue: str,
     stalled_after: timedelta = timedelta(seconds=30),
+    clock_skew: timedelta = timedelta(seconds=2),
 ) -> FencedOwnership:
     """
     Profile B bound to procrastinate's own ownership: its workers, their heartbeats, and the documented reclaim.
@@ -138,6 +140,11 @@ def ownership(
     documented recipe (``get_stalled_jobs`` then ``retry_job``), applied to that
     one job. The app's connector must run synchronously in the calling thread,
     as the Django connector does.
+
+    A retried job is stamped with the application's clock and fetched by the
+    database's, so it becomes fetchable once the database's clock passes it: a
+    claim waits for a job due within ``clock_skew``, as procrastinate's polling
+    worker would see it on its next fetch, and otherwise returns at once.
     """
     from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -151,9 +158,25 @@ def ownership(
         workers[token] = worker_id
         return token
 
+    def due_within_skew() -> float | None:
+        # procrastinate stamps a retried job's scheduled_at with the application's clock
+        # (utils.utcnow) and fetches by the database's NOW(): the job is fetchable once the
+        # database's clock passes it. How long until then, if a job is due that soon.
+        row = app.connector.execute_query_one(
+            "SELECT EXTRACT(EPOCH FROM MIN(scheduled_at) - NOW()) AS wait FROM procrastinate_jobs "
+            "WHERE status = 'todo' AND queue_name = %(queue)s AND scheduled_at > NOW() "
+            "AND scheduled_at <= NOW() + make_interval(secs => %(skew)s)",
+            queue=queue,
+            skew=clock_skew.total_seconds(),
+        )
+        return None if row is None or row["wait"] is None else float(row["wait"])
+
     def claim() -> tuple[int, UUID] | None:
         worker_id = _run(manager.register_worker())
         job = _run(manager.fetch_job(queues=[queue], worker_id=worker_id))
+        if job is None and (wait := due_within_skew()) is not None:
+            time.sleep(wait + 0.01)
+            job = _run(manager.fetch_job(queues=[queue], worker_id=worker_id))
         return None if job is None else (job.id, token_for(worker_id))
 
     def finish(job_id: int, token: UUID) -> bool:
