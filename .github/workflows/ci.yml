@@ -19,8 +19,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync --locked --only-group lint
@@ -32,8 +32,8 @@ jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       # The demos type-check against the upstream code they run.
@@ -50,8 +50,8 @@ jobs:
       matrix:
         python: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
@@ -76,8 +76,8 @@ jobs:
       PGPORT: "5432"
       PGDATABASE: due_work_harness
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync --locked --no-default-groups --extra django --extra celery
@@ -99,8 +99,8 @@ jobs:
       PGPASSWORD: postgres
       PGPORT: "5432"
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv run --no-project python demos/fetch_upstream.py
@@ -118,11 +118,11 @@ jobs:
     # The published wheel alone: it installs without any framework, imports, and ships py.typed.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The version is derived from tags, so build with the history that has them.
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv build

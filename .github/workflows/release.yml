@@ -83,12 +83,12 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.tag.outputs.tag || github.sha }}
           # The version is read from the tag, so the tag must be present.
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: uv build
       - name: The built version is the tag
         if: steps.tag.outputs.tag != ''
@@ -114,7 +114,7 @@ jobs:
           unzip -l dist/*.whl | grep -q "due_work_harness/py.typed"
           uv venv /tmp/wheel && uv pip install --python /tmp/wheel dist/*.whl
           /tmp/wheel/bin/python scripts/check_core_is_framework_free.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -132,7 +132,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
@@ -150,7 +150,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
@@ -165,7 +165,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
