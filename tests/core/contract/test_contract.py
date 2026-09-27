@@ -939,6 +939,8 @@ def _run_reference_cases(mode: str, *selection: str) -> tuple[dict[str, int], st
             "-q",
             "-p",
             "no:cacheprovider",
+            # No short summary: whether it repeats each message depends on the terminal width.
+            "-rN",
             "--rootdir",
             str(_REPOSITORY),
             *selection,

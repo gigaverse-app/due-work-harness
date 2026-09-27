@@ -55,4 +55,6 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The Django self-tests and demos import their settings modules from the repository root.
+pythonpath = ["."]
 addopts = "-p no:cacheprovider"
