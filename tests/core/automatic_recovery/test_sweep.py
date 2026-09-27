@@ -726,7 +726,8 @@ def test_a_forwarding_lambda_that_adds_an_ordering_fails_0a() -> None:
 
 def test_a_non_python_callable_fails_0a_rather_than_passing_silently() -> None:
     with pytest.raises(AssertionError, match="not an inspectable Python callable"):
-        assert_the_adapter_does_not_author_the_selection(_adapter_with(min))
+        # A builtin is the wrong type on purpose: the guard must refuse what it cannot inspect.
+        assert_the_adapter_does_not_author_the_selection(_adapter_with(min))  # pyrefly: ignore[bad-argument-type]
 
 
 # --- The binding defenses, both directions -------------------------------------

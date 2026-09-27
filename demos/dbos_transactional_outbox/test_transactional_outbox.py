@@ -16,12 +16,15 @@ again. The harness owns the verdict (:mod:`due_work_harness.process_histories`).
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 from uuid import uuid4
 
 import psycopg
 import pytest
+from psycopg import sql
 
 from due_work_harness import LossIsAbsorbedElsewhere
 from due_work_harness.integrations.dbos import restart_until
@@ -38,8 +41,8 @@ _URL = f"postgresql://{_PG['user']}:{_PG['password']}@{_PG['host']}:{_PG['port']
 os.environ["DBOS_DATABASE_URL"] = f"{_URL.replace('postgresql://', 'postgresql+psycopg://')}/{DATABASE}"
 
 with psycopg.connect(f"{_URL}/postgres", autocommit=True) as admin:
-    admin.execute(f"DROP DATABASE IF EXISTS {DATABASE} WITH (FORCE)")
-    admin.execute(f"CREATE DATABASE {DATABASE}")
+    admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(DATABASE)))
+    admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(DATABASE)))
 
 sys.path.insert(0, str(DEMO_DIR))
 import transactional_enqueue as demo  # noqa: E402
@@ -84,12 +87,11 @@ def restart(order_id: int) -> None:
         with INBOX.open("a") as inbox:
             inbox.write(f"{_customers[order_id]}\n")
 
-    previous = demo.time, demo.uvicorn
-    demo.time, demo.uvicorn = SimpleNamespace(sleep=send), SimpleNamespace(run=lambda *_a, **_k: None)
-    try:
+    with (
+        mock.patch.object(demo, "time", SimpleNamespace(sleep=send)),
+        mock.patch.object(demo, "uvicorn", SimpleNamespace(run=lambda *_a, **_k: None)),
+    ):
         restart_until(demo.main, lambda: _status(order_id) == "SENT")
-    finally:
-        demo.time, demo.uvicorn = previous
 
 
 PLACE_ORDER = ProcessHistory(
@@ -115,7 +117,7 @@ def test_placing_an_order_survives_a_death_before_the_notification() -> None:
     ),
 )
 def test_placing_an_order_survives_a_death_after_the_notification() -> None:
-    history = ProcessHistory(**{**PLACE_ORDER.__dict__, "death_points": ("after_send",)})
+    history = replace(PLACE_ORDER, death_points=("after_send",))
     assert_process_deaths_converge(history)
 
 

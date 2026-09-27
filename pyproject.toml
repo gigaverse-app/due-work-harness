@@ -27,7 +27,7 @@ classifiers = [
 dependencies = ["pytest>=8"]
 
 [project.optional-dependencies]
-django = ["django>=4.2", "pytest-django>=4.8", "psycopg[binary]>=3.1"]
+django = ["django>=4.2", "pytest-django>=4.8", "psycopg[binary]>=3.1", "time-machine>=2.10"]
 celery = ["celery>=5.3"]
 procrastinate = ["procrastinate>=3.0"]
 dbos = ["dbos>=2.0"]
@@ -40,7 +40,14 @@ Issues = "https://github.com/gigaverse-app/due-work-harness/issues"
 due_work_harness = "due_work_harness.pytest_plugin"
 
 [dependency-groups]
-dev = ["ruff>=0.8", "time-machine>=2.10"]
+lint = ["ruff>=0.8", "pyrefly>=1.0,<2", "django-stubs>=5.1", "celery-types>=0.22"]
+# The demo applications' own runtimes; procrastinate is installed from the pinned
+# demo checkout (its demos ship only in the source tree) by the demos CI job.
+demos = ["dbos==3.1.0", "fastapi[standard]>=0.115.0"]
+dev = [{ include-group = "lint" }]
+
+[tool.uv]
+default-groups = ["dev"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/due_work_harness"]
@@ -48,6 +55,7 @@ packages = ["src/due_work_harness"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+extend-exclude = ["demos/.upstream", ".venv*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -58,3 +66,12 @@ testpaths = ["tests"]
 # The Django self-tests and demos import their settings modules from the repository root.
 pythonpath = ["."]
 addopts = "-p no:cacheprovider"
+
+[tool.pyrefly]
+project-includes = ["src", "tests", "tests_support", "demos", "scripts"]
+project-excludes = ["demos/.upstream/**", "**/__pycache__/**", ".venv*/**"]
+python-version = "3.12"
+python-platform = "linux"
+# tests_support holds the sample production package the binding self-tests import;
+# the DBOS demo imports the upstream demo module from its pinned checkout.
+search-path = ["src", ".", "tests_support", "demos/.upstream/dbos-demo-apps/python/transactional-outbox"]

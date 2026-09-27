@@ -113,8 +113,10 @@ class HandoffHistory[HandleT, ObservationT]:
 class DeliverySession(Protocol):
     """One history's delivery: installed before the transition, used after it."""
 
-    #: Whether published work can be lost separately from the database.
-    can_lose: bool
+    @property
+    def can_lose(self) -> bool:
+        """Whether published work can be lost separately from the database."""
+        ...
 
     def deliver(self) -> None:
         """Run what the transition published, as normal operation would."""
@@ -132,7 +134,8 @@ class DeliverySession(Protocol):
 class Delivery(Protocol):
     """How a host delivers handed-off work and recovers it."""
 
-    name: str
+    @property
+    def name(self) -> str: ...
 
     def session(self) -> AbstractContextManager[DeliverySession]: ...
 
