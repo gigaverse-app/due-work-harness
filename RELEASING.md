@@ -36,23 +36,24 @@ Before 1.0 a breaking change bumps the minor version (`bump-minor-pre-major`),
 as SemVer allows for `0.y.z`. `docs:` changes appear in the changelog but do not
 release on their own.
 
-## One-time setup
+## Repository and PyPI settings
 
-These are repository and PyPI settings, so they are done by a maintainer, not
-by the workflow:
+The workflow depends on settings outside the code:
 
-1. **PyPI Trusted Publisher.** On pypi.org, under *Publishing*, add a pending
-   publisher for project `due-work-harness`: owner `gigaverse-app`, repository
-   `due-work-harness`, workflow `release.yml`, environment `pypi`. Do the same on
-   test.pypi.org with environment `testpypi` to allow rehearsals.
-2. **GitHub environments** `pypi` and `testpypi` (Settings → Environments).
-   Adding required reviewers to `pypi` makes every publish wait for approval.
-3. **Let Actions open pull requests** (Settings → Actions → General → Workflow
-   permissions → *Allow GitHub Actions to create and approve pull requests*), so
-   release-please can open its release PR.
-4. **Squash merging with the PR title** (Settings → General → Pull Requests:
-   allow squash merging only, default commit message *Pull request title*), so
-   each commit on `main` is the checked title.
+1. **PyPI Trusted Publisher.** The PyPI project `due-work-harness` trusts
+   owner `gigaverse-app`, repository `due-work-harness`, workflow `release.yml`,
+   environment `pypi`. For a project that does not exist yet this is a
+   *pending publisher* (pypi.org → Account → Publishing). test.pypi.org has the
+   same entry with environment `testpypi` for rehearsals.
+2. **GitHub environments.** `pypi` accepts deployments from `main` only, which
+   is where both release-please and a manual re-publish run; `testpypi` is
+   unrestricted. Adding required reviewers to `pypi` makes every publish wait
+   for approval.
+3. **Actions may open pull requests** (Settings → Actions → General → Workflow
+   permissions), so release-please can open its release PR. The default token
+   stays read-only; jobs ask for what they need.
+4. **Squash merging only, titled by the PR title** (Settings → General → Pull
+   Requests), so each commit on `main` is the checked title.
 
 Release PRs are opened with the workflow's token, and GitHub does not run
 workflows for events created by it, so CI does not run on the release PR
