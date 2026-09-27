@@ -1,0 +1,63 @@
+# False greens: the ways a conformance suite can lie
+
+A conformance suite fails differently from ordinary tests. A contract bound to
+something other than production proves things about that something, with the
+full authority of the profile report. Every row below was found by pointing the
+harness at real adopters and asking how the green result could be wrong; each is
+now refused mechanically, and each refusal is self-tested in both directions.
+
+If you are writing an adapter and catch yourself doing one of these to get a
+proof green, the proof was about to tell you something.
+
+## Bindings that are not production
+
+| The lie | What it looks like | Refused by |
+| --- | --- | --- |
+| **The copied predicate** | `due_work=lambda: Job.objects.filter(status="todo")` restating production's query | the authorship tripwire: a semantic binding in test code may not call ORM query or write methods, including through test helpers |
+| **The in-memory counterfeit** | a dict-based state machine in the test module, which authors no ORM call | the delegation tripwire: a semantic binding must reach code in the host's `production_packages` |
+| **The self-referential differential** | `dispatched_ids=lambda: [r.pk for r in due_work()[:page]]`, so "what the tick dispatched" is compared with itself | a recorder must be empty before the tick runs |
+| **The test-authored tick** | `run_tick` re-implemented in the test | delegation on `run_tick` |
+| **The waived defense** | declaring a gap on the tripwire itself, then authoring freely | binding-integrity proofs cannot be named as gaps |
+| **The synthetic decline** | `pytest.raises` around a shared proof fed a fabricated adapter, "proving" production lacks a capability | test-authored inversions are refused; `DisprovenCapability` guards the binding before disproving anything |
+| **The minted proof name** | a helper named `assert_whatever` in the test module standing in for a shared proof | delegation resolves to real harness callables, not names |
+| **The unreachable lifecycle** | a state transition written as a direct column update, reaching states production never can | transition bindings get both tripwires |
+| **The adopter-authored verdict** | `is_due=lambda row: not is_terminal(row)` agreeing with the test's own state machine | membership is computed by the harness from the production selection |
+| **The self-computed backlog** | `observe_outstanding=lambda: Job.objects.filter(...).count()` compared against the backlog it was computed from | the reading must reach production and must not aggregate in the adapter |
+
+## Proofs that pass because nothing happened
+
+| The lie | What it looks like | Refused by |
+| --- | --- | --- |
+| **The vacuous negative** | a "must not write" proof whose binding never reaches the write path | every negative proof has a positive control: the same binding must act on owed work |
+| **The single-branch example** | a selection with several ways to be true, exercised by examples that all take one branch | one named `OwedWorkVariant` per branch, each proven selected and dispatched |
+| **Lifecycle theater** | `run_once` advances counters without reaching the dependency whose failure drives retries | each execution must reach the injected failing boundary exactly once |
+| **Fresh means in flight** | a row too young for the recovery query is called "in flight" though nothing started it | the in-flight example must be in the production selection before it starts |
+| **The replay that never ran** | a replay-safety check whose second run finds the row settled and no-ops | the replay must reach the external boundary a second time (count goes 0 → 1 → 2) |
+| **Agreement with an inert recovery** | a crash history whose recovery does nothing, so every history agrees with an equally unfinished normal operation | when every history converges, recovery must have changed the observation in at least one |
+
+## Histories that miss the failure
+
+| The lie | What it looks like | Refused by |
+| --- | --- | --- |
+| **Two coherent halves of different wholes** | profile F's outstanding predicate and profile A's selection each green, disagreeing about which work exists | a composition proof whenever both are claimed |
+| **Association without meaning** | naming a publisher whose stranded work this sweep's selection never sees | each covered publisher's stranded work is run through the real selection and tick |
+| **Terminal attempt, live obligation** | a state labelled terminal while a successor is still owed from it | every lifecycle state must be declared; delivering each terminal example to the real worker must create no new obligation |
+| **The message-only handoff** | a transition commits a failure and only publishes the work that creates its retry | a crash history's lost-notification run must reach normal operation's outcome |
+| **The write that reads as a SELECT** | a failure written by `SELECT some_function(...)` in autocommit, then a handoff in a second statement: one commit counted, the split never crashed | autocommit `SELECT`/`WITH` statements run in a one-statement transaction during a history; an assigned transaction id counts the write |
+| **The repeat no commit boundary shows** | notify, then record completion; every crash after a commit converges, a death after the notification sends it twice | `HandoffHistory.external_calls`: a death right after each named external call must converge too |
+
+## What only a reviewer can refuse
+
+- **A production reference that is not load-bearing.** The delegation tripwire
+  proves a binding reaches production, not that production does the work. A
+  binding that calls production and quietly post-processes the result is caught
+  in review.
+- **Example constructors.** `make_*` factories are arrange code and may write
+  directly, so they can build states production never produces. Review them
+  against the production writers.
+- **Patching inside a semantic binding.** Replacing an external provider at its
+  seam is legitimate; patching your own lifecycle code inside a binding neuters
+  the thing under test. Name the seam in a comment.
+- **Observation width.** An `observe` that omits what the handoff creates, or
+  what the external system saw, weakens every "nothing changed" and every crash
+  history to nothing.

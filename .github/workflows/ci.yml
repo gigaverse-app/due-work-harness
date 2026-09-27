@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx ruff check src tests tests_support demos scripts
+      - run: uvx ruff format --check src tests tests_support demos scripts
+
+  core:
+    # The core must work with no framework installed: only pytest.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv venv && uv pip install -e .
+      - run: uv run --no-sync python scripts/check_core_is_framework_free.py
+      - run: uv run --no-sync pytest tests/core
+
+  django:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGPORT: "5432"
+      PGDATABASE: due_work_harness
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv venv && uv pip install -e ".[django,celery]" time-machine
+      - run: uv run --no-sync pytest tests/django --ds=tests.django.settings
+
+  demos:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGPORT: "5432"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: python demos/fetch_upstream.py
+      - run: >-
+          uv venv && uv pip install -e ".[django]" -e demos/.upstream/procrastinate
+          "dbos==3.1.0" "fastapi[standard]>=0.115.0" time-machine
+      - name: procrastinate demo_django
+        env:
+          PGDATABASE: procrastinate_demo
+        run: uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings -rxX
+      - name: DBOS transactional-outbox
+        run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX

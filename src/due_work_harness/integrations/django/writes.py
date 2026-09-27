@@ -1,0 +1,107 @@
+"""
+Classify a statement that changed rows by what PostgreSQL reports, not by its text.
+
+A prefix check on the SQL (``INSERT``/``UPDATE``/``DELETE``) misses a data-
+modifying CTE (``WITH … INSERT``), a leading comment, ``MERGE`` and ``COPY``.
+The server's command status (psycopg's ``statusmessage``) names the command
+that actually ran and how many rows it affected, whatever the text looked
+like. Harness observers that must not miss a write classify it here.
+"""
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+#: Commands whose status reports rows written. ``COPY`` counts: ``COPY FROM``
+#: inserts rows, and ``COPY TO`` never reaches an execute wrapper as a write.
+_ROW_WRITES = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE", "COPY"})
+_CREATES_ROWS = frozenset({"INSERT", "MERGE", "COPY"})
+
+
+@dataclass(frozen=True)
+class RowWrite:
+    """A statement that changed at least one row."""
+
+    command: str
+    rows: int
+    target: str
+
+    @property
+    def creates_rows(self) -> bool:
+        """Whether the command can bring a row into existence (MERGE may insert)."""
+        return self.command in _CREATES_ROWS
+
+    def __str__(self) -> str:
+        return f"{self.command} {self.target}"
+
+
+def _target(sql: str) -> str:
+    """Best-effort table name for messages; classification never depends on it."""
+    words = sql.replace("(", " ").split()
+    upper = [word.upper() for word in words]
+    for keyword in ("INTO", "UPDATE", "FROM"):
+        if keyword in upper and upper.index(keyword) + 1 < len(words):
+            return words[upper.index(keyword) + 1].strip('"')
+    return "?"
+
+
+def leading_keyword(sql: str) -> str:
+    """The first SQL keyword after comments, whitespace and opening parentheses."""
+    text = sql.lstrip()
+    while True:
+        if text.startswith("/*") and "*/" in text:
+            text = text[text.index("*/") + 2 :].lstrip()
+        elif text.startswith("--"):
+            text = text.partition("\n")[2].lstrip()
+        elif text.startswith("("):
+            text = text[1:].lstrip()
+        else:
+            break
+    return text.split(None, 1)[0].upper() if text else ""
+
+
+def execute_reporting_autocommit_write(
+    execute: Callable[..., Any], sql: str, params: Any, many: bool, context: dict[str, Any]
+) -> tuple[Any, bool]:
+    """
+    Run one autocommit statement and report whether it committed a write.
+
+    A write made inside a function reports the command status of the ``SELECT``
+    that called it (``SELECT procrastinate_defer_jobs_v1(...)`` reads as
+    ``SELECT 1``), so :func:`row_write` cannot see it. For statements that can
+    only write that way the statement runs in an explicit single-statement
+    transaction, and PostgreSQL's transaction-id assignment decides: an xid is
+    assigned exactly when the transaction wrote. That is autocommit's own
+    semantics made observable. Other statements report through their command
+    status, which also keeps utility statements that refuse a transaction block
+    out of one.
+    """
+    if leading_keyword(sql) not in {"SELECT", "WITH", "VALUES"}:
+        result = execute(sql, params, many, context)
+        return result, row_write(sql, context["cursor"]) is not None
+    database = context["connection"].connection
+    database.execute("BEGIN")
+    try:
+        result = execute(sql, params, many, context)
+        wrote = database.execute("SELECT pg_current_xact_id_if_assigned() IS NOT NULL").fetchone()[0]
+    except BaseException:
+        database.execute("ROLLBACK")
+        raise
+    database.execute("COMMIT")
+    return result, bool(wrote)
+
+
+def row_write(sql: str, cursor: Any) -> RowWrite | None:
+    """
+    The rows the statement just executed on ``cursor`` wrote, or ``None``.
+
+    ``cursor`` is the Django cursor an execute wrapper receives; its
+    ``statusmessage`` comes from the psycopg cursor underneath (for example
+    ``"INSERT 0 1"``, ``"UPDATE 3"``). A statement that affected no rows is not
+    a write: a guarded ``UPDATE … WHERE`` that matches nothing changed nothing.
+    """
+    status = (cursor.statusmessage or "").split()
+    if not status or status[0] not in _ROW_WRITES:
+        return None
+    rows = int(status[-1]) if status[-1].isdigit() else 0
+    return RowWrite(command=status[0], rows=rows, target=_target(sql)) if rows else None

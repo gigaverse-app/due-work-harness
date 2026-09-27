@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "due-work-harness"
+version = "0.1.0"
+description = "Conformance proofs for background work that must survive lost messages, dead workers and uncertain external calls."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "Gigaverse" }]
+keywords = ["background jobs", "task queue", "durable execution", "testing", "pytest", "crash testing", "outbox"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Testing",
+]
+# The core imports no framework. Every integration lives behind an extra and is
+# imported only when its framework is installed.
+dependencies = ["pytest>=8"]
+
+[project.optional-dependencies]
+django = ["django>=4.2", "pytest-django>=4.8", "psycopg[binary]>=3.1"]
+celery = ["celery>=5.3"]
+procrastinate = ["procrastinate>=3.0"]
+dbos = ["dbos>=2.0"]
+
+[project.urls]
+Homepage = "https://github.com/gigaverse-app/due-work-harness"
+Issues = "https://github.com/gigaverse-app/due-work-harness/issues"
+
+[project.entry-points.pytest11]
+due_work_harness = "due_work_harness.pytest_plugin"
+
+[dependency-groups]
+dev = ["ruff>=0.8", "time-machine>=2.10"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/due_work_harness"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

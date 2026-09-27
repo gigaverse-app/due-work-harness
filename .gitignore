@@ -1,0 +1,9 @@
+.venv*/
+__pycache__/
+*.pyc
+.upstream_tests/
+/dist/
+/build/
+*.egg-info/
+demos/.upstream/
+demos/dbos_transactional_outbox/.inbox.txt

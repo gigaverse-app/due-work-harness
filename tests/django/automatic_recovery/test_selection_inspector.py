@@ -1,0 +1,261 @@
+"""
+Profile A's database proofs through the Django host, against real PostgreSQL.
+
+The core self-tests drive these proofs with an in-memory inspector; here the
+Django inspector answers them from the database itself, in both directions:
+
+* **index served** (invariant 5) — the reference selection with and without a
+  partial index that serves it, and the ``SET LOCAL`` probe leaving the
+  caller's session and transaction as it found them;
+* **primary reads** (invariant 10) — a QuerySet routed to a replica alias, and
+  a test setup that collapses the replica onto the primary, which must refuse
+  rather than answer;
+* **statement counts** — an idle tick and a tick whose cost grows per row;
+* **scan ratio** — a selection that reads a table of settled rows to return a
+  few owed ones, with and without the index;
+* **schedule evidence** read from Django's ``CELERY_BEAT_SCHEDULE``.
+"""
+
+from collections.abc import Iterator
+from datetime import timedelta
+from typing import Any
+
+import pytest
+from django.db import DatabaseError, connection, transaction
+from django.db.models import QuerySet
+from django.utils import timezone
+
+from due_work_harness.contract import ScheduledSelection
+from due_work_harness.helpers import undeclared
+from due_work_harness.host import hosted
+from due_work_harness.integrations.celery import celery_beat_evidence, celery_beat_interval, celery_publications
+from due_work_harness.integrations.django import django_host
+from due_work_harness.integrations.django import lifecycle_references as ref
+from due_work_harness.profiles.automatic_recovery import (
+    DueWorkSweep,
+    assert_idle_tick_is_cheap,
+    assert_selection_does_not_read_the_replica,
+    assert_selection_is_index_served,
+    assert_selection_scan_ratio_is_bounded,
+    assert_tick_cost_does_not_grow_with_the_backlog,
+)
+
+pytestmark = pytest.mark.django_db(transaction=True)
+Status = ref.Status
+
+_TABLE = ref.LifecycleAttempt._meta.db_table
+_DUE_INDEX = "lifecycle_attempt_due_ix"
+
+
+@pytest.fixture(autouse=True)
+def attempt_table() -> Iterator[None]:
+    with ref.lifecycle_attempt_table():
+        yield
+
+
+def _add_due_index() -> None:
+    """A partial index whose predicate is the selection's state filter, ordered as the selection reads."""
+    active = ", ".join(f"'{status}'" for status in ref.ACTIVE_STATUSES)
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX {_DUE_INDEX} ON {_TABLE} (updated_at, id) WHERE status IN ({active})")
+
+
+def _make(status: str, *, age: timedelta) -> ref.LifecycleAttempt:
+    # ARRANGE: persist one attempt and backdate it to simulate elapsed time.
+    return ref.LifecycleAttempt.objects.create(status=status, updated_at=timezone.now() - age)
+
+
+def _make_owed(*, age: timedelta = timedelta(hours=1)) -> ref.LifecycleAttempt:
+    return _make(Status.REQUESTED, age=age)
+
+
+def _scheduled(due_work: Any) -> ScheduledSelection:
+    return ScheduledSelection(
+        name="reference attempt selection", due_work=due_work, unscheduled_because="harness self-test of the plan"
+    )
+
+
+def _sweep(due_work: Any = ref.due_for_recovery) -> DueWorkSweep:
+    refuse = undeclared("only the database proofs are applied in this test")
+    return DueWorkSweep(
+        name="reference attempt lifecycle",
+        due_work=due_work,
+        run_tick=ref.run_recovery_tick,
+        make_owed=_make_owed,
+        make_terminal=refuse,
+        recovery_delay=ref.RECOVERY_DELAY,
+        page_size=None,
+    )
+
+
+# --- Invariant 5: index served ------------------------------------------------------
+
+
+def test_the_reference_selection_is_index_served_once_its_index_exists() -> None:
+    with pytest.raises(AssertionError, match=r"sequential\s+scan|full scan by another name"):
+        assert_selection_is_index_served(_scheduled(ref.due_for_recovery))
+    _add_due_index()
+    assert_selection_is_index_served(_scheduled(ref.due_for_recovery))
+
+
+def test_an_index_on_another_column_does_not_serve_the_selection() -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_claimed_ix ON {_TABLE} (reconciliation_claimed_at)")
+    with pytest.raises(AssertionError, match=r"sequential\s+scan|full scan by another name"):
+        assert_selection_is_index_served(_scheduled(ref.due_for_recovery))
+
+
+def test_index_proof_owns_its_set_local_transaction_in_autocommit(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert connection.get_autocommit()
+    original = QuerySet.explain
+    observed = []
+
+    def explain(queryset: QuerySet[Any], *args: Any, **kwargs: Any) -> str:
+        assert connection.in_atomic_block
+        with connection.cursor() as cursor:
+            cursor.execute("SHOW enable_seqscan")
+            observed.append(cursor.fetchone()[0])
+        return original(queryset, *args, **kwargs)
+
+    monkeypatch.setattr(QuerySet, "explain", explain)
+
+    def select_attempts() -> QuerySet[ref.LifecycleAttempt]:
+        # ARRANGE: no rows are needed to inspect the primary-key index.
+        # REAL PRODUCTION: a real ORM queryset is EXPLAINed against PostgreSQL.
+        # EXTERNAL SEAM: none; the spy above observes the live session setting.
+        # OBSERVE: the proof reads the real plan; the spy reads SET LOCAL.
+        return ref.LifecycleAttempt.objects.filter(pk=0)
+
+    assert_selection_is_index_served(_scheduled(select_attempts))
+    assert observed == ["off"]
+    assert connection.get_autocommit()
+
+
+@pytest.mark.parametrize("previous", ["on", "off"])
+@pytest.mark.parametrize("invalid_query", [False, True], ids=["success", "database-error"])
+def test_index_proof_preserves_enclosing_transaction_settings(previous: str, invalid_query: bool) -> None:
+    def select_attempts() -> QuerySet[ref.LifecycleAttempt]:
+        # ARRANGE: an empty primary-key selection or deliberately invalid SQL.
+        # REAL PRODUCTION: Django's actual PostgreSQL EXPLAIN path.
+        # EXTERNAL SEAM: none.
+        # OBSERVE: session settings and the enclosing transaction remain usable.
+        query = ref.LifecycleAttempt.objects.filter(pk=0)
+        return query.extra(where=["missing_eligibility_column = 1"]) if invalid_query else query
+
+    with transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute("SELECT set_config('enable_seqscan', %s, true)", [previous])
+        if invalid_query:
+            with pytest.raises(DatabaseError, match="missing_eligibility_column"):
+                assert_selection_is_index_served(_scheduled(select_attempts))
+        else:
+            assert_selection_is_index_served(_scheduled(select_attempts))
+        cursor.execute("SHOW enable_seqscan")
+        assert cursor.fetchone()[0] == previous, "eligibility probe changed the caller's planner setting"
+        cursor.execute("SELECT 1")
+        assert cursor.fetchone() == (1,), "failed EXPLAIN must not poison the enclosing transaction"
+        transaction.set_rollback(True)
+
+
+def test_a_selection_the_django_inspector_cannot_read_names_the_capability() -> None:
+    with pytest.raises(AssertionError, match="needs a SelectionInspector that understands list"):
+        assert_selection_is_index_served(_sweep(lambda: list(ref.due_for_recovery())))
+
+
+# --- Invariant 10: primary reads ------------------------------------------------------
+
+
+def _replica_host(replicas: Any) -> Any:
+    return hosted(django_host(set(), replica_aliases=replicas, publication_recorder=celery_publications))
+
+
+@pytest.mark.parametrize("replicas", [{"replica"}, lambda: {"replica"}], ids=["collection", "callable"])
+def test_a_selection_routed_to_the_replica_is_caught(replicas: Any) -> None:
+    with _replica_host(replicas):
+        assert_selection_does_not_read_the_replica(_scheduled(ref.due_for_recovery))
+        with pytest.raises(AssertionError, match="reads from 'replica'"):
+            assert_selection_does_not_read_the_replica(_sweep(lambda: ref.due_for_recovery().using("replica")))
+
+
+def test_a_replica_collapsed_onto_the_primary_is_refused_rather_than_answered() -> None:
+    with _replica_host({"default"}), pytest.raises(AssertionError, match="collapse the replica alias onto 'default'"):
+        assert_selection_does_not_read_the_replica(_scheduled(ref.due_for_recovery))
+
+
+def test_a_project_that_declares_no_replica_reads_the_primary() -> None:
+    # The test settings mirror no alias, so no alias is a replica.
+    assert_selection_does_not_read_the_replica(_sweep(lambda: ref.due_for_recovery().using("replica")))
+
+
+# --- Statement counts -----------------------------------------------------------------
+
+
+def test_the_reference_tick_costs_one_statement_idle_and_busy() -> None:
+    assert_idle_tick_is_cheap(name="idle reference tick", run_tick=ref.run_recovery_tick, max_queries=1)
+    assert_tick_cost_does_not_grow_with_the_backlog(
+        name="reference tick", make_owed=_make_owed, run_tick=ref.run_recovery_tick
+    )
+
+
+def test_a_tick_that_loads_each_row_is_caught() -> None:
+    def tick_loading_each_row() -> int:
+        due = list(ref.due_for_recovery().values_list("pk", flat=True))
+        for pk in due:
+            ref.LifecycleAttempt.objects.get(pk=pk)
+        return len(due)
+
+    with pytest.raises(AssertionError, match="cost grows per row"):
+        assert_tick_cost_does_not_grow_with_the_backlog(
+            name="per-row loads", make_owed=_make_owed, run_tick=tick_loading_each_row
+        )
+
+
+def test_an_idle_tick_that_queries_more_than_it_selects_is_caught() -> None:
+    def chatty_idle_tick() -> int:
+        ref.LifecycleAttempt.objects.count()
+        ref.LifecycleAttempt.objects.filter(status=Status.RUNNING).exists()
+        return ref.run_recovery_tick()
+
+    with pytest.raises(AssertionError, match="an idle tick issued 3 queries"):
+        assert_idle_tick_is_cheap(name="chatty idle tick", run_tick=chatty_idle_tick)
+
+
+# --- Scan ratio -------------------------------------------------------------------------
+
+
+def _settled_history(rows: int) -> None:
+    """A table mostly of settled attempts, as production's is, then fresh planner statistics."""
+    old = timezone.now() - timedelta(days=30)
+    ref.LifecycleAttempt.objects.bulk_create(
+        ref.LifecycleAttempt(status=Status.COMPLETE, updated_at=old) for _ in range(rows)
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(f"ANALYZE {_TABLE}")
+
+
+def test_a_selection_that_reads_the_settled_history_fails_the_scan_ratio() -> None:
+    _settled_history(2000)
+    with pytest.raises(AssertionError, match="discarded 2000 rows to return 50"):
+        assert_selection_scan_ratio_is_bounded(_sweep(), rows=50)
+
+
+def test_an_indexed_selection_passes_the_scan_ratio() -> None:
+    _settled_history(2000)
+    _add_due_index()
+    assert_selection_scan_ratio_is_bounded(_sweep(), rows=50)
+
+
+# --- Schedule evidence from Django settings -------------------------------------------
+
+_SCHEDULED_TASK = "due_work_harness.integrations.django.lifecycle_references.run_recovery_tick"
+
+
+def test_beat_evidence_reads_the_django_schedule(settings: Any) -> None:
+    settings.CELERY_BEAT_SCHEDULE = {"recovery": {"task": _SCHEDULED_TASK, "schedule": timedelta(minutes=5)}}
+    celery_beat_evidence(_SCHEDULED_TASK)()
+    assert celery_beat_interval(_SCHEDULED_TASK) == timedelta(minutes=5)
+
+
+def test_beat_evidence_rejects_a_task_the_django_schedule_omits(settings: Any) -> None:
+    settings.CELERY_BEAT_SCHEDULE = {}
+    with pytest.raises(AssertionError, match="not in the beat schedule"):
+        celery_beat_evidence(_SCHEDULED_TASK)()

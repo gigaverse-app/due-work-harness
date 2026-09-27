@@ -1,0 +1,28 @@
+"""pytest integration: read the host from configuration before collection."""
+
+from importlib import import_module
+
+import pytest
+
+from due_work_harness.host import Host, configure
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addini(
+        "due_work_harness_host",
+        "Dotted path 'package.module:attribute' of the due_work_harness Host to install; "
+        "the attribute may be a Host or a zero-argument callable returning one.",
+        default="",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    path = config.getini("due_work_harness_host")
+    if not path:
+        return
+    module_name, _, attribute = path.partition(":")
+    assert attribute, f"due_work_harness_host must look like 'package.module:attribute', got {path!r}"
+    target = getattr(import_module(module_name), attribute)
+    host = target if isinstance(target, Host) else target()
+    assert isinstance(host, Host), f"{path} did not produce a due_work_harness Host"
+    configure(host)

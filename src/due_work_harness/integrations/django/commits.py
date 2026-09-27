@@ -1,0 +1,90 @@
+"""
+Count a worker's commits on Django's default connection, and kill it inside one.
+
+This is the Django host's :class:`~due_work_harness.host.WorkerKiller`. Inside
+the context every commit on the calling thread's default connection is
+counted: an outermost ``COMMIT``, and every autocommit statement that wrote —
+including a ``SELECT`` that writes through a function, which
+:func:`~due_work_harness.integrations.django.writes.execute_reporting_autocommit_write`
+detects from PostgreSQL's transaction-id assignment rather than the statement's
+text. Right after the chosen commit the worker dies: callbacks registered with
+``transaction.on_commit`` are dropped (Django would run them only later), and
+every further statement raises :class:`~due_work_harness.worker_death.WorkerDied`,
+so ``finally`` blocks cannot write what a dead process never would. Rollbacks
+still run, as the server would roll back a disconnected session anyway. On exit
+a dead worker's connection is closed, releasing its advisory locks and session
+state.
+"""
+
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from typing import Any
+
+import pytest
+from django.db import DEFAULT_DB_ALIAS, connections
+from django.db.backends.base.base import BaseDatabaseWrapper
+
+from due_work_harness.integrations.django.writes import execute_reporting_autocommit_write, leading_keyword
+from due_work_harness.worker_death import WorkerDied
+
+
+class DjangoWorker:
+    """The worker a crash history interrupts: its commit count and whether it died."""
+
+    def __init__(self, connection: BaseDatabaseWrapper, kill_after: int | None) -> None:
+        self._connection = connection
+        self._kill_after = kill_after
+        self.commits = 0
+        self.dead = False
+
+    def committed(self) -> None:
+        self.commits += 1
+        if self.commits == self._kill_after:
+            self.kill_now(f"worker died right after commit {self.commits}")
+
+    def kill_now(self, reason: str) -> None:
+        self.dead = True
+        # The process dies before any after-commit callback runs.
+        self._connection.run_on_commit.clear()
+        raise WorkerDied(reason)
+
+    def refuse_if_dead(self) -> None:
+        if self.dead:
+            raise WorkerDied("the worker is dead; its connection runs nothing more")
+
+
+@contextmanager
+def django_worker_killer(kill_after: int | None) -> Iterator[DjangoWorker]:
+    """Count commits on this thread's default connection; die right after commit ``kill_after``."""
+    target = connections[DEFAULT_DB_ALIAS]
+    worker = DjangoWorker(target, kill_after)
+    original_commit = type(target).commit
+
+    def commit(connection: BaseDatabaseWrapper) -> Any:
+        if connection is not target:
+            return original_commit(connection)
+        worker.refuse_if_dead()
+        result = original_commit(connection)
+        worker.committed()
+        return result
+
+    def statement(execute: Callable[..., Any], sql: str, params: Any, many: bool, context: dict[str, Any]) -> Any:
+        if worker.dead and leading_keyword(sql) == "ROLLBACK":
+            # Unwinding savepoints after a death mid-transaction: the server would roll back anyway.
+            return execute(sql, params, many, context)
+        worker.refuse_if_dead()
+        if target.in_atomic_block:
+            return execute(sql, params, many, context)
+        # Outside a transaction a write commits by itself.
+        result, wrote = execute_reporting_autocommit_write(execute, sql, params, many, context)
+        if wrote:
+            worker.committed()
+        return result
+
+    with pytest.MonkeyPatch.context() as patch, target.execute_wrapper(statement):
+        patch.setattr(type(target), "commit", commit)
+        yield worker
+    if worker.dead:
+        # A dead process's session ends with it: advisory locks, session
+        # settings and temporary tables must not survive into recovery.
+        target.close()

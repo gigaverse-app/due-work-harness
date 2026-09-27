@@ -1,0 +1,134 @@
+"""
+A :class:`~due_work_harness.host.SelectionInspector` for Django QuerySets on PostgreSQL.
+
+Profile A's database proofs — the selection is index-served, it does not read a
+replica, it does not discard most of what it reads, a tick issues a bounded
+number of statements — ask the host rather than touching an ORM. This inspector
+answers them for a ``due_work`` binding that returns a Django ``QuerySet``:
+
+* **index served** — ``SET LOCAL enable_seqscan = off``, then ``EXPLAIN (FORMAT
+  JSON)`` without executing the query, and the plan handed to
+  :func:`due_work_harness.integrations.postgres_plans.index_served_verdict`. On
+  the tiny tables a test database has, the planner would pick a sequential scan
+  for anything, so cost comparison proves nothing. With sequential scans
+  disabled, PostgreSQL falls back to one only when no usable index exists, which
+  makes the plan structural evidence rather than a costing artifact;
+* **replica read** — the database alias the QuerySet is routed to, compared
+  against the aliases that are replicas;
+* **scan counts** — ``EXPLAIN ANALYZE (FORMAT JSON)``, read by
+  :func:`due_work_harness.integrations.postgres_plans.scan_counts`;
+* **statements during a run** — Django's ``CaptureQueriesContext`` on one
+  connection.
+"""
+
+import json
+from collections.abc import Callable, Collection
+from dataclasses import dataclass
+from typing import Any
+
+from django.conf import settings
+from django.db import DEFAULT_DB_ALIAS, connections, transaction
+from django.db.models import QuerySet
+from django.test.utils import CaptureQueriesContext
+
+from due_work_harness.integrations.postgres_plans import index_served_verdict, scan_counts
+
+
+def _require_postgresql(alias: str, reading: str) -> None:
+    vendor = connections[alias].vendor
+    assert vendor == "postgresql", (
+        f"{reading} reads PostgreSQL EXPLAIN plans, and the selection's database {alias!r} is {vendor!r}. "
+        f"Run this proof against PostgreSQL, or configure an inspector for this database"
+    )
+
+
+def _plan(explained: str | list[Any]) -> dict[str, Any]:
+    # Depending on the driver, Django returns the JSON plan as text or decoded.
+    document = json.loads(explained) if isinstance(explained, str) else explained
+    return document[0]["Plan"]
+
+
+def explain_index_eligibility(queryset: QuerySet[Any]) -> dict[str, Any]:
+    """Probe index eligibility without executing the selected query or leaking settings."""
+    _require_postgresql(queryset.db, "the index-served proof")
+    database = connections[queryset.db]
+    # A successful nested atomic block releases a savepoint, not SET LOCAL.
+    # Restore explicitly on success; rollback owns restoration on SQL failure.
+    # Use the queryset's actual connection for both EXPLAIN and its settings.
+    with transaction.atomic(using=database.alias), database.cursor() as cursor:
+        cursor.execute("SHOW enable_seqscan")
+        previous = cursor.fetchone()[0]
+        cursor.execute("SET LOCAL enable_seqscan = off")
+        plan = _plan(queryset.explain(format="json"))
+        cursor.execute("SELECT set_config('enable_seqscan', %s, true)", [previous])
+    return plan
+
+
+def _mirrored_aliases() -> frozenset[str]:
+    """Aliases Django's test settings declare as replicas (``TEST: {"MIRROR": ...}``)."""
+    return frozenset(alias for alias, config in settings.DATABASES.items() if config.get("TEST", {}).get("MIRROR"))
+
+
+@dataclass(frozen=True)
+class DjangoSelectionInspector:
+    """
+    Database facts about a QuerySet selection.
+
+    ``replica_aliases`` names the database aliases that are replicas: a
+    collection, a callable evaluated at each check (for a project whose test
+    settings move the replica alias per test), or ``None`` to use every alias
+    whose ``TEST`` settings declare a ``MIRROR``. A project that declares no
+    replica cannot select from one, so the replica check reports the primary.
+
+    ``using`` is the connection whose statements :meth:`statements_during`
+    counts.
+    """
+
+    replica_aliases: Collection[str] | Callable[[], Collection[str]] | None = None
+    using: str = DEFAULT_DB_ALIAS
+
+    def understands(self, selection: object) -> bool:
+        return isinstance(selection, QuerySet)
+
+    def index_served(self, selection: object) -> tuple[bool, str]:
+        queryset = self._queryset(selection)
+        table = queryset.model._meta.db_table
+        plan = explain_index_eligibility(queryset)
+        verdict = index_served_verdict(plan, table=table)
+        if verdict is None:
+            return True, json.dumps(plan, indent=2)
+        return False, verdict
+
+    def replica_read(self, selection: object) -> str | None:
+        replicas = self._replicas()
+        assert DEFAULT_DB_ALIAS not in replicas, (
+            f"the test settings collapse the replica alias onto {DEFAULT_DB_ALIAS!r}, so this check cannot tell "
+            f"the primary from the replica: it would report a violation for code that has none and miss one in "
+            f"code that does. Restore a distinct replica alias for this test"
+        )
+        used = self._queryset(selection).db
+        return used if used in replicas else None
+
+    def scan_counts(self, selection: object) -> tuple[float, float]:
+        queryset = self._queryset(selection)
+        _require_postgresql(queryset.db, "the scan-ratio proof")
+        return scan_counts(_plan(queryset.explain(analyze=True, format="json")))
+
+    def statements_during(self, run: Callable[[], object]) -> list[str]:
+        with CaptureQueriesContext(connections[self.using]) as captured:
+            run()
+        return [query["sql"] for query in captured.captured_queries]
+
+    def _replicas(self) -> frozenset[str]:
+        if self.replica_aliases is None:
+            return _mirrored_aliases()
+        if callable(self.replica_aliases):
+            return frozenset(self.replica_aliases())
+        return frozenset(self.replica_aliases)
+
+    @staticmethod
+    def _queryset(selection: object) -> QuerySet[Any]:
+        assert isinstance(selection, QuerySet), (
+            f"DjangoSelectionInspector reads QuerySets; the selection is {type(selection).__name__}"
+        )
+        return selection

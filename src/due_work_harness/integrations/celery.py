@@ -1,0 +1,105 @@
+"""
+Schedule evidence for recovery ticks run by Celery beat.
+
+Profile A's ``assert_scheduled`` and ``tick_interval`` are scheduler-neutral: an
+adopter supplies whatever proves its tick runs recurringly. These helpers cover
+the common Celery case, reading the beat schedule from a Celery app's
+``conf.beat_schedule`` when one is passed, otherwise from Django's
+``CELERY_BEAT_SCHEDULE`` setting (Django is imported only then).
+:func:`celery_publications` is a ``publication_recorder`` for hosts whose
+workers publish through Celery; it imports Celery when entered.
+"""
+
+import importlib
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from datetime import timedelta
+from typing import Any
+from unittest import mock
+
+
+def _beat_schedule(app: Any | None) -> Mapping[str, Mapping[str, Any]]:
+    if app is not None:
+        return app.conf.beat_schedule
+    from django.conf import settings
+
+    return settings.CELERY_BEAT_SCHEDULE
+
+
+def celery_beat_evidence(task_path: str, *, app: Any | None = None) -> Callable[[], None]:
+    """
+    Schedule evidence for the common case: an entry in the beat schedule.
+
+    Checks two things, because the entry alone is not evidence that anything
+    runs. A check that compares the adopter's string against the strings in the
+    schedule and stops there is satisfied by a beat entry left pointing at a task
+    that has been renamed or moved — while beat raises ``NotRegistered`` at every
+    tick in production. That is precisely the "nothing runs it" failure profile
+    A's invariant 8 exists to catch, and such a check cannot see it.
+
+    So the path must also resolve to something callable. A dotted import is the
+    portable check: Celery registers a task by importing the module that
+    decorates it, so a path that cannot be imported cannot be a registered task
+    either.
+    """
+
+    def check() -> None:
+        scheduled = {entry.get("task") for entry in _beat_schedule(app).values()}
+        assert task_path in scheduled, f"{task_path!r} is not in the beat schedule, so nothing runs it"
+
+        module_path, _, attribute = task_path.rpartition(".")
+        try:
+            task = getattr(importlib.import_module(module_path), attribute)
+        except (ImportError, AttributeError) as error:
+            raise AssertionError(
+                f"{task_path!r} is in the beat schedule but does not resolve to anything ({error!r}). "
+                f"Beat will publish it and the worker will reject it as unregistered, so the sweep never "
+                f"runs — which every other invariant would still pass"
+            ) from error
+
+        assert callable(task) or hasattr(task, "delay"), (
+            f"{task_path!r} resolves to {task!r}, which is neither callable nor a Celery task, "
+            f"so scheduling it runs nothing"
+        )
+
+    return check
+
+
+def celery_beat_interval(task_path: str, *, app: Any | None = None) -> timedelta:
+    """The tick interval for the common case, read from the beat schedule."""
+    for entry in _beat_schedule(app).values():
+        if entry.get("task") == task_path:
+            schedule = entry["schedule"]
+            assert isinstance(schedule, timedelta), (
+                f"{task_path} is scheduled with {schedule!r}, which is not an interval this helper can convert"
+            )
+            return schedule
+    raise AssertionError(f"{task_path!r} is not in the beat schedule")
+
+
+@contextmanager
+def celery_publications() -> Iterator[list[str]]:
+    """
+    Record Celery publications without sending them: the host's ``publication_recorder``.
+
+    Every ``Task.apply_async`` (and so ``delay``) and ``Celery.send_task`` inside
+    the block appends the task name to the yielded list and returns without
+    reaching a broker, so work handed off only as a message is visible and is
+    never delivered.
+    """
+    from celery import Celery
+    from celery.app.task import Task
+    from celery.result import AsyncResult
+
+    published: list[str] = []
+
+    def apply_async(task: Any, *_args: Any, **_kwargs: Any) -> AsyncResult:
+        published.append(task.name)
+        return AsyncResult(f"held-{len(published)}")
+
+    def send_task(_app: Any, name: str, *_args: Any, **_kwargs: Any) -> AsyncResult:
+        published.append(name)
+        return AsyncResult(f"held-{len(published)}")
+
+    with mock.patch.object(Task, "apply_async", apply_async), mock.patch.object(Celery, "send_task", send_task):
+        yield published
