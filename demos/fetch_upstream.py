@@ -2,7 +2,7 @@
 Fetch the upstream demo applications at the exact commits the demos were written against.
 
 The demos never vendor upstream code: they run the harness against the demo
-applications exactly as their projects ship them. Run this once before the demo
+applications, and real open-source applications, exactly as their projects ship them. Run this once before the demo
 tests; it clones into ``demos/.upstream/`` (ignored by git).
 """
 
@@ -16,6 +16,7 @@ UPSTREAMS = {
         "35f3ca98d979cf5afecb6df902e9a750680edea0",
     ),
     "dbos-demo-apps": ("https://github.com/dbos-inc/dbos-demo-apps.git", "45a68c2ce39838cf6853db4dd71c5a40dac70051"),
+    "saleor": ("https://github.com/saleor/saleor.git", "5ff56489737c78a9a5631d528f699303c953696a"),
 }
 
 ROOT = Path(__file__).resolve().parent / ".upstream"
@@ -24,8 +25,10 @@ ROOT = Path(__file__).resolve().parent / ".upstream"
 def fetch(name: str, url: str, commit: str) -> Path:
     target = ROOT / name
     if not target.exists():
-        subprocess.run(["git", "clone", "--quiet", url, str(target)], check=True)
-    subprocess.run(["git", "-C", str(target), "fetch", "--quiet", "origin", commit], check=True)
+        # Only the pinned commit: an application's full history can be hundreds of megabytes.
+        subprocess.run(["git", "init", "--quiet", str(target)], check=True)
+        subprocess.run(["git", "-C", str(target), "remote", "add", "origin", url], check=True)
+    subprocess.run(["git", "-C", str(target), "fetch", "--quiet", "--depth", "1", "origin", commit], check=True)
     subprocess.run(["git", "-C", str(target), "checkout", "--quiet", "--detach", commit], check=True)
     return target
 

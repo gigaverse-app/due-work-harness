@@ -1,7 +1,8 @@
-# Demos: the harness against demos other projects ship
+# Demos: the harness against code other projects ship
 
-Each demo runs `due-work-harness` against a demo application **exactly as its
-project publishes it**, pinned to a commit. Nothing upstream is vendored or
+Each demo runs `due-work-harness` against a demo application, or a real
+open-source application, **exactly as its project publishes it**, pinned to a
+commit. Nothing upstream is vendored or
 modified: `fetch_upstream.py` clones the pinned commits into `demos/.upstream/`.
 The adapters bind the demo's own code — its views, tasks, workers and startup —
 and replace only the slow or external call each demo already fakes (a
@@ -31,6 +32,24 @@ The DBOS finding is DBOS working as documented — an interrupted workflow
 resumes from its last *completed* step — and the demo's "runs exactly once"
 refers to the workflow, not to its external effect.
 
+## Real applications
+
+| Application | Proof | As shipped | Saleor's own answer |
+| --- | --- | --- | --- |
+| [Saleor](saleor_checkout/) @ `5ff56489`, `complete_checkout` | Worker dies right after each commit, then Saleor runs every periodic task it schedules for 91 days | **Finding 1.** With the Payments API (payment plugins), the payment is captured in its own transaction before the order's. A death in between charges the customer and never creates the order; 90 days later Saleor deletes the checkout and the captured payment belongs to nothing | With the Transactions API and `automatically_complete_fully_paid_checkouts`, the same deaths always end with an order: Saleor's beat task completes the paid checkout |
+| | | **Finding 2.** Everything after the order commits (its events, the ORDER_CREATED webhooks, the confirmation) runs in `on_commit` callbacks, each write committing on its own. A death there leaves a paid order never confirmed, its history empty or half-written, and nothing Saleor schedules re-runs it | — |
+| | Each after-commit callback fails, the process alive | **Finding 3.** When `order_created` raises (a webhook payload bug, a plugin error, a database error), Django skips every later callback of the commit: the customer is not sent their confirmation | — |
+
+Saleor's own test settings, fixtures and code run unchanged: the demo builds
+Saleor's environment from its `uv.lock`, loads its root `conftest.py`, and
+arranges each checkout the way Saleor's own `checkoutComplete` tests do. What
+each of the fourteen histories costs is pinned in
+[`test_order_confirmation.py`](saleor_checkout/test_order_confirmation.py)
+(`FINDINGS`), so a change upstream or in the harness shows exactly what moved.
+Two things to keep in mind when reading the findings: a customer who retries
+`checkoutComplete` within the 90 days does get the order, and deaths *after* a
+payment is captured are rare. Finding 3 needs no death at all.
+
 ## Running them
 
 ```bash
@@ -44,6 +63,15 @@ pytest demos/dbos_transactional_outbox -p no:django
 The DBOS demo creates and drops its own database (`dbos_outbox_demo`, override
 with `DBOS_DEMO_DATABASE`).
 
+The Saleor demo runs in Saleor's own environment, built from its `uv.lock` on
+Linux (Saleor's development dependencies do not build on Windows):
+
+```bash
+python demos/fetch_upstream.py saleor
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/saleor demos/saleor_checkout/run.sh -rxX
+demos/saleor_checkout/run.sh --typecheck
+```
+
 ## What each adapter binds
 
 - **procrastinate:** the transition is the demo's `CreateBookView` through
@@ -54,3 +82,11 @@ with `DBOS_DEMO_DATABASE`).
   process started through the demo's own `main()`; recovery is `main()` running
   again in the test process (`integrations.dbos.restart_until`). Production
   packages are `dbos` and the demo's directory.
+- **Saleor:** the transition is `complete_checkout`, called as the
+  `checkoutComplete` mutation calls it. Not through the GraphQL view: its
+  graphql-core 2 executor waits on a promise that a simulated death (a
+  `BaseException`) never resolves, where a real death never reaches the
+  resolver. Recovery is every task in Saleor's `CELERY_BEAT_SCHEDULE`, at one
+  hour, one day, 31 and 91 days. Confirmations are counted at
+  `PluginsManager.notify`, the seam Saleor's own tests mock. Production
+  packages are `saleor` and `django`.

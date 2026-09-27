@@ -36,8 +36,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      # The demos type-check against the upstream code they run.
-      - run: uv run --no-project python demos/fetch_upstream.py
+      # The demos type-check against the upstream code they run (Saleor's in its own job).
+      - run: uv run --no-project python demos/fetch_upstream.py procrastinate dbos-demo-apps
       - run: uv sync --locked --all-extras --group demos
       - run: uv pip install -e demos/.upstream/procrastinate
       - run: uv run --no-sync pyrefly check
@@ -103,7 +103,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv run --no-project python demos/fetch_upstream.py
+      - run: uv run --no-project python demos/fetch_upstream.py procrastinate dbos-demo-apps
       - run: uv sync --locked --no-default-groups --extra django --group demos
       # procrastinate's demos ship only in its source tree, pinned by fetch_upstream.py.
       - run: uv pip install -e demos/.upstream/procrastinate
@@ -113,6 +113,34 @@ jobs:
         run: uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings -rxX
       - name: DBOS transactional-outbox
         run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX
+
+  saleor:
+    # Saleor's checkout, unmodified, in Saleor's own environment built from its uv.lock.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/saleor
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          # Saleor's pin lives in fetch_upstream.py; its lock is fetched after this step.
+          cache-dependency-glob: |
+            uv.lock
+            demos/fetch_upstream.py
+      - run: uv run --no-project python demos/fetch_upstream.py saleor
+      - name: Type-check the demo against Saleor
+        run: demos/saleor_checkout/run.sh --typecheck
+      - name: Saleor checkout
+        run: demos/saleor_checkout/run.sh -rxX
 
   build:
     # The published wheel alone: it installs without any framework, imports, and ships py.typed.

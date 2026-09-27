@@ -1,0 +1,21 @@
+# The harness against Saleor's checkout, unmodified.
+#
+# Not an installable project: the environment is Saleor's own, built from its
+# uv.lock at the pinned commit (see run.sh), with the harness added without
+# changing any version Saleor pins. This file configures pytest, so that this
+# directory is the rootdir and its conftest.py can load Saleor's.
+
+[tool.pytest.ini_options]
+addopts = ["--ds=saleor.tests.settings", "-p", "no:cacheprovider", "-rxX"]
+pythonpath = ["../.upstream/saleor"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
+
+# Type-checked against Saleor's environment, which the demo runs in: run.sh --typecheck.
+[tool.pyrefly]
+project-includes = ["."]
+project-excludes = ["**/__pycache__/**"]
+python-version = "3.12"
+python-platform = "linux"
+search-path = [".", "../.upstream/saleor", "../../src"]
