@@ -1,0 +1,34 @@
+name: PR title
+
+# Pull requests are squash-merged with their title as the commit message, and
+# release-please reads those commits to choose the next version. The title must
+# therefore be a Conventional Commit: see RELEASING.md.
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  conventional-commit:
+    runs-on: ubuntu-latest
+    steps:
+      # Reads only the title through the API; it never checks out the pull request's code.
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            revert
+            docs
+            refactor
+            test
+            build
+            ci
+            chore
+          requireScope: false

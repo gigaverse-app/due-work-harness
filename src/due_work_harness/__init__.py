@@ -23,6 +23,14 @@ The core imports no framework. Everything re-exported here loads with only
 pytest installed.
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("due-work-harness")
+except PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "0+unknown"
+
+
 from due_work_harness.contract import (
     Adoption,
     Claim,
@@ -124,6 +132,7 @@ from due_work_harness.safety.replay_safe_execution import (
 )
 
 __all__ = [
+    "__version__",
     # Contract layer.
     "Adoption",
     "Claim",
