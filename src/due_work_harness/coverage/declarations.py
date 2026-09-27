@@ -18,7 +18,6 @@ from due_work_harness.coverage.project import (
     defined_names,
     is_excluded,
     module_name,
-    parse_module,
     qualified_name,
     terminal_name,
     top_level_imports,
@@ -80,7 +79,7 @@ class Declarations:
     def __init__(self, module: Module, project: Project) -> None:
         self.module = module
         self.project = project
-        self.tree = parse_module(module)
+        self.tree = project.tree(module)
         self.imported = top_level_imports(self.tree, module)
         self.defined = defined_names(self.tree)
         self.assigned = {

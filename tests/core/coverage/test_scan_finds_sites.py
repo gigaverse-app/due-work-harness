@@ -327,3 +327,133 @@ def test_test_code_is_never_production(tmp_path: Path) -> None:
         },
     )
     assert sites == {}
+
+
+def test_celerys_on_commit_publications_are_sites(tmp_path: Path) -> None:
+    sites = _sites(
+        tmp_path,
+        {
+            "shop/tasks.py": "from celery import shared_task\n\n@shared_task\ndef send_receipt(order_id): ...\n",
+            "shop/orders.py": """
+                from shop.tasks import send_receipt
+
+                def place():
+                    send_receipt.delay_on_commit(1)
+                    send_receipt.apply_async_on_commit((1,))
+            """,
+        },
+    )
+    assert sites == {"shop.orders.place": ["celery", "celery"]}
+
+
+def test_dramatiq_sends_count_only_on_actors(tmp_path: Path) -> None:
+    sites = _sites(
+        tmp_path,
+        {
+            "shop/tasks.py": """
+                import dramatiq
+                from dramatiq import actor
+
+                @actor
+                def index_book(book_id): ...
+
+                @dramatiq.actor(queue_name="mail")
+                def send_receipt(order_id): ...
+            """,
+            "shop/orders.py": """
+                from django.dispatch import Signal
+                from shop.tasks import index_book, send_receipt
+
+                order_placed = Signal()
+
+                def place(order_id):
+                    index_book.send(order_id)
+                    send_receipt.send_with_options(args=(order_id,), delay=1000)
+                    order_placed.send(sender=None, order_id=order_id)
+            """,
+        },
+    )
+    assert sites == {"shop.orders.place": ["dramatiq", "dramatiq"]}
+
+
+def test_rq_enqueues_count_on_rq_objects_only(tmp_path: Path) -> None:
+    sites = _sites(
+        tmp_path,
+        {
+            "shop/jobs.py": """
+                import django_rq
+                from datetime import timedelta
+                from django_rq import enqueue
+                from rq import Queue
+                from rq.decorators import job
+
+                @job("default")
+                def reindex(pk): ...
+
+                def rebuild(pk): ...
+
+                class Job:
+                    @classmethod
+                    def enqueue(cls, func): ...
+
+                class Scheduler:
+                    def __init__(self):
+                        self.queue = django_rq.get_queue("low")
+
+                    def later(self, pk):
+                        self.queue.enqueue_in(timedelta(minutes=5), rebuild, pk)
+
+                def place(pk, connection, planner):
+                    django_rq.enqueue(rebuild, pk)
+                    enqueue(rebuild, pk)
+                    queue = django_rq.get_queue("default")
+                    queue.enqueue(rebuild, pk)
+                    Queue("high", connection=connection).enqueue_call(func=rebuild, args=(pk,))
+                    reindex.delay(pk)
+                    Job.enqueue(rebuild)
+                    planner.enqueue(rebuild)
+            """
+        },
+    )
+    assert sites == {"shop.jobs.Scheduler.later": ["rq"], "shop.jobs.place": ["rq"] * 5}
+
+
+def test_django_tasks_count_only_for_djangos_task_decorator(tmp_path: Path) -> None:
+    sites = _sites(
+        tmp_path,
+        {
+            "shop/tasks.py": """
+                from celery import Celery
+                from django.tasks import task
+
+                app = Celery("shop")
+
+                @task(priority=2)
+                def send_receipt(order_id): ...
+
+                @app.task
+                def reindex(order_id): ...
+            """,
+            "shop/orders.py": """
+                from shop.tasks import reindex, send_receipt
+
+                async def place(order_id):
+                    send_receipt.enqueue(order_id)
+                    await send_receipt.aenqueue(order_id)
+                    reindex.enqueue(order_id)
+            """,
+        },
+    )
+    assert sites == {"shop.orders.place": ["django-tasks", "django-tasks"]}
+
+
+def test_django_alone_does_not_enable_django_tasks(tmp_path: Path) -> None:
+    assert scan(write_project(tmp_path, {"shop/orders.py": ON_COMMIT})).kinds == ["django"]
+
+
+def test_a_file_this_python_cannot_parse_is_a_problem_not_a_crash(tmp_path: Path) -> None:
+    report = scan(write_project(tmp_path, {"shop/orders.py": ON_COMMIT, "shop/broken.py": "def broken(:\n"}))
+    assert list(report.sites) == ["shop.orders.place"]
+    (problem,) = [problem for problem in report.problems if "broken.py" in problem]
+    assert problem.startswith("shop/broken.py:1 cannot be parsed by Python 3.")
+    assert problem.endswith("run the check with the project's Python or newer")

@@ -82,7 +82,8 @@ recovery is not a pass.
 
 A crash history proves one handoff; the coverage check makes sure none are
 forgotten. It scans production code for every call that hands work off —
-`on_commit`, a Celery `.delay`, a procrastinate `.defer`, a DBOS workflow start —
+`on_commit`, a Celery `.delay`, a procrastinate `.defer`, a DBOS workflow start,
+a Dramatiq `.send`, an RQ `enqueue`, a Django task's `.enqueue` —
 attributes each to the exact function that makes it, and requires exactly one
 disposition per function: a contract suite that insures it, or an exemption
 that proves losing it costs nothing. Aliases, re-exports and handoffs passed

@@ -1,7 +1,8 @@
 name: due-work-harness check
 description: >-
   Fail unless every handoff site in the project (on_commit callbacks, Celery
-  publications, procrastinate deferrals, DBOS workflow starts) has exactly one
+  publications, procrastinate deferrals, DBOS workflow starts, Dramatiq and RQ
+  messages, Django tasks) has exactly one
   disposition. Static: it imports neither the project nor its tests.
 branding:
   icon: check-circle
@@ -25,8 +26,11 @@ inputs:
     description: Package spec or path to install instead of the release (for testing the action itself).
     default: due-work-harness
   python-version:
-    description: Python to run the check with.
-    default: "3.12"
+    description: >-
+      Python to run the check with. The check parses code with this Python's
+      grammar, so the default is the newest supported release, which also reads
+      code written for older ones.
+    default: "3.14"
 
 runs:
   using: composite

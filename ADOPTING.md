@@ -28,16 +28,22 @@ check runs, framework installed or not:
 | Kind | A site is |
 | --- | --- |
 | `django` | `transaction.on_commit(...)`, including through `sync_to_async` |
-| `celery` | `.delay(...)` / `.apply_async(...)` on a `@shared_task` / `@app.task`, and `send_task(...)` |
+| `celery` | `.delay(...)` / `.apply_async(...)` and their `_on_commit` variants on a `@shared_task` / `@app.task`, and `send_task(...)` |
 | `procrastinate` | `.defer(...)` / `.defer_async(...)` on an `@app.task`, including after `.configure(...)` |
 | `dbos` | `DBOS.start_workflow(...)`, and `queue.enqueue(workflow, ...)` for a `@DBOS.workflow` |
+| `dramatiq` | `.send(...)` / `.send_with_options(...)` on an `@actor` |
+| `rq` | `enqueue`, `enqueue_call`, `enqueue_at`, `enqueue_in` on `rq`/`django_rq` or a queue they returned; `.delay(...)` on an `@job` |
+| `django-tasks` | `.enqueue(...)` / `.aenqueue(...)` on a `django.tasks` (or `django_tasks`) `@task` |
 
 A site is any reference to the handoff, called or not, through any alias: a
 local name, a parameter default, `self.hook`, a re-export, `sync_to_async(...)`
 or `functools.partial(...)` all count, in the outermost function that contains
 them. `sites = ["celery"]` adds a kind the scan cannot detect (a framework
 reached only through a third-party wrapper); it never removes a detected one.
-`exclude` adds name patterns to skip, and may never hide production code. See
+A project helper that hands work off for its callers (Zulip's
+`send_event_on_commit`, say) is declared in `bridges` with its own site count, so
+each call to it becomes a site in its caller. `exclude` adds name patterns to
+skip, and may never hide production code. See
 [`coverage/config.py`](src/due_work_harness/coverage/config.py) for every key.
 
 ## 3. See what you have, and baseline the past
