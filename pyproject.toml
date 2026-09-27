@@ -80,7 +80,8 @@ addopts = "-p no:cacheprovider"
 
 [tool.pyrefly]
 project-includes = ["src", "tests", "tests_support", "demos", "scripts"]
-project-excludes = ["demos/.upstream/**", "**/__pycache__/**", ".venv*/**"]
+# The Saleor demo runs in Saleor's own environment and is type-checked there (see its pyproject.toml).
+project-excludes = ["demos/.upstream/**", "demos/saleor_checkout/**", "**/__pycache__/**", ".venv*/**"]
 python-version = "3.12"
 python-platform = "linux"
 # tests_support holds the sample production package the binding self-tests import;

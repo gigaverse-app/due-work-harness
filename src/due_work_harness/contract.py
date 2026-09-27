@@ -1114,6 +1114,36 @@ def _coherence_runner(
     return run
 
 
+def _unclaimed_case(label: str, disposition: Disposition, transactional: bool, fixtures: tuple[str, ...]) -> Any:
+    """
+    The visible case for a profile the contract does not claim.
+
+    A decline's ``prove`` and a known gap's ``detect`` run against production,
+    so they get the contract's database marks like every other runtime proof: a
+    probe that needs real commits must not see an uncommitted test transaction,
+    where its own arrangement is invisible to the production path it runs and a
+    strict xfail would then pass for the wrong reason.
+    """
+    if isinstance(disposition, Decline):
+        case = ContractCase(
+            id=f"{label}-declined",
+            run=disposition.prove or (lambda: None),
+            fixtures=fixtures if disposition.prove else (),
+        )
+        return pytest.param(case, id=case.id, marks=_database_marks(transactional) if disposition.prove else [])
+    if isinstance(disposition, NotApplicable):
+        case = ContractCase(id=f"{label}-not_applicable", run=lambda: None)
+        return pytest.param(case, id=case.id)
+    assert isinstance(disposition, KnownGap), f"{label}: a claim has no unclaimed case"
+    case = ContractCase(
+        id=f"{label}-known_gap",
+        run=disposition.detect or _documenting_failure(disposition.because),
+        fixtures=fixtures if disposition.detect else (),
+    )
+    marks = [*_database_marks(transactional), pytest.mark.xfail(strict=True, reason=disposition.because)]
+    return pytest.param(case, id=case.id, marks=marks)
+
+
 def _database_marks(transactional: bool) -> list[Any]:
     """
     The marks a generated case needs to use the database, from the host.
@@ -1156,33 +1186,8 @@ def safety_contract_cases(contract: SafetyContract) -> list[Any]:
                         fixtures=contract.fixtures,
                     )
                     params.append(pytest.param(case, id=case.id, marks=marks))
-        elif isinstance(disposition, Decline):
-            case = ContractCase(
-                id=f"{profile.name}-declined",
-                run=disposition.prove or (lambda: None),
-                fixtures=contract.fixtures if disposition.prove else (),
-            )
-            marks = _database_marks(False) if disposition.prove else []
-            params.append(pytest.param(case, id=case.id, marks=marks))
-        elif isinstance(disposition, NotApplicable):
-            case = ContractCase(id=f"{profile.name}-not_applicable", run=lambda: None)
-            params.append(pytest.param(case, id=case.id))
         else:
-            case = ContractCase(
-                id=f"{profile.name}-known_gap",
-                run=disposition.detect or _documenting_failure(disposition.because),
-                fixtures=contract.fixtures if disposition.detect else (),
-            )
-            params.append(
-                pytest.param(
-                    case,
-                    id=case.id,
-                    marks=[
-                        *_database_marks(False),
-                        pytest.mark.xfail(strict=True, reason=disposition.because),
-                    ],
-                )
-            )
+            params.append(_unclaimed_case(profile.name, disposition, contract.transactional, contract.fixtures))
     return params
 
 
@@ -1213,33 +1218,8 @@ def contract_cases(contract: DueWorkContract) -> list[Any]:
                         fixtures=contract.fixtures,
                     )
                     params.append(pytest.param(case, id=case.id, marks=marks))
-        elif isinstance(disposition, Decline):
-            case = ContractCase(
-                id=f"{profile.name}-declined",
-                run=disposition.prove or (lambda: None),
-                fixtures=contract.fixtures if disposition.prove else (),
-            )
-            marks = _database_marks(False) if disposition.prove else []
-            params.append(pytest.param(case, id=case.id, marks=marks))
-        elif isinstance(disposition, NotApplicable):
-            case = ContractCase(id=f"{profile.name}-not_applicable", run=lambda: None)
-            params.append(pytest.param(case, id=case.id))
         else:
-            case = ContractCase(
-                id=f"{profile.name}-known_gap",
-                run=disposition.detect or _documenting_failure(disposition.because),
-                fixtures=contract.fixtures if disposition.detect else (),
-            )
-            params.append(
-                pytest.param(
-                    case,
-                    id=case.id,
-                    marks=[
-                        *_database_marks(False),
-                        pytest.mark.xfail(strict=True, reason=disposition.because),
-                    ],
-                )
-            )
+            params.append(_unclaimed_case(profile.name, disposition, contract.transactional, contract.fixtures))
     params.extend(_coherence_cases(contract))
     params.extend(_handoff_cases(contract))
     for extra in contract.extras:

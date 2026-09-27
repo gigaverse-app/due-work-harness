@@ -8,8 +8,10 @@ hook, in a ``finally`` block, or only as a message. Each must diverge without
 the adopter naming a boundary. Positive controls commit the failure and its
 successor together, including inside a savepoint. Deaths after a named
 external call find a notification that recovery repeats, and converge once the
-recipient honours an idempotency key. Agreement alone is not a pass: a recovery
-that recovers nothing fails.
+recipient honours an idempotency key. Failing each after-commit callback finds
+a handoff that a failing *earlier* callback skips, and shows what ``robust=True``
+does and does not fix. Agreement alone is not a pass: a recovery that recovers
+nothing fails.
 """
 
 from collections.abc import Callable, Iterator
@@ -26,6 +28,7 @@ from due_work_harness.crash_histories import (
     ExternalCall,
     HandoffHistory,
     assert_crash_at_every_commit_converges,
+    crash_histories,
 )
 from due_work_harness.integrations.django import lifecycle_references as ref
 
@@ -99,8 +102,6 @@ def test_a_handoff_a_death_or_lost_message_can_strand_diverges(
 def test_the_function_write_counts_as_a_commit() -> None:
     # Without transaction-id evidence only the successor's INSERT would count, and a
     # death after it converges; with it, the failure's SELECT is commit 1.
-    from due_work_harness.crash_histories import crash_histories
-
     runs = crash_histories(ref.RETRY_DELIVERY, _history(ref.fail_attempt_through_a_function_then_hand_off))
     assert runs[0].commits == 2
 
@@ -182,3 +183,23 @@ def test_an_idempotent_notification_converges() -> None:
 def test_naming_a_seam_the_transition_never_calls_is_refused() -> None:
     with pytest.raises(AssertionError, match="made none of them"):
         _converges(ref.NOTIFYING_ONCE_DELIVERY, _notifying(ref.complete_attempt_notifying_once, "notify"))
+
+
+def test_a_handoff_committed_with_its_state_survives_every_failing_callback() -> None:
+    runs = crash_histories(ref.RETRY_DELIVERY, _history(ref.fail_attempt_atomically_then_publishing))
+    assert [run.label for run in runs if run.label.startswith("after-commit")] == ["after-commit callback 1 failed"]
+    _converges(ref.RETRY_DELIVERY, _history(ref.fail_attempt_atomically_then_publishing))
+
+
+def test_a_failing_earlier_callback_skips_the_handoff_after_it() -> None:
+    with pytest.raises(AssertionError) as divergence:
+        _converges(ref.RETRY_DELIVERY, _history(ref.fail_attempt_publishing_after_an_audit))
+    assert "'after-commit callback 1 failed': ('retryable_failed', ())" in str(divergence.value)
+    assert "'after-commit callback 2 failed': ('retryable_failed', ())" in str(divergence.value)
+
+
+def test_robust_callbacks_protect_later_callbacks_but_not_their_own_handoff() -> None:
+    with pytest.raises(AssertionError) as divergence:
+        _converges(ref.RETRY_DELIVERY, _history(ref.fail_attempt_publishing_after_a_robust_audit))
+    assert "'after-commit callback 1 failed'" not in str(divergence.value)
+    assert "'after-commit callback 2 failed': ('retryable_failed', ())" in str(divergence.value)

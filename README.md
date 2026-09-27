@@ -135,15 +135,21 @@ installed.
 
 ## Demos: the harness against code we didn't write
 
-[`demos/`](demos/) runs the harness against demo applications exactly as their
-projects ship them, pinned to a commit:
+[`demos/`](demos/) runs the harness against demo applications, and real
+open-source applications, exactly as their projects ship them, pinned to a
+commit:
 
 | Demo | Finding | Fix the positive control proves |
 | --- | --- | --- |
 | procrastinate `demo_django` | A worker death between committing the book and deferring its job leaves the book never indexed | `ATOMIC_REQUESTS = True` |
 | | `index_book` holds a transaction across its slow call | — |
 | | A job whose worker died is never picked up again | procrastinate's documented `retry_stalled_jobs` task |
+| procrastinate itself | `finish_job` does not check the worker: a worker presumed dead finishes a job another worker has since fetched | — (a fencing token on finish; reported by the demo's profile B claim) |
 | DBOS `transactional-outbox` | A death after sending the notification, before DBOS records the step, notifies the customer twice | an idempotent notification |
+| Saleor checkout | With the Payments API, a death between capturing the payment and creating the order charges the customer with no order; after 90 days the payment belongs to nothing | Saleor's Transactions API with automatic completion of paid checkouts |
+| | A death after the order commits leaves it unconfirmed, its history empty or half-written | — |
+| | A failing `order_created` callback, no death at all, makes Django skip the confirmation | — |
+| | Automatic completion dispatches a paid checkout again while its completion is still in flight, and reports no backlog | — |
 
 The coverage scan finds the same handoffs statically: the create view's `.defer` and `index_book`'s in the
 procrastinate demo, and `DBOS.start_workflow` in DBOS's other outbox variant. A handoff made in SQL, as

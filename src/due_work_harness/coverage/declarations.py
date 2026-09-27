@@ -19,6 +19,7 @@ from due_work_harness.coverage.project import (
     is_excluded,
     module_name,
     qualified_name,
+    relative_path,
     terminal_name,
     top_level_imports,
 )
@@ -47,7 +48,7 @@ def declaration_modules(config: CoverageConfig) -> list[Module]:
             if any(marker in path.read_text(encoding="utf-8") for marker in _MARKERS):
                 name = module_name(config, path) or path.stem
                 found.append(
-                    Module(name=name, path=path, relative=path.relative_to(config.root).as_posix(), package=False)
+                    Module(name=name, path=path, relative=relative_path(config, path).as_posix(), package=False)
                 )
     return found
 

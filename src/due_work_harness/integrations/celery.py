@@ -7,14 +7,15 @@ the common Celery case, reading the beat schedule from a Celery app's
 ``conf.beat_schedule`` when one is passed, otherwise from Django's
 ``CELERY_BEAT_SCHEDULE`` setting (Django is imported only then).
 :func:`celery_publications` is a ``publication_recorder`` for hosts whose
-workers publish through Celery; it imports Celery when entered.
+workers publish through Celery, and :func:`held_publications` records each held
+message with its arguments; both import Celery when entered.
 """
 
 import importlib
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import Any
+from typing import Any, NamedTuple
 from unittest import mock
 
 
@@ -77,29 +78,63 @@ def celery_beat_interval(task_path: str, *, app: Any | None = None) -> timedelta
     raise AssertionError(f"{task_path!r} is not in the beat schedule")
 
 
+class Publication(NamedTuple):
+    """One Celery message a held publication recorded: the task, and the arguments it would carry."""
+
+    task: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+
+
+@contextmanager
+def _holding(record: Callable[[Publication], object]) -> Iterator[None]:
+    """Patch Celery's publication paths so each message is recorded and none is sent or run."""
+    from celery import Celery
+    from celery.app.task import Task
+    from celery.result import AsyncResult
+
+    count = [0]
+
+    def held(publication: Publication) -> AsyncResult:
+        record(publication)
+        count[0] += 1
+        return AsyncResult(f"held-{count[0]}")
+
+    def apply_async(task: Any, args: Any = None, kwargs: Any = None, *_rest: Any, **_options: Any) -> AsyncResult:
+        return held(Publication(task.name, tuple(args or ()), dict(kwargs or {})))
+
+    def send_task(
+        _app: Any, name: str, args: Any = None, kwargs: Any = None, *_rest: Any, **_options: Any
+    ) -> AsyncResult:
+        return held(Publication(name, tuple(args or ()), dict(kwargs or {})))
+
+    with mock.patch.object(Task, "apply_async", apply_async), mock.patch.object(Celery, "send_task", send_task):
+        yield
+
+
+@contextmanager
+def held_publications() -> Iterator[list[Publication]]:
+    """
+    Hold every Celery publication in the block, recording what it would have sent.
+
+    Every ``Task.apply_async`` (and so ``delay``) and ``Celery.send_task`` appends
+    a :class:`Publication` and returns without reaching a broker or running the
+    task, even under ``task_always_eager``: work handed off only as a message is
+    visible, and is never delivered.
+    """
+    held: list[Publication] = []
+    with _holding(held.append):
+        yield held
+
+
 @contextmanager
 def celery_publications() -> Iterator[list[str]]:
     """
     Record Celery publications without sending them: the host's ``publication_recorder``.
 
-    Every ``Task.apply_async`` (and so ``delay``) and ``Celery.send_task`` inside
-    the block appends the task name to the yielded list and returns without
-    reaching a broker, so work handed off only as a message is visible and is
-    never delivered.
+    The task names of :func:`held_publications`, for proofs that ask only what
+    was handed off.
     """
-    from celery import Celery
-    from celery.app.task import Task
-    from celery.result import AsyncResult
-
-    published: list[str] = []
-
-    def apply_async(task: Any, *_args: Any, **_kwargs: Any) -> AsyncResult:
-        published.append(task.name)
-        return AsyncResult(f"held-{len(published)}")
-
-    def send_task(_app: Any, name: str, *_args: Any, **_kwargs: Any) -> AsyncResult:
-        published.append(name)
-        return AsyncResult(f"held-{len(published)}")
-
-    with mock.patch.object(Task, "apply_async", apply_async), mock.patch.object(Celery, "send_task", send_task):
-        yield published
+    names: list[str] = []
+    with _holding(lambda publication: names.append(publication.task)):
+        yield names

@@ -1,0 +1,9 @@
+# The demo as an adopter configures the coverage check: `due-work-harness check --root demos/dbos_transactional_outbox`.
+[tool.due-work-harness]
+production-packages = ["transactional_enqueue", "atomic_workflow"]
+source-roots = ["../.upstream/dbos-demo-apps/python/transactional-outbox"]
+test-paths = ["."]
+
+[tool.due-work-harness.baseline]
+# DBOS's other outbox variant, which starts its workflow with DBOS.start_workflow: no contract insures it here.
+"atomic_workflow.create_order" = 1

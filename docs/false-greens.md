@@ -45,6 +45,7 @@ proof green, the proof was about to tell you something.
 | **The message-only handoff** | a transition commits a failure and only publishes the work that creates its retry | a crash history's lost-notification run must reach normal operation's outcome |
 | **The write that reads as a SELECT** | a failure written by `SELECT some_function(...)` in autocommit, then a handoff in a second statement: one commit counted, the split never crashed | autocommit `SELECT`/`WITH` statements run in a one-statement transaction during a history; an assigned transaction id counts the write |
 | **The repeat no commit boundary shows** | notify, then record completion; every crash after a commit converges, a death after the notification sends it twice | `HandoffHistory.external_calls`: a death right after each named external call must converge too |
+| **The handoff behind another callback** | the order commits, then two plain `on_commit` callbacks run; a death after the commit is recovered by a sweep, but a *failing* first callback makes Django skip the second, and nothing selects what it owed | `callback_breaker`: each after-commit callback failing in turn must converge too; `robust=True` only protects the callbacks after the failing one |
 
 ## What only a reviewer can refuse
 

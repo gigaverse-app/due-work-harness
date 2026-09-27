@@ -11,7 +11,7 @@ twice.
 
 The reference outcome is **normal operation**: the real transition runs with
 its notifications delivered, then the bounded recovery production performs.
-Three families of histories must reach that same outcome:
+Four families of histories must reach that same outcome:
 
 * **Notifications lost** — the same transition, every message it published
   dropped, then recovery. This finds work that exists only as a message.
@@ -27,6 +27,12 @@ Three families of histories must reach that same outcome:
   external system acted, the process did nothing more. This finds the
   at-least-once repeat no commit boundary shows — recovery sending a second
   notification because the first was never recorded.
+* **Each after-commit callback failing** — when the host has a
+  ``callback_breaker``, for each after-commit callback i the transition reruns
+  and callback i raises instead of running, as a bug, a timeout or a provider
+  error would, while the process lives on. This finds work handed off only to a
+  callback, and work lost because an *earlier* callback failed: Django skips
+  every later callback of the same commit.
 
 The verdict is differential: the adopter supplies how to arrange the state, the
 real transition and an observation, never the expected value. Positive
@@ -66,7 +72,7 @@ import pytest
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from due_work_harness.host import current_host
 from due_work_harness.models import MISSING, HarnessModel, MutableHarnessModel, with_positional
-from due_work_harness.worker_death import WorkerDied
+from due_work_harness.worker_death import CallbackFailed, WorkerDied
 
 
 class ExternalCall(HarnessModel):
@@ -193,15 +199,17 @@ class HistoryRun(HarnessModel):
     after: Any
     commits: int = 0
     calls: int = 0
-    #: Whether the run was interrupted: a death, or its messages lost.
+    callbacks: int = 0
+    #: Whether the run was interrupted: a death, a failed callback, or its messages lost.
     interrupted: bool = False
 
 
 class _Worker:
     """A transition's worker as the history sees it: commits from the host, calls from the seams."""
 
-    def __init__(self, database: Any, crash_after_call: int | None) -> None:
+    def __init__(self, database: Any, callbacks: Any, crash_after_call: int | None) -> None:
         self._database = database
+        self._callbacks = callbacks
         self.calls = 0
         self._crash_after_call = crash_after_call
         self._died_after_call = False
@@ -209,6 +217,14 @@ class _Worker:
     @property
     def commits(self) -> int:
         return self._database.commits if self._database is not None else 0
+
+    @property
+    def callbacks(self) -> int:
+        return self._callbacks.callbacks if self._callbacks is not None else 0
+
+    @property
+    def callback_failed(self) -> bool:
+        return self._callbacks is not None and self._callbacks.failed
 
     @property
     def dead(self) -> bool:
@@ -230,13 +246,18 @@ class _Worker:
 
 @contextmanager
 def _worker(
-    history: HandoffHistory[Any, Any], crash_after: int | None, crash_after_call: int | None
+    history: HandoffHistory[Any, Any],
+    crash_after: int | None,
+    crash_after_call: int | None,
+    fail_callback: int | None,
 ) -> Iterator[_Worker]:
-    killer = current_host().worker_killer
+    host = current_host()
     with ExitStack() as stack:
-        database = stack.enter_context(killer(crash_after)) if killer is not None else None
+        database = stack.enter_context(host.worker_killer(crash_after)) if host.worker_killer is not None else None
+        breaker = host.callback_breaker
+        callbacks = stack.enter_context(breaker(fail_callback)) if breaker is not None else None
         patch = stack.enter_context(pytest.MonkeyPatch.context())
-        worker = _Worker(database, crash_after_call)
+        worker = _Worker(database, callbacks, crash_after_call)
 
         def seam(call: ExternalCall, original: Callable[..., Any]) -> Callable[..., Any]:
             def dying_after(*args: Any, **kwargs: Any) -> Any:
@@ -260,22 +281,27 @@ def _run(
     lose: bool = False,
     crash_after: int | None = None,
     crash_after_call: int | None = None,
+    fail_callback: int | None = None,
 ) -> HistoryRun:
     handle = history.arrange()
     before = history.observe(handle)
     with delivery.session() as session:
-        with _worker(history, crash_after, crash_after_call) as worker:
+        with _worker(history, crash_after, crash_after_call, fail_callback) as worker:
             try:
                 history.transition(handle)
             except WorkerDied:
                 assert worker.dead, "WorkerDied escaped from something other than the simulated death"
+            except CallbackFailed:
+                # The failure reached the caller, as the framework re-raised it: a real request errors here.
+                assert worker.callback_failed, "CallbackFailed escaped from something other than the failed callback"
             else:
                 assert not worker.dead, (
                     f"handoff {history.name!r} kept running after its worker died: something caught WorkerDied "
                     f"(a BaseException) and carried on. A dead process runs nothing further, so a handoff made "
                     f"after the catch would converge falsely; let it propagate"
                 )
-            commits, calls, died = worker.commits, worker.calls, worker.dead
+            commits, calls, callbacks = worker.commits, worker.calls, worker.callbacks
+            interrupted = worker.dead or worker.callback_failed
         if lose:
             session.lose()
             midway = history.observe(handle)
@@ -290,7 +316,8 @@ def _run(
         after=history.observe(handle),
         commits=commits,
         calls=calls,
-        interrupted=died or lose,
+        callbacks=callbacks,
+        interrupted=interrupted or lose,
     )
 
 
@@ -353,6 +380,14 @@ def crash_histories(delivery: Delivery, history: HandoffHistory[Any, Any]) -> li
             f"reached call {j}. The transition calls nondeterministically, so its histories are not reproducible"
         )
         runs.append(crashed)
+    for i in range(1, counted.callbacks + 1):
+        failed = _run(delivery, history, label=f"after-commit callback {i} failed", fail_callback=i)
+        assert failed.interrupted, (
+            f"{delivery.name}: handoff {history.name!r} ran {counted.callbacks} after-commit callback(s), but the "
+            f"rerun never reached callback {i}. The transition registers callbacks nondeterministically, so its "
+            f"histories are not reproducible"
+        )
+        runs.append(failed)
     return runs
 
 

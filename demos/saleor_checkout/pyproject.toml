@@ -1,0 +1,153 @@
+# The harness against Saleor's checkout, unmodified.
+#
+# Not an installable project: the environment is Saleor's own, built from its
+# uv.lock at the pinned commit (see run.sh), with the harness added without
+# changing any version Saleor pins. This file configures pytest, so that this
+# directory is the rootdir and its conftest.py can load Saleor's.
+
+[tool.pytest.ini_options]
+addopts = ["--ds=saleor.tests.settings", "-p", "no:cacheprovider", "-rxX"]
+pythonpath = ["../.upstream/saleor"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
+
+# Type-checked against Saleor's environment, which the demo runs in: run.sh --typecheck.
+[tool.pyrefly]
+project-includes = ["."]
+project-excludes = ["**/__pycache__/**"]
+python-version = "3.12"
+python-platform = "linux"
+search-path = [".", "../.upstream/saleor", "../../src"]
+
+# The demo as an adopter configures the coverage check: `due-work-harness check --root demos/saleor_checkout`.
+[tool.due-work-harness]
+production-packages = ["saleor"]
+source-roots = ["../.upstream/saleor"]
+test-paths = ["."]
+
+[tool.due-work-harness.baseline]
+# Saleor's other handoffs, found by `due-work-harness baseline`: no contract insures them yet. It only shrinks.
+"saleor.account.migrations.0058_update_user_search_document.update_user_search_document_values" = 1
+"saleor.account.migrations.0095_repopulate_user_number_of_orders.populate_user_number_of_orders" = 1
+"saleor.account.migrations.0098_update_user_search_vector.update_user_search_document_values" = 1
+"saleor.account.migrations.0099_remove_digitalcontent_customerevent_type.delete_legacy_customerevents" = 1
+"saleor.account.migrations.0104_assign_default_customer_type_to_users.assign_default_customer_type_to_users" = 1
+"saleor.account.migrations.tasks.saleor3_22.populate_user_number_of_orders_task" = 1
+"saleor.account.migrations.tasks.saleor3_23.assign_default_customer_type_to_users_task" = 1
+"saleor.account.migrations.tasks.saleor3_23.delete_digital_customer_events" = 1
+"saleor.account.signals.delete_avatar" = 1
+"saleor.app.installation_utils.fetch_brand_data_async" = 1
+"saleor.app.migrations.0035_app_extensions_mount_target_settings_reshape.fill_app_extension_settings_migration" = 1
+"saleor.app.migrations.tasks.saleor3_23.fill_app_extension_settings_task" = 1
+"saleor.app.signals.delete_brand_images" = 1
+"saleor.app.tasks._raw_remove_deliveries" = 1
+"saleor.attribute.migrations.0053_fulfill_numeric_attribute_value.set_up_numeric_attribute_values" = 1
+"saleor.attribute.migrations.tasks.saleor3_22.fulfill_attribute_value_numeric_field" = 1
+"saleor.checkout.complete_checkout._create_order" = 2
+"saleor.checkout.migrations.0078_clean_duplicated_gift_lines.clean_duplicated_gift_lines" = 1
+"saleor.checkout.migrations.0088_reapply_fix_shared_address_instances.fix_shared_address_instances" = 1
+"saleor.checkout.migrations.0093_propagate_checkout_delivery.propagate_checkout_deliveries" = 1
+"saleor.checkout.migrations.tasks.saleor3_20.clean_duplicated_gift_lines_task" = 1
+"saleor.checkout.migrations.tasks.saleor3_21.fix_shared_address_instances_task" = 2
+"saleor.checkout.migrations.tasks.saleor3_23.propagate_checkout_deliveries_task" = 1
+"saleor.checkout.tasks.delete_expired_checkouts" = 1
+"saleor.checkout.tasks.trigger_automatic_checkout_completion_task" = 1
+"saleor.checkout.tasks.update_checkouts_search_vector_task" = 1
+"saleor.core.management.commands.update_search_indexes.Command.handle" = 3
+"saleor.core.search_tasks.set_order_search_document_values" = 1
+"saleor.core.search_tasks.set_product_search_document_values" = 1
+"saleor.core.search_tasks.set_user_search_document_values" = 1
+"saleor.core.tasks.delete_event_payloads_task" = 2
+"saleor.core.utils.events.call_event" = 1
+"saleor.discount.migrations.0047_migrate_sales_to_promotions.update_discounted_prices" = 1
+"saleor.discount.migrations.0067_fulfill_promotionrule_variants.update_promotion_rule_variants" = 1
+"saleor.discount.tasks.clear_promotion_rule_variants_task" = 1
+"saleor.discount.tasks.decrease_voucher_code_usage_of_draft_orders" = 1
+"saleor.discount.tasks.decrease_voucher_codes_usage_task" = 1
+"saleor.discount.tasks.disconnect_voucher_codes_from_draft_orders" = 1
+"saleor.discount.tasks.disconnect_voucher_codes_from_draft_orders_task" = 1
+"saleor.discount.tasks.handle_promotion_toggle" = 1
+"saleor.discount.tasks.set_promotion_rule_variants_task" = 1
+"saleor.giftcard.migrations.0023_mark_gift_cards_search_vector_as_dirty.mark_gift_cards_search_index_as_dirty" = 1
+"saleor.giftcard.utils.gift_cards_create" = 1
+"saleor.graphql.account.mutations.account.account_register.AccountRegister.save_and_create_task" = 1
+"saleor.graphql.account.mutations.authentication.request_password_reset.RequestPasswordReset.perform_mutation" = 1
+"saleor.graphql.app.mutations.app_install.AppInstall.post_save_action" = 1
+"saleor.graphql.app.mutations.app_retry_install.AppRetryInstall.perform_mutation" = 1
+"saleor.graphql.channel.mutations.channel_update.ChannelUpdate._update_shipping_zones" = 1
+"saleor.graphql.csv.mutations.export_products.ExportProducts.perform_mutation" = 1
+"saleor.graphql.giftcard.bulk_mutations.gift_card_bulk_create.GiftCardBulkCreate.perform_mutation" = 1
+"saleor.graphql.order.bulk_mutations.draft_orders.DraftOrderBulkDelete.perform_mutation" = 1
+"saleor.graphql.order.bulk_mutations.order_bulk_create.OrderBulkCreate.perform_mutation" = 1
+"saleor.graphql.order.mutations.draft_order_complete.DraftOrderComplete.perform_mutation" = 2
+"saleor.graphql.order.mutations.order_confirm.OrderConfirm.perform_mutation" = 2
+"saleor.graphql.product.bulk_mutations.product_bulk_create.ProductBulkCreate.save" = 1
+"saleor.graphql.product.bulk_mutations.product_bulk_create.ProductBulkCreate.schedule_fetch_product_media_image_tasks" = 1
+"saleor.graphql.product.bulk_mutations.product_bulk_delete.ProductBulkDelete.perform_mutation" = 1
+"saleor.graphql.product.bulk_mutations.product_variant_bulk_delete.ProductVariantBulkDelete.perform_mutation" = 1
+"saleor.graphql.product.mutations.collection.collection_create.CollectionCreate.post_save_action" = 1
+"saleor.graphql.product.mutations.collection.collection_delete.CollectionDelete.perform_mutation" = 1
+"saleor.graphql.product.mutations.product.product_delete.ProductDelete.perform_mutation" = 1
+"saleor.graphql.product.mutations.product.product_media_create.ProductMediaCreate.perform_mutation" = 1
+"saleor.graphql.product.mutations.product_type.product_type_update.ProductTypeUpdate.save" = 1
+"saleor.graphql.product.mutations.product_variant.product_variant_delete.ProductVariantDelete.perform_mutation" = 1
+"saleor.graphql.shipping.mutations.base.ShippingZoneMixin._save_m2m" = 1
+"saleor.graphql.shipping.mutations.shipping_method_channel_listing_update.ShippingMethodChannelListingUpdate.remove_channels" = 1
+"saleor.graphql.webhook.mutations.webhook_trigger.WebhookTrigger.perform_mutation" = 1
+"saleor.order.actions._process_refund" = 1
+"saleor.order.actions.create_return_fulfillment" = 1
+"saleor.order.migrations.0123_update_order_search_document.update_order_search_document_values" = 1
+"saleor.order.migrations.0139_fix_undiscounted_total_on_lines.on_migrations_complete" = 1
+"saleor.order.migrations.0140_fix_order_undiscounted_total.update_order_undiscounted_price" = 1
+"saleor.order.migrations.0152_update_order_search_vector.update_order_search_document_values" = 1
+"saleor.order.migrations.0198_clean_duplicated_gift_lines.clean_duplicated_gift_lines" = 1
+"saleor.order.migrations.0210_populated_order_line_product_type_id.populate_order_line_product_id" = 1
+"saleor.order.migrations.0213_auto_20250618_1246.update_order_search_vector" = 1
+"saleor.order.migrations.0220_update_order_search_vector.update_order_search_document_values" = 1
+"saleor.order.migrations.0221_remove_digital_orderevents.delete_legacy_orderevents" = 1
+"saleor.order.migrations.tasks.saleor3_20.clean_duplicated_gift_lines_task" = 1
+"saleor.order.migrations.tasks.saleor3_22.populate_order_line_product_type_id_task" = 1
+"saleor.order.migrations.tasks.saleor3_23.delete_digital_order_events" = 1
+"saleor.order.tasks.delete_expired_orders_task" = 1
+"saleor.page.utils.mark_pages_search_vector_as_dirty_in_batches" = 1
+"saleor.plugins.admin_email.notify_events.send_csv_export_failed" = 1
+"saleor.plugins.admin_email.notify_events.send_csv_export_success" = 1
+"saleor.plugins.admin_email.notify_events.send_set_staff_password_email" = 1
+"saleor.plugins.admin_email.notify_events.send_staff_order_confirmation" = 1
+"saleor.plugins.admin_email.notify_events.send_staff_reset_password" = 1
+"saleor.plugins.avatax.plugin.DeprecatedAvataxPlugin.order_confirmed" = 1
+"saleor.plugins.user_email.notify_events.send_account_change_email_confirm" = 1
+"saleor.plugins.user_email.notify_events.send_account_change_email_request" = 1
+"saleor.plugins.user_email.notify_events.send_account_confirmation" = 1
+"saleor.plugins.user_email.notify_events.send_account_delete" = 1
+"saleor.plugins.user_email.notify_events.send_account_password_reset_event" = 1
+"saleor.plugins.user_email.notify_events.send_account_set_customer_password" = 1
+"saleor.plugins.user_email.notify_events.send_fulfillment_confirmation" = 1
+"saleor.plugins.user_email.notify_events.send_fulfillment_update" = 1
+"saleor.plugins.user_email.notify_events.send_gift_card" = 1
+"saleor.plugins.user_email.notify_events.send_invoice" = 1
+"saleor.plugins.user_email.notify_events.send_order_canceled" = 1
+"saleor.plugins.user_email.notify_events.send_order_confirmation" = 1
+"saleor.plugins.user_email.notify_events.send_order_confirmed" = 1
+"saleor.plugins.user_email.notify_events.send_order_refund" = 1
+"saleor.plugins.user_email.notify_events.send_payment_confirmation" = 1
+"saleor.plugins.webhook.plugin.WebhookPlugin.event_delivery_retry" = 1
+"saleor.product.migrations.0174_drop_media_to_remove.drop_media_to_remove" = 2
+"saleor.product.migrations.0203_mark_products_search_index_as_dirty.mark_products_search_index_as_dirty" = 1
+"saleor.product.migrations.tasks.saleor3_23.mark_products_search_index_as_dirty_task" = 1
+"saleor.product.signals.delete_background_image" = 1
+"saleor.product.signals.delete_product_media_image" = 1
+"saleor.product.tasks.recalculate_discounted_price_for_products_task" = 1
+"saleor.product.tasks.update_variant_relations_for_active_promotion_rules_task" = 1
+"saleor.product.utils.search_helpers.mark_products_search_vector_as_dirty_in_batches" = 1
+"saleor.thumbnail.signals.delete_thumbnail_image" = 1
+"saleor.warehouse.management.allocate_stocks" = 2
+"saleor.warehouse.management.deallocate_stock" = 2
+"saleor.warehouse.management.deallocate_stock_for_orders" = 2
+"saleor.warehouse.management.decrease_stock" = 1
+"saleor.webhook.transport.asynchronous.transport._generate_deferred_payloads" = 1
+"saleor.webhook.transport.asynchronous.transport.generate_deferred_payloads" = 1
+"saleor.webhook.transport.asynchronous.transport.send_webhooks_async_for_app" = 1
+"saleor.webhook.transport.asynchronous.transport.trigger_webhooks_async_for_multiple_objects" = 2
+"saleor.webhook.transport.synchronous.transport.trigger_transaction_request" = 1
