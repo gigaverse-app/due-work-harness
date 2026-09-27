@@ -88,6 +88,7 @@ def scan(config: CoverageConfig) -> CoverageReport:
         f"{hidden} holds production code but `exclude` hides it from the scan: narrow the pattern"
         for hidden in project.hidden
     )
+    report.problems.extend(project.unparsable)
     declared: dict[str, list[Disposition]] = defaultdict(list)
     for module in declaration_modules(config):
         found, defects = Declarations(module, project).collect()

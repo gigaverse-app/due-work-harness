@@ -24,44 +24,64 @@ from due_work_harness.coverage.report import MODULE_LEVEL, Site
 from due_work_harness.coverage.sites import TASK_CONFIGURATORS, SiteKind, kinds_for
 
 
-def _task_decorated(decorators: list[ast.expr], kind: SiteKind) -> bool:
-    return any(terminal_name(decorator) in kind.task_decorators for decorator in decorators)
+class _Registrations:
+    """Which decorators and registration calls in one module make a function a task of a kind."""
 
+    def __init__(self, module: Module, project: Project) -> None:
+        self.module = module
+        self.project = project
+        self.imported = project.imports(module)
+        self.defined = defined_names(project.tree(module))
 
-def _task_registration(value: ast.expr, kind: SiteKind) -> bool:
-    """``shared_task(fn)``, ``app.task(fn)`` or ``app.task(name=...)(fn)``: a task built by assignment."""
-    if not isinstance(value, ast.Call):
-        return False
-    callee = value.func
-    if isinstance(callee, ast.Call):
-        return terminal_name(callee.func) in kind.task_decorators and bool(value.args)
-    return terminal_name(callee) in kind.task_decorators and bool(value.args)
+    def _decorator(self, expression: ast.expr, kind: SiteKind) -> bool:
+        if terminal_name(expression) not in kind.task_decorators:
+            return False
+        if not kind.task_decorator_modules:
+            return True
+        target = expression.func if isinstance(expression, ast.Call) else expression
+        qualified = qualified_name(target, self.module.name, self.imported, self.defined)
+        qualified = None if qualified is None else self.project.canonical(qualified)
+        return qualified is not None and any(
+            qualified == module or qualified.startswith(f"{module}.") for module in kind.task_decorator_modules
+        )
+
+    def decorated(self, node: ast.FunctionDef | ast.AsyncFunctionDef, kind: SiteKind) -> bool:
+        return any(self._decorator(decorator, kind) for decorator in node.decorator_list)
+
+    def registered(self, value: ast.expr, kind: SiteKind) -> bool:
+        """``shared_task(fn)``, ``app.task(fn)`` or ``app.task(name=...)(fn)``: a task built by assignment."""
+        if not isinstance(value, ast.Call) or not value.args:
+            return False
+        return self._decorator(value.func, kind)
 
 
 def _task_index(project: Project, kinds: tuple[SiteKind, ...]) -> dict[str, set[str]]:
     """Kind name -> qualified names of the project functions its decorators or registrations make tasks."""
     index: dict[str, set[str]] = defaultdict(set)
     for module in project.reachable:
+        registrations = _Registrations(module, project)
         for node in project.tree(module).body:
             for kind in kinds:
-                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and _task_decorated(
-                    node.decorator_list, kind
-                ):
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and registrations.decorated(node, kind):
                     index[kind.name].add(f"{module.name}.{node.name}")
                 elif isinstance(node, ast.ClassDef):
                     for member in node.body:
-                        if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef) and _task_decorated(
-                            member.decorator_list, kind
+                        if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef) and registrations.decorated(
+                            member, kind
                         ):
                             index[kind.name].add(f"{module.name}.{node.name}.{member.name}")
                 elif (
                     isinstance(node, ast.Assign)
                     and len(node.targets) == 1
                     and isinstance(node.targets[0], ast.Name)
-                    and _task_registration(node.value, kind)
+                    and registrations.registered(node.value, kind)
                 ):
                     index[kind.name].add(f"{module.name}.{node.targets[0].id}")
     return index
+
+
+def _is_self(expression: ast.expr) -> bool:
+    return isinstance(expression, ast.Name) and expression.id == "self"
 
 
 class _Scope:
@@ -70,6 +90,8 @@ class _Scope:
         self.function = function
         #: Local names bound to a handoff reference, and the kind of that reference.
         self.handoffs: dict[str, str] = {}
+        #: Local names bound to a framework object that takes any callable (``queue = django_rq.get_queue()``).
+        self.clients: dict[str, str] = {}
         #: Local names bound to a resolvable name (``send = tasks.send_receipt``).
         self.names: dict[str, str] = {}
 
@@ -83,9 +105,7 @@ class _Sites(ast.NodeVisitor):
         project: Project,
         kinds: tuple[SiteKind, ...],
         tasks: Mapping[str, set[str]],
-        *,
-        module_handoffs: Mapping[str, str],
-        self_handoffs: Mapping[str, str],
+        seed: "_Sites | None" = None,
     ) -> None:
         self.module = module
         self.project = project
@@ -97,10 +117,15 @@ class _Sites(ast.NodeVisitor):
         self.defined = defined_names(tree)
         self.bridges = {project.canonical(name) for name in self.config.bridges}
         top = _Scope(MODULE_LEVEL, function=False)
-        top.handoffs.update(module_handoffs)
+        #: ``self.<attribute>`` names bound to a handoff reference, or to a framework object, anywhere in the module.
+        self.self_handoffs: dict[str, str] = {}
+        self.self_clients: dict[str, str] = {}
+        if seed is not None:
+            top.handoffs.update(seed.scopes[0].handoffs)
+            top.clients.update(seed.scopes[0].clients)
+            self.self_handoffs.update(seed.self_handoffs)
+            self.self_clients.update(seed.self_clients)
         self.scopes: list[_Scope] = [top]
-        #: ``self.<attribute>`` names bound to a handoff reference anywhere in the module.
-        self.self_handoffs: dict[str, str] = dict(self_handoffs)
         self.found: dict[str, list[Site]] = defaultdict(list)
 
     # Resolution
@@ -110,9 +135,32 @@ class _Sites(ast.NodeVisitor):
         for scope in reversed(self.scopes):
             if name in scope.handoffs:
                 return scope.handoffs[name], None
+            if name in scope.clients:
+                return None, None
             if name in scope.names:
                 return None, scope.names[name]
         return None, None
+
+    def _client(self, expression: ast.expr) -> str | None:
+        """The kind whose framework object an expression is: the framework, an object it returned, or a name for one."""
+        if isinstance(expression, ast.Call):
+            return self._client(expression.func)
+        if isinstance(expression, ast.Name):
+            for scope in reversed(self.scopes):
+                if expression.id in scope.clients:
+                    return scope.clients[expression.id]
+                if expression.id in scope.handoffs or expression.id in scope.names:
+                    break
+        if (
+            isinstance(expression, ast.Attribute)
+            and _is_self(expression.value)
+            and expression.attr in self.self_clients
+        ):
+            return self.self_clients[expression.attr]
+        qualified = self._resolve(expression)
+        if qualified is None:
+            return None
+        return next((kind.name for kind in self.kinds if kind.client_methods and kind.enabled_by(qualified)), None)
 
     def _resolve(self, expression: ast.expr) -> str | None:
         dotted = dotted_parts(expression)
@@ -147,16 +195,19 @@ class _Sites(ast.NodeVisitor):
             if qualified in self.bridges:
                 return "bridge"
             last = qualified.rsplit(".", 1)[-1]
-            return next((kind.name for kind in self.kinds if last in kind.calls), None)
+            return next(
+                (
+                    kind.name
+                    for kind in self.kinds
+                    if last in kind.calls or last in kind.client_methods and kind.enabled_by(qualified)
+                ),
+                None,
+            )
         if not isinstance(expression, ast.Attribute):
             return None
         if expression.attr in self.config.bridge_methods or self._resolve(expression) in self.bridges:
             return "bridge"
-        if (
-            isinstance(expression.value, ast.Name)
-            and expression.value.id == "self"
-            and expression.attr in self.self_handoffs
-        ):
+        if _is_self(expression.value) and expression.attr in self.self_handoffs:
             return self.self_handoffs[expression.attr]
         for kind in self.kinds:
             if expression.attr in kind.calls:
@@ -164,6 +215,8 @@ class _Sites(ast.NodeVisitor):
             if expression.attr in kind.task_methods and self._task(expression.value) in self.tasks.get(
                 kind.name, set()
             ):
+                return kind.name
+            if expression.attr in kind.client_methods and self._client(expression.value) == kind.name:
                 return kind.name
         return None
 
@@ -218,15 +271,30 @@ class _Sites(ast.NodeVisitor):
         self.scopes.pop()
 
     def _bind(self, target: ast.expr, value: ast.expr | None) -> bool:
-        """Record ``target = value`` as an alias when value is a handoff or a resolvable name; True if handled."""
-        if value is None or not isinstance(value, ast.Name | ast.Attribute):
+        """
+        Record ``target = value`` as an alias; True when the value needs no visit of its own.
+
+        A handoff reference bound to a name is not itself a site (each use is); a
+        framework object bound to a name (``queue = django_rq.get_queue()``) makes
+        that name's handoff methods sites; a resolvable name is followed.
+        """
+        if value is None:
+            return False
+        client = self._client(value) if isinstance(value, ast.Call | ast.Name | ast.Attribute) else None
+        if client is not None:
+            if isinstance(target, ast.Name):
+                self.scopes[-1].clients[target.id] = client
+            elif isinstance(target, ast.Attribute) and _is_self(target.value):
+                self.self_clients[target.attr] = client
+            return False
+        if not isinstance(value, ast.Name | ast.Attribute):
             return False
         kind = self.kind_of(value)
         if kind is not None:
             if isinstance(target, ast.Name):
                 self.scopes[-1].handoffs[target.id] = kind
                 return True
-            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+            if isinstance(target, ast.Attribute) and _is_self(target.value):
                 self.self_handoffs[target.attr] = kind
                 return True
             return False
@@ -281,6 +349,7 @@ class _Sites(ast.NodeVisitor):
                 and self._task(node.args[0]) in self.tasks.get(kind.name, set())
             ):
                 self._record(kind.name, node)
+                break
         self.generic_visit(node)
 
 
@@ -290,16 +359,9 @@ def sites_by_function(project: Project, kinds: tuple[SiteKind, ...]) -> dict[str
     for module in project.production:
         # Two passes: the first learns every module-level and ``self.`` alias, so a use
         # that precedes its binding in the file (a method above ``__init__``) still counts.
-        first = _Sites(module, project, kinds, tasks, module_handoffs={}, self_handoffs={})
+        first = _Sites(module, project, kinds, tasks)
         first.visit(project.tree(module))
-        visitor = _Sites(
-            module,
-            project,
-            kinds,
-            tasks,
-            module_handoffs=first.scopes[0].handoffs,
-            self_handoffs=first.self_handoffs,
-        )
+        visitor = _Sites(module, project, kinds, tasks, seed=first)
         visitor.visit(project.tree(module))
         for callable_name, found in visitor.found.items():
             sites[callable_name].extend(found)

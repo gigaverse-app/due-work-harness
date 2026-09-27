@@ -10,6 +10,7 @@ reached.
 import ast
 import fnmatch
 import os
+import sys
 from collections.abc import Iterator, Mapping
 from functools import cached_property
 from pathlib import Path
@@ -50,7 +51,9 @@ class Project:
         self.modules: dict[str, Module] = {}
         #: Excluded paths that hold production code, which the scan would otherwise never see.
         self.hidden: list[str] = []
-        self._trees: dict[str, ast.Module] = {}
+        #: Files the running Python cannot parse; their sites are unknown, so each is a problem.
+        self.unparsable: list[str] = []
+        self._trees: dict[Path, ast.Module] = {}
         self._imports: dict[str, dict[str, str]] = {}
         for root in config.source_roots:
             base = (config.root / root).resolve()
@@ -111,9 +114,18 @@ class Project:
         return [module for name, module in self.modules.items() if self.config.is_production(name)]
 
     def tree(self, module: Module) -> ast.Module:
-        if module.name not in self._trees:
-            self._trees[module.name] = parse_module(module)
-        return self._trees[module.name]
+        """The parsed module; a file this Python cannot parse is recorded and read as empty."""
+        if module.path not in self._trees:
+            try:
+                self._trees[module.path] = parse_module(module)
+            except SyntaxError as error:
+                version = f"{sys.version_info.major}.{sys.version_info.minor}"
+                self.unparsable.append(
+                    f"{module.relative}:{error.lineno} cannot be parsed by Python {version} ({error.msg}), so its "
+                    f"handoff sites are unknown: run the check with the project's Python or newer"
+                )
+                self._trees[module.path] = ast.Module(body=[], type_ignores=[])
+        return self._trees[module.path]
 
     def imports(self, module: Module) -> dict[str, str]:
         if module.name not in self._imports:
@@ -154,12 +166,8 @@ class Project:
 
     @cached_property
     def frameworks(self) -> set[str]:
-        """Top-level modules imported anywhere in the code production reaches."""
-        return {
-            imported.split(".", 1)[0]
-            for module in self.reachable
-            for imported in imported_names(self.tree(module), module)
-        }
+        """Every dotted name imported anywhere in the code production reaches."""
+        return {imported for module in self.reachable for imported in imported_names(self.tree(module), module)}
 
 
 def parse_module(module: Module) -> ast.Module:
