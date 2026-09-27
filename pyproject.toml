@@ -23,9 +23,9 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Testing",
 ]
-# The core imports no framework. Every integration lives behind an extra and is
-# imported only when its framework is installed.
-dependencies = ["pytest>=8"]
+# The core imports no framework: its dependencies are pytest and pydantic. Every
+# integration lives behind an extra and is imported only when its framework is installed.
+dependencies = ["pytest>=8", "pydantic>=2.9"]
 
 [project.optional-dependencies]
 django = ["django>=4.2", "pytest-django>=4.8", "psycopg[binary]>=3.1", "time-machine>=2.10"]
@@ -36,6 +36,9 @@ dbos = ["dbos>=2.0"]
 [project.urls]
 Homepage = "https://github.com/gigaverse-app/due-work-harness"
 Issues = "https://github.com/gigaverse-app/due-work-harness/issues"
+
+[project.scripts]
+due-work-harness = "due_work_harness.coverage.cli:main"
 
 [project.entry-points.pytest11]
 due_work_harness = "due_work_harness.pytest_plugin"

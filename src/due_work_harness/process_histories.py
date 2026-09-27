@@ -34,15 +34,14 @@ point must not.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from due_work_harness.crash_histories import HistoryRun, assert_histories_converge
+from due_work_harness.models import HarnessModel
 
 
-@dataclass(frozen=True)
-class ProcessHistory[HandleT, ObservationT]:
+class ProcessHistory[HandleT, ObservationT](HarnessModel):
     """One production transition run in a child process, with the points where it may die."""
 
     name: str

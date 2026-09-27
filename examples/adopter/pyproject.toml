@@ -1,0 +1,22 @@
+[project]
+name = "adopter-example"
+version = "0.0.0"
+description = "A minimal project adopting due-work-harness, used by the harness's own CI to exercise its GitHub Actions."
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["due-work-harness"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+# A real project depends on the released package: `uv add --dev "due-work-harness[django]"`.
+due-work-harness = { path = "../..", editable = true }
+
+[tool.due-work-harness]
+production-packages = ["adopter_app"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

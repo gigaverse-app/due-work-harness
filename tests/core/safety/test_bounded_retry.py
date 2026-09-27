@@ -1,7 +1,5 @@
 """The generic bounded-retry proof, exercised against lifecycle mutations."""
 
-from dataclasses import replace
-
 import pytest
 
 from due_work_harness.references.in_memory import (
@@ -74,7 +72,7 @@ def test_a_test_authored_due_selection_cannot_certify_retry_selection() -> None:
         return [operation_id for operation_id in lifecycle.rows if not lifecycle.is_terminal(operation_id)]
 
     with pytest.raises(AssertionError, match="due_work.*references no production"):
-        assert_bounded_retry_contract(replace(binding, due_work=local_due_work))
+        assert_bounded_retry_contract(binding.model_copy(update={"due_work": local_due_work}))
 
 
 def test_a_copied_due_predicate_cannot_certify_retry_selection() -> None:
@@ -91,7 +89,7 @@ def test_a_copied_due_predicate_cannot_certify_retry_selection() -> None:
         return copied_selection.filter(state="DUE")
 
     with pytest.raises(AssertionError, match="due_work.*authors production semantics"):
-        assert_bounded_retry_contract(replace(binding, due_work=copied_due_work))
+        assert_bounded_retry_contract(binding.model_copy(update={"due_work": copied_due_work}))
 
 
 def test_a_test_authored_retry_transition_is_rejected() -> None:

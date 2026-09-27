@@ -28,7 +28,6 @@ independently callable so an adopter declares only what it implements.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from due_work_harness.binding import (
@@ -37,10 +36,10 @@ from due_work_harness.binding import (
     assert_test_binding_delegates_to_production,
     assert_test_binding_forwards,
 )
+from due_work_harness.models import HarnessModel
 
 
-@dataclass(frozen=True)
-class SupersededSnapshot:
+class SupersededSnapshot(HarnessModel):
     """
     The worker half of profile E, described so the proofs can drive it.
 
@@ -168,8 +167,7 @@ def assert_superseded_snapshot_contract(snapshot: SupersededSnapshot) -> None:
         proof(snapshot)
 
 
-@dataclass(frozen=True)
-class ConvergentWrite:
+class ConvergentWrite(HarnessModel):
     """
     A domain's result-application function, described for the state proofs.
 

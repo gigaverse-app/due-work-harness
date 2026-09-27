@@ -69,7 +69,6 @@ by construction, so this is close to free for one — which is the point.
 
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import timedelta  # noqa: F401 - referenced in an annotation
 from typing import Any
 from uuid import UUID
@@ -80,10 +79,10 @@ from due_work_harness.binding import (
     assert_test_binding_forwards,
 )
 from due_work_harness.host import current_host
+from due_work_harness.models import HarnessModel
 
 
-@dataclass(frozen=True)
-class FencedOwnership:
+class FencedOwnership(HarnessModel):
     """
     One domain's ownership mechanics, described so the proofs can drive them.
 

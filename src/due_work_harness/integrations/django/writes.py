@@ -9,8 +9,9 @@ like. Harness observers that must not miss a write classify it here.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
+
+from due_work_harness.models import HarnessModel
 
 #: Commands whose status reports rows written. ``COPY`` counts: ``COPY FROM``
 #: inserts rows, and ``COPY TO`` never reaches an execute wrapper as a write.
@@ -18,8 +19,7 @@ _ROW_WRITES = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE", "COPY"})
 _CREATES_ROWS = frozenset({"INSERT", "MERGE", "COPY"})
 
 
-@dataclass(frozen=True)
-class RowWrite:
+class RowWrite(HarnessModel):
     """A statement that changed at least one row."""
 
     command: str

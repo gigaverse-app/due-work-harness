@@ -12,7 +12,6 @@ publication or commit-callback handoff, a provider call, and a counterfeit
 
 import itertools
 from collections.abc import Callable, Iterator
-from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
@@ -114,7 +113,7 @@ def _sweep(
         due_work=ref.due_for_recovery,
         run_tick=ref.run_recovery_tick,
         make_owed=lambda *, age: _make(Status.REQUESTED, age=age),
-        additional_owed_variants=(OwedWorkVariant("running", lambda *, age: _make(Status.RUNNING, age=age)),)
+        additional_owed_variants=(OwedWorkVariant(name="running", make=lambda *, age: _make(Status.RUNNING, age=age)),)
         if variants is None
         else variants,
         make_terminal=_terminal(retryable=retryable),
@@ -253,14 +252,11 @@ def test_exclusions_must_be_real_reasoned_and_unexercised(
 )
 def test_excluding_a_state_the_selection_selects_is_refused(attempt_table: None, due_work: Callable[[], Any]) -> None:
     # `.exclude(settled states)` admits RUNNING too; excluding it with prose would skip its OwedWorkVariant.
-    sweep = replace(
-        _sweep(
-            retryable=_retryable_failed(ref.classify_retryable_failure_atomically),
-            excluded_states={"running": "claimed to be owned by some other recovery path"},
-            variants=(),
-        ),
-        due_work=due_work,
-    )
+    sweep = _sweep(
+        retryable=_retryable_failed(ref.classify_retryable_failure_atomically),
+        excluded_states={"running": "claimed to be owned by some other recovery path"},
+        variants=(),
+    ).model_copy(update={"due_work": due_work})
     with pytest.raises(AssertionError, match=r"\{'status': \['running'\]\} are values the production selection"):
         assert_every_lifecycle_state_is_declared(sweep)
 
@@ -278,7 +274,7 @@ def test_a_missing_lifecycle_is_a_refusal_not_a_pass(attempt_table: None, proof:
 
 
 def test_a_selection_that_is_not_a_queryset_is_refused(attempt_table: None) -> None:
-    sweep = replace(_sweep(retryable=None), due_work=lambda: list(ref.due_for_recovery()))
+    sweep = _sweep(retryable=None).model_copy(update={"due_work": lambda: list(ref.due_for_recovery())})
     with pytest.raises(AssertionError, match="must return a Django QuerySet, not list"):
         assert_every_lifecycle_state_is_declared(sweep)
 
@@ -455,7 +451,10 @@ def test_without_a_publication_recorder_the_lifecycle_must_say_why_nothing_is_pu
 
 def test_without_a_frozen_clock_2c_names_the_capability(attempt_table: None) -> None:
     sweep = _sweep(retryable=_retryable_failed(ref.classify_retryable_failure_atomically))
-    with hosted(replace(current_host(), frozen_clock=None)), pytest.raises(AssertionError, match="'frozen_clock'"):
+    with (
+        hosted(current_host().model_copy(update={"frozen_clock": None})),
+        pytest.raises(AssertionError, match="'frozen_clock'"),
+    ):
         assert_terminal_states_owe_nothing_further(sweep)
 
 
@@ -494,17 +493,20 @@ def test_an_execution_that_ignores_its_identity_is_refused_unless_declared_tick_
 
     with pytest.raises(AssertionError, match=r"lifecycle.execute never reads its '_pk' parameter"):
         assert_sweep_bindings_are_production_bound(_guarded(ignores_identity))
-    tick_bound = replace(
-        _guarded(ignores_identity),
-        lifecycle=Lifecycle(
-            state_fields=("status",),
-            execute=ignores_identity,
-            inline_tick_because="the reference tick executes inline; no per-identity worker exists",
-        ),
+    tick_bound = _guarded(ignores_identity).model_copy(
+        update={
+            "lifecycle": Lifecycle(
+                state_fields=("status",),
+                execute=ignores_identity,
+                inline_tick_because="the reference tick executes inline; no per-identity worker exists",
+            )
+        }
     )
     assert_sweep_bindings_are_production_bound(tick_bound)
     assert tick_bound.lifecycle is not None, "the tick-bound sweep declares a lifecycle"
-    thin = replace(tick_bound, lifecycle=replace(tick_bound.lifecycle, inline_tick_because="inline"))
+    thin = tick_bound.model_copy(
+        update={"lifecycle": tick_bound.lifecycle.model_copy(update={"inline_tick_because": "inline"})}
+    )
     with pytest.raises(AssertionError, match="inline_tick_because carries no real reason"):
         assert_sweep_bindings_are_production_bound(thin)
 

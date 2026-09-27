@@ -23,7 +23,6 @@ answers them for a ``due_work`` binding that returns a Django ``QuerySet``:
 
 import json
 from collections.abc import Callable, Collection
-from dataclasses import dataclass
 from typing import Any
 
 from django.conf import settings
@@ -32,6 +31,7 @@ from django.db.models import QuerySet
 from django.test.utils import CaptureQueriesContext
 
 from due_work_harness.integrations.postgres_plans import index_served_verdict, scan_counts
+from due_work_harness.models import HarnessModel
 
 
 def _require_postgresql(alias: str, reading: str) -> None:
@@ -69,8 +69,7 @@ def _mirrored_aliases() -> frozenset[str]:
     return frozenset(alias for alias, config in settings.DATABASES.items() if config.get("TEST", {}).get("MIRROR"))
 
 
-@dataclass(frozen=True)
-class DjangoSelectionInspector:
+class DjangoSelectionInspector(HarnessModel):
     """
     Database facts about a QuerySet selection.
 

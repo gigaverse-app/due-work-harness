@@ -39,7 +39,6 @@ One adapter invariant and six behavioral invariants:
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -49,10 +48,10 @@ from due_work_harness.binding import (
     assert_test_binding_delegates_to_production,
     assert_test_binding_forwards,
 )
+from due_work_harness.models import HarnessModel
 
 
-@dataclass(frozen=True)
-class AmbiguityAware:
+class AmbiguityAware(HarnessModel):
     """One domain's ambiguity handling, described so the proofs can drive it."""
 
     name: str

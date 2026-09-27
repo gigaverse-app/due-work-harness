@@ -30,7 +30,6 @@ matter and exclude harmless telemetry such as duration samples.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from due_work_harness.binding import (
@@ -39,10 +38,10 @@ from due_work_harness.binding import (
     assert_test_binding_consumes_its_first_parameter,
 )
 from due_work_harness.evidence.observation import assert_observation
+from due_work_harness.models import HarnessModel
 
 
-@dataclass(frozen=True)
-class ReplaySafeEffect:
+class ReplaySafeEffect(HarnessModel):
     """One replayable production operation and its meaningful observation."""
 
     name: str

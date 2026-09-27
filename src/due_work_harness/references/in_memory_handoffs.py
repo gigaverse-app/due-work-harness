@@ -19,15 +19,16 @@ them, in both directions. Never bind these in an adopter.
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from typing import Any
 
+import pydantic
+
 from due_work_harness.crash_histories import CallableDelivery
+from due_work_harness.models import MutableHarnessModel
 from due_work_harness.worker_death import WorkerDied
 
 
-@dataclass
-class _Death:
+class _Death(MutableHarnessModel):
     commits: int = 0
     dead: bool = False
     kill_after: int | None = None
@@ -37,14 +38,13 @@ class _Death:
         raise WorkerDied(reason)
 
 
-@dataclass
-class Ledger:
-    rows: dict[int, dict[str, Any]] = field(default_factory=dict)
-    outbox: list[tuple[str, int]] = field(default_factory=list)
-    _next_id: int = 1
-    _pending: list[tuple[int, dict[str, Any]]] | None = None
-    _after_commit: list[Callable[[], None]] = field(default_factory=list)
-    _worker: _Death | None = None
+class Ledger(MutableHarnessModel):
+    rows: dict[int, dict[str, Any]] = pydantic.Field(default_factory=dict)
+    outbox: list[tuple[str, int]] = pydantic.Field(default_factory=list)
+    _next_id: int = pydantic.PrivateAttr(default=1)
+    _pending: list[tuple[int, dict[str, Any]]] | None = pydantic.PrivateAttr(default=None)
+    _after_commit: list[Callable[[], None]] = pydantic.PrivateAttr(default_factory=list)
+    _worker: _Death | None = pydantic.PrivateAttr(default=None)
 
     def insert(self, **values: Any) -> int:
         row_id = self._next_id
@@ -225,11 +225,17 @@ INERT_DELIVERY = CallableDelivery(
 # --- Notifications: an external call between the work and its record ------------------------------
 
 
-@dataclass
 class Recipient:
-    """An external system that records every notification it receives."""
+    """
+    An external system that records every notification it receives.
 
-    received: list[int] = field(default_factory=list)
+    A plain class, not a harness model: it stands in for a provider client,
+    and crash histories patch its methods on the instance at the
+    ``ExternalCall`` seam, which a Pydantic model refuses as an unknown field.
+    """
+
+    def __init__(self) -> None:
+        self.received: list[int] = []
 
     def notify(self, attempt: int) -> None:
         self.received.append(attempt)

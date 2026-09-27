@@ -24,7 +24,6 @@ import itertools
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -34,6 +33,7 @@ import pytest
 from due_work_harness.helpers import contract_params, undeclared
 from due_work_harness.host import Host, current_host, hosted, packages
 from due_work_harness.integrations.celery import celery_beat_evidence, celery_beat_interval
+from due_work_harness.models import HarnessModel
 from due_work_harness.profiles.automatic_recovery import (
     AMBIENT_CONTEXT_PROOFS,
     DUE_WORK_PROOFS,
@@ -103,8 +103,7 @@ class _Selection:
         return len(self._rows)
 
 
-@dataclass(frozen=True)
-class _WorkRow:
+class _WorkRow(HarnessModel):
     pk: int
     age: timedelta
     terminal: bool = False
@@ -131,12 +130,12 @@ class _InMemorySweep:
         self.statements: list[str] = []
 
     def make_owed(self, *, age: timedelta | None = None) -> _WorkRow:
-        row = _WorkRow(next(self._ids), _GRACE + timedelta(minutes=1) if age is None else age)
+        row = _WorkRow(pk=next(self._ids), age=_GRACE + timedelta(minutes=1) if age is None else age)
         self.rows.append(row)
         return row
 
     def make_terminal(self, *, age: timedelta) -> list[_WorkRow]:
-        row = _WorkRow(next(self._ids), age, terminal=True)
+        row = _WorkRow(pk=next(self._ids), age=age, terminal=True)
         self.rows.append(row)
         return [row]
 
@@ -190,8 +189,7 @@ class _InMemorySweep:
         yield
 
 
-@dataclass
-class _InMemoryInspector:
+class _InMemoryInspector(HarnessModel):
     """
     The database facts about an in-memory selection, as a host's inspector supplies them.
 
@@ -226,7 +224,7 @@ class _InMemoryInspector:
 
 @contextmanager
 def _database(sweep: _InMemorySweep, **facts: Any) -> Iterator[_InMemoryInspector]:
-    inspector = _InMemoryInspector(sweep, **facts)
+    inspector = _InMemoryInspector(sweep=sweep, **facts)
     with hosted(Host(selection_inspectors=(inspector,), ambient_context=_TENANT.get)):
         yield inspector
 
@@ -862,7 +860,7 @@ def test_a_covered_publishers_stranded_work_is_recovered() -> None:
 
     def age_into_the_window(identity: int) -> None:
         sweep.rows = [
-            row if row.pk != identity else _WorkRow(row.pk, _GRACE + timedelta(minutes=1)) for row in sweep.rows
+            row if row.pk != identity else _WorkRow(pk=row.pk, age=_GRACE + timedelta(minutes=1)) for row in sweep.rows
         ]
 
     assert_published_work_is_recoverable(
@@ -1011,7 +1009,7 @@ def test_counting_statements_needs_exactly_one_inspector_or_a_named_selection() 
     with hosted(Host()), pytest.raises(AssertionError, match="the configured host has 0"):
         assert_idle_tick_is_cheap(name="no inspector", run_tick=sweep.run_tick)
 
-    first, second = _InMemoryInspector(sweep), _InMemoryInspector(_InMemorySweep())
+    first, second = _InMemoryInspector(sweep=sweep), _InMemoryInspector(sweep=_InMemorySweep())
     with hosted(Host(selection_inspectors=(first, second))):
         with pytest.raises(AssertionError, match="Pass `selection=`"):
             assert_idle_tick_is_cheap(name="two inspectors", run_tick=sweep.run_tick)

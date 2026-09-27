@@ -9,7 +9,6 @@ broken variant fails exactly the proof that hunts its defect.
 """
 
 from collections.abc import Callable
-from dataclasses import replace
 
 import pytest
 
@@ -159,7 +158,7 @@ def test_an_already_settled_unsettled_fixture_is_refused() -> None:
     re-application passes for the wrong reason, and convergence asserts a state
     is settled that arrived settled.
     """
-    binding = replace(_binding(), unsettled_state=lambda: _SETTLED)
+    binding = _binding().model_copy(update={"unsettled_state": lambda: _SETTLED})
     for proof in (assert_reapplication_is_a_no_op, assert_unsettled_state_converges):
         with pytest.raises(AssertionError, match="is_settled\\(\\) already accepts"):
             proof(binding)

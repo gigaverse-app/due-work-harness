@@ -14,7 +14,6 @@ each fail their half of the pair.
 """
 
 from collections.abc import Callable
-from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -85,9 +84,8 @@ def _copied_due_work_query() -> set[int]:
 
 def test_profile_c_accepts_a_forwarder_to_a_production_selection() -> None:
     machine = _InMemoryMachine()
-    binding = replace(
-        _binding(machine),
-        due_work_ids=lambda: _FakeModel.objects.due_for_retry().values_list("id", flat=True),
+    binding = _binding(machine).model_copy(
+        update={"due_work_ids": lambda: _FakeModel.objects.due_for_retry().values_list("id", flat=True)}
     )
     assert_ordinary_due_work_is_production_bound(binding)
 
@@ -102,7 +100,7 @@ def test_profile_c_accepts_a_forwarder_to_a_production_selection() -> None:
 )
 def test_profile_c_rejects_a_test_authored_due_work_selection(copied_selection: Callable[[], object]) -> None:
     machine = _InMemoryMachine()
-    binding = replace(_binding(machine), due_work_ids=copied_selection)
+    binding = _binding(machine).model_copy(update={"due_work_ids": copied_selection})
 
     with pytest.raises(AssertionError, match=r"due_work_ids.*test code.*filter"):
         assert_ordinary_due_work_is_production_bound(binding)

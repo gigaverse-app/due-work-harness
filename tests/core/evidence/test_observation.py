@@ -1,5 +1,6 @@
 """Reporting preserves the assertion and records no application values."""
 
+# A dataclass on purpose: observations accept the value types adopters already have.
 from dataclasses import dataclass, field
 
 import pytest

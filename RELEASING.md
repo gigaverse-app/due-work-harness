@@ -18,6 +18,9 @@ version number by hand.
    wheel and sdist to PyPI through Trusted Publishing. The files are also
    attached to the GitHub release.
 
+Each release also moves the floating major tag (`v0` for 0.x) to it, so projects using
+`gigaverse-app/due-work-harness/check@v0` follow the latest compatible release.
+
 The package version is the tag itself (`hatch-vcs`): nothing in `pyproject.toml`
 or `uv.lock` changes at release time, and an untagged commit builds as a `.devN`
 pre-release that is never published.
@@ -57,7 +60,7 @@ The workflow depends on settings outside the code:
 
 Release PRs are opened with the workflow's token, and GitHub does not run
 workflows for events created by it, so CI does not run on the release PR
-itself. It only changes `CHANGELOG.md`, `version.txt` and the manifest; the
+itself. It only changes `CHANGELOG.md` and the version manifest; the
 commit it releases already passed CI when it was merged.
 
 ## Rehearsing or re-publishing

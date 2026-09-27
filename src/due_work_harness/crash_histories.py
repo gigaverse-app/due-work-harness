@@ -59,18 +59,17 @@ What these histories do not claim:
 
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 import pytest
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from due_work_harness.host import current_host
+from due_work_harness.models import MISSING, HarnessModel, MutableHarnessModel, with_positional
 from due_work_harness.worker_death import WorkerDied
 
 
-@dataclass(frozen=True)
-class ExternalCall:
+class ExternalCall(HarnessModel):
     """
     Where the transition crosses into an external system: ``getattr(owner, attribute)``.
 
@@ -83,13 +82,15 @@ class ExternalCall:
     owner: object
     attribute: str
 
+    def __init__(self, owner: object = MISSING, attribute: str = MISSING, /, **data: Any) -> None:
+        super().__init__(**with_positional(data, owner=owner, attribute=attribute))
+
     def __str__(self) -> str:
         owner = getattr(self.owner, "__name__", type(self.owner).__name__)
         return f"{owner}.{self.attribute}"
 
 
-@dataclass(frozen=True)
-class HandoffHistory[HandleT, ObservationT]:
+class HandoffHistory[HandleT, ObservationT](HarnessModel):
     """
     One production transition that commits work and hands work off.
 
@@ -140,8 +141,7 @@ class Delivery(Protocol):
     def session(self) -> AbstractContextManager[DeliverySession]: ...
 
 
-@dataclass
-class _CallableSession:
+class _CallableSession(MutableHarnessModel):
     deliver_published: Callable[[], object] | None
     lose_published: Callable[[], object] | None
     recover_work: Callable[[], object]
@@ -162,8 +162,7 @@ class _CallableSession:
         self.recover_work()
 
 
-@dataclass(frozen=True)
-class CallableDelivery:
+class CallableDelivery(HarnessModel):
     """
     A delivery made of three production callables.
 
@@ -181,11 +180,10 @@ class CallableDelivery:
 
     @contextmanager
     def session(self) -> Iterator[DeliverySession]:
-        yield _CallableSession(self.deliver, self.lose, self.recover)
+        yield _CallableSession(deliver_published=self.deliver, lose_published=self.lose, recover_work=self.recover)
 
 
-@dataclass(frozen=True)
-class HistoryRun:
+class HistoryRun(HarnessModel):
     """One history's observations: before the transition, before recovery, and after it."""
 
     label: str

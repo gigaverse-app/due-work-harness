@@ -1,21 +1,21 @@
 """A production capability exposed as a module-level instance, with a data policy beside it."""
 
-from dataclasses import dataclass, field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-@dataclass(frozen=True)
-class FeedPolicy:
+class FeedPolicy(BaseModel):
     """Plain configuration data: referencing it reaches no production behavior."""
+
+    model_config = ConfigDict(frozen=True)
 
     max_rearms: int = 3
 
 
-@dataclass
-class EventFeed:
+class EventFeed(BaseModel):
     """A production service object whose methods are the behavior adapters bind."""
 
-    policy: FeedPolicy = field(default_factory=FeedPolicy)
-    executed: list[int] = field(default_factory=list)
+    policy: FeedPolicy = Field(default_factory=FeedPolicy)
+    executed: list[int] = Field(default_factory=list)
 
     def attempt_execution(self, pk: int) -> int:
         self.executed.append(pk)

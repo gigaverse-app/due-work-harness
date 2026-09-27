@@ -122,12 +122,13 @@ selection begins; invariant 3 independently requires a production-started
 
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass
 from datetime import timedelta
 from itertools import islice
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 from unittest import mock
+
+from pydantic import SkipValidation
 
 from due_work_harness.binding import (
     BACKLOG_AUTHORING_OPERATIONS,
@@ -140,21 +141,17 @@ from due_work_harness.binding import (
     is_real_reason,
 )
 from due_work_harness.host import SelectionInspector, current_host
-
-if TYPE_CHECKING:
-    from due_work_harness.integrations.django.lifecycle_states import Lifecycle
+from due_work_harness.models import HarnessModel
 
 
-@dataclass(frozen=True)
-class OwedWorkVariant:
+class OwedWorkVariant(HarnessModel):
     """One additional production-reachable shape that the sweep must recover."""
 
     name: str
     make: Callable[..., Any]
 
 
-@dataclass(frozen=True)
-class InFlightExecution:
+class InFlightExecution(HarnessModel):
     """
     Recovery-tick-started work held open while a second tick competes.
 
@@ -208,8 +205,7 @@ class SelectionAdapter(Protocol):
     def due_work(self) -> Callable[[], Iterable[Any]]: ...
 
 
-@dataclass(frozen=True)
-class DueWorkSweep:
+class DueWorkSweep(HarnessModel):
     """
     One domain's recovery sweep, described so the proofs can exercise it.
 
@@ -306,7 +302,12 @@ class DueWorkSweep:
     #: must be owed, terminal, or excluded with a reason, and every terminal
     #: state must owe nothing more. Invariant 0c checks its execution binding
     #: here whenever one is declared.
-    lifecycle: "Lifecycle | None" = None
+    #:
+    #: A :class:`~due_work_harness.integrations.django.lifecycle_states.Lifecycle`
+    #: or ``None``. Typed ``Any`` because ``Lifecycle`` lives in the Django
+    #: integration, which the framework-free core never imports, and a Pydantic
+    #: field cannot name a type imported only for the type checker.
+    lifecycle: SkipValidation[Any] = None
 
 
 def declared_recovery_delay(sweep: DueWorkSweep) -> timedelta:

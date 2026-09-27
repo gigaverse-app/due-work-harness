@@ -63,6 +63,7 @@ from due_work_harness.crash_histories import (
     assert_crash_at_every_commit_converges,
     assert_histories_converge,
 )
+from due_work_harness.exemptions import exempt_due_work_suite
 from due_work_harness.gap_probes import (
     DisprovenCapability,
     LossIsAbsorbedElsewhere,
@@ -133,6 +134,7 @@ from due_work_harness.safety.replay_safe_execution import (
 
 __all__ = [
     "__version__",
+    "exempt_due_work_suite",
     # Contract layer.
     "Adoption",
     "Claim",

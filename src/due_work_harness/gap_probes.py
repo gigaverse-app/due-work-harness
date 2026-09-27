@@ -19,7 +19,7 @@ bindings only::
         ),
     )
 
-Each probe is a frozen dataclass whose ``__call__`` runs the standard check.
+Each probe is a frozen model whose ``__call__`` runs the standard check.
 Because they are defined here — in harness code, not in a test module — the
 contract's binding validation accepts them as root-owned; a hand-rolled detect
 that neither lives here nor delegates to a shared ``assert_*`` proof is a
@@ -29,12 +29,12 @@ self-tests and a single owner.
 
 import re
 from collections.abc import Callable, Collection, Iterable
-from dataclasses import dataclass
 from typing import Any
 
 from due_work_harness.binding import (
     assert_test_binding_delegates_to_production,
 )
+from due_work_harness.models import HarnessModel
 from due_work_harness.profiles.automatic_recovery import (
     DueWorkSweep,
     assert_sweep_bindings_are_production_bound,
@@ -114,8 +114,7 @@ _SEMANTIC_BINDING_GUARDS: dict[type, Callable[[Any], None]] = {
 }
 
 
-@dataclass(frozen=True)
-class MissingScheduledConsumer:
+class MissingScheduledConsumer(HarnessModel):
     """
     Due work is derivable from product state, but nothing scheduled consumes it.
 
@@ -164,8 +163,7 @@ class MissingScheduledConsumer:
         )
 
 
-@dataclass(frozen=True)
-class DisprovenCapability:
+class DisprovenCapability(HarnessModel):
     """
     Executable decline evidence: the discriminating proof fails against
     PRODUCTION bindings, on the assertion it is about.
@@ -230,8 +228,7 @@ class DisprovenCapability:
         )
 
 
-@dataclass(frozen=True)
-class LossIsAbsorbedElsewhere:
+class LossIsAbsorbedElsewhere(HarnessModel):
     """
     Executable evidence for an exemption: lose the dispatch, keep the effect.
 
@@ -287,8 +284,7 @@ class LossIsAbsorbedElsewhere:
         )
 
 
-@dataclass(frozen=True)
-class MissingReclaim:
+class MissingReclaim(HarnessModel):
     """
     A state that marks work in flight is never re-selected once its owner dies.
 

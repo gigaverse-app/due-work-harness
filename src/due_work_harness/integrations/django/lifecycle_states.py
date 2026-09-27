@@ -71,11 +71,11 @@ What these proofs deliberately do not claim:
 
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from unittest import mock
 
+import pydantic
 from django.db import DEFAULT_DB_ALIAS, connection, connections
 from django.db.models import Field, Lookup, Model, QuerySet
 from django.db.models.expressions import Col
@@ -87,6 +87,7 @@ from due_work_harness.binding import (
 )
 from due_work_harness.host import current_host
 from due_work_harness.integrations.django.writes import row_write
+from due_work_harness.models import HarnessModel, MutableHarnessModel
 
 if TYPE_CHECKING:
     from due_work_harness.profiles.automatic_recovery import DueWorkSweep
@@ -105,8 +106,7 @@ _FRESH_TERMINAL_AGE = timedelta(seconds=5)
 _SELECTABLE_HORIZONS = (_SELECTION_HORIZON, timedelta(days=1), timedelta(days=30))
 
 
-@dataclass(frozen=True)
-class Lifecycle:
+class Lifecycle(HarnessModel):
     """
     The domain's lifecycle states and the execution that proves terminal ones inert.
 
@@ -141,7 +141,7 @@ class Lifecycle:
 
     state_fields: tuple[str, ...]
     execute: Callable[[Any], Any]
-    excluded_states: Mapping[str, str] = field(default_factory=dict)
+    excluded_states: Mapping[str, str] = pydantic.Field(default_factory=dict)
     deliver: Callable[[Any], Any] | None = None
     inline_tick_because: str | None = None
 
@@ -379,8 +379,7 @@ def assert_every_lifecycle_state_is_declared(sweep: "DueWorkSweep") -> None:
     )
 
 
-@dataclass
-class _Effects:
+class _Effects(MutableHarnessModel):
     """
     What one delivery did, split into obligations and progress.
 
@@ -392,14 +391,14 @@ class _Effects:
     successor advancing, an idempotent mirror.
     """
 
-    created: list[str] = field(default_factory=list)
-    newly_selectable: list[Any] = field(default_factory=list)
+    created: list[str] = pydantic.Field(default_factory=list)
+    newly_selectable: list[Any] = pydantic.Field(default_factory=list)
     moved_state: str | None = None
-    published: list[str] = field(default_factory=list)
+    published: list[str] = pydantic.Field(default_factory=list)
     commit_callbacks: int = 0
-    dispatched: list[Any] = field(default_factory=list)
+    dispatched: list[Any] = pydantic.Field(default_factory=list)
     effect_calls: int = 0
-    progress: list[str] = field(default_factory=list)
+    progress: list[str] = pydantic.Field(default_factory=list)
 
     def _obligations(self) -> list[str]:
         """Each kind of new obligation this delivery left, described; empty when it owes nothing."""

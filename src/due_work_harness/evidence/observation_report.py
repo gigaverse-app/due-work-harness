@@ -5,30 +5,15 @@ python -m due_work_harness.evidence.observation_report report.json --field event
 """
 
 import argparse
-import json
 from pathlib import Path
 
-from due_work_harness.evidence.observation import ObservationReport, observed_test_from_json
+from pydantic import TypeAdapter
 
+from due_work_harness.evidence.observation import ObservationReport
 
-class _ReportAdapter:
-    """The report's one JSON boundary: written by workers and the report file, read by the CLI."""
-
-    def dump_json(self, tests: ObservationReport, *, indent: int | None = None, context: Path | None = None) -> bytes:
-        document = {nodeid: [test.to_json(context) for test in executions] for nodeid, executions in tests.items()}
-        return json.dumps(document, indent=indent, ensure_ascii=False).encode("utf-8")
-
-    def validate_json(self, data: bytes | str) -> ObservationReport:
-        document = json.loads(data)
-        assert isinstance(document, dict), "an observation report must be a JSON object keyed by test node id"
-        report: ObservationReport = {}
-        for nodeid, executions in document.items():
-            assert isinstance(executions, list), f"{nodeid}: executions must be a JSON array"
-            report[nodeid] = [observed_test_from_json(execution) for execution in executions]
-        return report
-
-
-REPORT_ADAPTER = _ReportAdapter()
+#: The report's one JSON boundary: written by workers and the report file, read by
+#: the CLI. Serialization takes the pytest root as ``context`` to relativize paths.
+REPORT_ADAPTER: TypeAdapter[ObservationReport] = TypeAdapter(ObservationReport)
 
 
 def report_json(tests: ObservationReport, root: Path) -> bytes:
