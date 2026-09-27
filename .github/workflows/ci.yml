@@ -100,6 +100,9 @@ jobs:
       PGPORT: "5432"
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The check action builds the harness from this checkout; its version comes from git tags.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -113,6 +116,17 @@ jobs:
         run: uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings -rxX
       - name: DBOS transactional-outbox
         run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX
+      # Each demo is an adopter: its handoffs are checked the way an adopter's CI checks them.
+      - name: procrastinate demo_django, every handoff accounted for
+        uses: ./check
+        with:
+          working-directory: demos/procrastinate_demo_django
+          package: ${{ github.workspace }}
+      - name: DBOS transactional-outbox, every handoff accounted for
+        uses: ./check
+        with:
+          working-directory: demos/dbos_transactional_outbox
+          package: ${{ github.workspace }}
 
   saleor:
     # Saleor's checkout, unmodified, in Saleor's own environment built from its uv.lock.
@@ -129,6 +143,9 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/saleor
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The check action builds the harness from this checkout; its version comes from git tags.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -139,8 +156,13 @@ jobs:
       - run: uv run --no-project python demos/fetch_upstream.py saleor
       - name: Type-check the demo against Saleor
         run: demos/saleor_checkout/run.sh --typecheck
+      - name: Saleor, every handoff accounted for
+        uses: ./check
+        with:
+          working-directory: demos/saleor_checkout
+          package: ${{ github.workspace }}
       - name: Saleor checkout
-        run: demos/saleor_checkout/run.sh -rxX
+        run: demos/saleor_checkout/run.sh -rxX --due-work-verify
 
   build:
     # The published wheel alone: it installs without any framework, imports, and ships py.typed.

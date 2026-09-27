@@ -12,9 +12,28 @@ Demos are teaching code, and they are good at what they teach. The point is not
 that they are wrong, but to show what the harness finds when code like this is
 copied into production, and the one change that makes the same proof pass.
 
-Each finding is a **strict xfail** carrying its explanation, next to a
-**positive control** that passes with the fix. If upstream changes the demo, the
-xfail turns red and the write-up here must change with it.
+Each demo **adopts the harness the way a project does**:
+
+- a `pyproject.toml` with `[tool.due-work-harness]`, pointing the coverage
+  check at the pinned upstream, and a baseline for the handoffs no contract
+  insures yet: `due-work-harness check --root demos/<demo>` passes, and CI runs
+  it through the `check` action;
+- a `DueWorkContract` for the obligation, with a disposition for every profile
+  and both safety profiles, its handoffs and their delivery, decorated with
+  `@due_work_contract_suite(..., covers=(DueWorkSource(<the site>),))`. What
+  the harness finds is declared as legacy gaps (`KnownGap`, `handoff_gaps`, an
+  `ExtraProof`'s `gap`), each generated as a **strict xfail** carrying its
+  explanation;
+- a second contract with the fix, as the **positive control**, which passes.
+
+If upstream changes a demo, a strict xfail turns red and the write-up here must
+change with it.
+
+| Demo | As-shipped contract | Covers | Fix contract |
+| --- | --- | --- | --- |
+| procrastinate | `DEMO_AS_SHIPPED`: B `KnownGap` (a dead worker's job, probed by `MissingReclaim`), the create-book handoff gap, and a held-transaction `ExtraProof` gap | `CreateBookView.form_valid` | `DEMO_WITH_ITS_FIXES`: `ATOMIC_REQUESTS`, and B declined with procrastinate's recipe as its `prove` |
+| DBOS | `PLACE_ORDER_CONTRACT`: real process deaths as `ExtraProof`s, C `KnownGap` probed by a death after the send | nothing: its enqueue is SQL, which a static scan cannot see | — |
+| Saleor | `CHECKOUT_AS_SHIPPED`: A, C, D, F `KnownGap`s and the complete-checkout handoff gap | `_post_create_order_actions` (its two `on_commit` sites) | `CHECKOUT_WITH_AUTOMATIC_COMPLETION`: the Transactions API with automatic completion |
 
 ## Results
 
@@ -58,6 +77,8 @@ pip install -e ".[django]" -e demos/.upstream/procrastinate "dbos==3.1.0" "fasta
 export PGUSER=postgres PGPASSWORD=postgres PGHOST=localhost PGPORT=5432
 PGDATABASE=procrastinate_demo pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings
 pytest demos/dbos_transactional_outbox -p no:django
+due-work-harness check --root demos/procrastinate_demo_django
+due-work-harness check --root demos/dbos_transactional_outbox
 ```
 
 The DBOS demo creates and drops its own database (`dbos_outbox_demo`, override
@@ -68,8 +89,9 @@ Linux (Saleor's development dependencies do not build on Windows):
 
 ```bash
 python demos/fetch_upstream.py saleor
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/saleor demos/saleor_checkout/run.sh -rxX
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/saleor demos/saleor_checkout/run.sh -rxX --due-work-verify
 demos/saleor_checkout/run.sh --typecheck
+due-work-harness check --root demos/saleor_checkout
 ```
 
 ## What each adapter binds

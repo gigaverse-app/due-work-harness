@@ -1,5 +1,5 @@
 """
-The harness against Saleor's checkout, unmodified.
+Saleor's checkout, unmodified, adopted as a project adopts the harness.
 
 Upstream: saleor @ 5ff56489 (``saleor/checkout/complete_checkout.py``).
 Completing a paid checkout makes three commits before any callback runs:
@@ -9,6 +9,16 @@ transaction registers two ``transaction.on_commit`` callbacks: ``order_created``
 whose writes each commit on their own, and ``send_order_confirmation``. The
 obligation: a customer who is charged has an order, and every order is recorded
 as placed and confirmed to them.
+
+Two contracts, each a declaration and one decorated class, as an adopter
+writes them. ``CHECKOUT_AS_SHIPPED`` covers the two ``on_commit`` handoffs the
+scan finds in ``_post_create_order_actions`` and records what the harness finds
+as legacy gaps, each a strict xfail; ``due-work-harness check`` counts it (see
+``pyproject.toml``, whose baseline holds Saleor's other handoffs).
+``CHECKOUT_WITH_AUTOMATIC_COMPLETION`` is Saleor's own answer to the charged-
+but-no-order finding, and passes. ``test_what_each_failure_costs_the_customer``
+pins what every history leaves behind, so a change upstream or in the harness
+shows exactly what moved.
 
 The transition is ``complete_checkout``, called exactly as Saleor's
 ``checkoutComplete`` mutation calls it. (Not through the GraphQL view: its
@@ -22,7 +32,7 @@ past every expiry Saleor configures.
 """
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
@@ -34,9 +44,11 @@ from django.contrib.sites.models import Site
 from django.utils import timezone
 from freezegun import freeze_time
 from pydantic import BaseModel, ConfigDict
+from saleor.account.models import Address, User
 from saleor.celeryconf import app
+from saleor.channel.models import Channel
 from saleor.checkout import calculations
-from saleor.checkout.complete_checkout import complete_checkout
+from saleor.checkout.complete_checkout import _post_create_order_actions, complete_checkout
 from saleor.checkout.fetch import fetch_checkout_info, fetch_checkout_lines
 from saleor.checkout.models import Checkout, CheckoutMetadata
 from saleor.checkout.payment_utils import update_checkout_payment_statuses
@@ -48,13 +60,25 @@ from saleor.payment import TransactionEventType
 from saleor.payment.models import Payment, TransactionItem
 from saleor.payment.utils import recalculate_transaction_amounts
 from saleor.plugins.manager import PluginsManager, get_plugins_manager
+from saleor.product.models import ProductVariant
 from saleor.site.models import SiteSettings
 from saleor.warehouse.models import Stock
 
-from due_work_harness import CallableDelivery, HandoffHistory, assert_crash_at_every_commit_converges
+from due_work_harness import (
+    Adoption,
+    CallableDelivery,
+    Decline,
+    DueWorkContract,
+    DueWorkSource,
+    HandoffHistory,
+    KnownGap,
+    NotApplicable,
+    Profile,
+    SafetyContract,
+    SafetyProfile,
+    due_work_contract_suite,
+)
 from due_work_harness.crash_histories import assert_histories_converge, crash_histories
-
-pytestmark = pytest.mark.django_db(transaction=True)
 
 #: Far enough ahead for every age-based task Saleor schedules to act: the longest,
 #: deleting a user's checkout, waits USER_CHECKOUTS_TIMEDELTA (90 days).
@@ -76,6 +100,138 @@ def run_beat_schedule() -> None:
 SALEOR = CallableDelivery(name="saleor complete_checkout", recover=run_beat_schedule)
 
 
+class Shop(BaseModel):
+    """What Saleor's own fixtures built for one test, published for the contract's zero-argument bindings."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+    channel: Channel
+    variant: ProductVariant
+    customer: User
+    address: Address
+    assign_delivery: Callable[[Checkout], Any]
+    #: Order confirmations Saleor handed to its notification plugins, by order id.
+    confirmations: Counter[str]
+    #: Saleor's own Transactions API fixture factories, for the paid-checkout history.
+    transaction_item: Callable[..., TransactionItem]
+    transaction_events: Callable[..., Any]
+
+
+_SHOPS: list[Shop] = []
+
+
+def current_shop() -> Shop:
+    assert _SHOPS, "a Saleor contract case runs inside its saleor_shop fixture"
+    return _SHOPS[-1]
+
+
+@pytest.fixture
+def saleor_shop(
+    monkeypatch: pytest.MonkeyPatch,
+    channel_USD,  # noqa: ANN001, N803
+    product,  # noqa: ANN001
+    shipping_zone,  # noqa: ANN001, ARG001
+    customer_user,  # noqa: ANN001
+    address,  # noqa: ANN001
+    checkout_delivery,  # noqa: ANN001
+    transaction_item_generator,  # noqa: ANN001
+    transaction_events_generator,  # noqa: ANN001
+) -> Iterator[Shop]:
+    """Saleor's own fixtures, with the product stocked for every history's order and confirmations counted."""
+    channel_USD.automatically_confirm_all_new_orders = True
+    channel_USD.save()
+    variant = product.variants.first()
+    # ARRANGE: every history places an order, so stock the variant for all of them.
+    Stock.objects.filter(product_variant=variant).update(quantity=1_000_000)
+    shop = Shop(
+        channel=channel_USD,
+        variant=variant,
+        customer=customer_user,
+        address=address,
+        assign_delivery=checkout_delivery,
+        confirmations=Counter(),
+        transaction_item=transaction_item_generator,
+        transaction_events=transaction_events_generator,
+    )
+    notify = PluginsManager.notify
+
+    def recording_notify(self: PluginsManager, event: str, payload_func, channel_slug=None, **kwargs):  # noqa: ANN001, ANN202
+        # EXTERNAL SEAM: the call Saleor's own checkout tests mock; plugins would send the email from here.
+        # Recorded into the shop's own counter: Pydantic validated a copy of any counter passed in.
+        if event == NotifyEventType.ORDER_CONFIRMATION:
+            shop.confirmations[payload_func()["order"]["id"]] += 1
+        return notify(self, event, payload_func=payload_func, channel_slug=channel_slug, **kwargs)
+
+    monkeypatch.setattr(PluginsManager, "notify", recording_notify)
+    _SHOPS.append(shop)
+    yield shop
+    _SHOPS.pop()
+
+
+@pytest.fixture
+def automatic_completion(saleor_shop: Shop) -> None:
+    """The channel opts into Saleor's automatic completion of fully paid checkouts, with no delay."""
+    saleor_shop.channel.automatically_complete_fully_paid_checkouts = True
+    saleor_shop.channel.automatic_completion_delay = 0
+    saleor_shop.channel.save()
+
+
+type Handle = tuple[UUID, Any]
+
+
+def _checkout() -> tuple[Checkout, Any]:
+    """A customer's checkout for one product, as Saleor's own checkoutComplete tests arrange it."""
+    shop = current_shop()
+    checkout = Checkout.objects.create(
+        currency=shop.channel.currency_code,
+        channel=shop.channel,
+        price_expiration=timezone.now() + settings.CHECKOUT_PRICES_TTL,
+        email=shop.customer.email,
+        user=shop.customer,
+        shipping_address=shop.address.get_copy(),
+        billing_address=shop.address.get_copy(),
+    )
+    checkout.set_country("US", commit=True)
+    CheckoutMetadata.objects.create(checkout=checkout)
+    manager = get_plugins_manager(allow_replica=False)
+    add_variant_to_checkout(fetch_checkout_info(checkout, [], manager), shop.variant, 1)
+    checkout.assigned_delivery = shop.assign_delivery(checkout)
+    checkout.save()
+    lines, _ = fetch_checkout_lines(checkout)
+    total = calculations.calculate_checkout_total_with_gift_cards(
+        manager, fetch_checkout_info(checkout, lines, manager), lines
+    )
+    return checkout, total.gross
+
+
+def complete(handle: Handle) -> None:
+    """REAL PRODUCTION: complete_checkout, called as Saleor's checkoutComplete mutation calls it."""
+    manager = get_plugins_manager(allow_replica=False)
+    checkout = Checkout.objects.get(pk=handle[0])
+    lines, _ = fetch_checkout_lines(checkout)
+    complete_checkout(
+        manager=manager,
+        checkout_info=fetch_checkout_info(checkout, lines, manager),
+        lines=lines,
+        payment_data={},
+        store_source=False,
+        user=current_shop().customer,
+        app=None,
+        site_settings=SiteSettings.objects.get(site=Site.objects.get_current()),
+        redirect_url="https://www.example.com",
+    )
+
+
+def _order(checkout_pk: UUID) -> Order | None:
+    return Order.objects.filter(checkout_token=str(checkout_pk)).first()
+
+
+def _money_on(model: type[Payment] | type[TransactionItem], pk: object) -> str:
+    """What a payment's money belongs to: its order, its checkout, or nothing at all."""
+    order_id, checkout_id = model.objects.filter(pk=pk).values_list("order_id", "checkout_id").get()
+    return "order" if order_id else "checkout" if checkout_id else "nothing"
+
+
 class Outcome(BaseModel):
     """What the customer and the shop see: the order, its history, the confirmation, and the money."""
 
@@ -89,138 +245,96 @@ class Outcome(BaseModel):
     money_on: str
 
 
-class Paid(BaseModel):
-    """The money and the order alone: whether a charged customer has an order to show for it."""
-
-    model_config = ConfigDict(frozen=True)
-
-    order: bool
-    charged: bool
-    money_on: str
-
-
-type Handle = tuple[UUID, Any]
-
-
-@pytest.fixture
-def confirmations(monkeypatch: pytest.MonkeyPatch) -> Counter[str]:
-    """Order confirmations Saleor hands to its notification plugins, by order id."""
-    sent: Counter[str] = Counter()
-    notify = PluginsManager.notify
-
-    def recording_notify(self: PluginsManager, event: str, payload_func, channel_slug=None, **kwargs):  # noqa: ANN001, ANN202
-        # EXTERNAL SEAM: the call Saleor's own checkout tests mock; plugins would send the email from here.
-        if event == NotifyEventType.ORDER_CONFIRMATION:
-            sent[payload_func()["order"]["id"]] += 1
-        return notify(self, event, payload_func=payload_func, channel_slug=channel_slug, **kwargs)
-
-    monkeypatch.setattr(PluginsManager, "notify", recording_notify)
-    return sent
-
-
-@pytest.fixture
-def shop(channel_USD, product, shipping_zone, customer_user, address, checkout_delivery):  # noqa: ANN001, ANN201, N803
-    """Saleor's own fixtures, with the product stocked for every history's order."""
-    channel_USD.automatically_confirm_all_new_orders = True
-    channel_USD.save()
-    variant = product.variants.first()
-    # ARRANGE: every history places an order, so stock the variant for all of them.
-    Stock.objects.filter(product_variant=variant).update(quantity=1_000_000)
-    return channel_USD, variant, customer_user, address, checkout_delivery
-
-
-def _checkout(shop) -> tuple[Checkout, Any]:  # noqa: ANN001
-    """A customer's checkout for one product, as Saleor's own checkoutComplete tests arrange it."""
-    channel, variant, customer, address, checkout_delivery = shop
-    checkout = Checkout.objects.create(
-        currency=channel.currency_code,
-        channel=channel,
-        price_expiration=timezone.now() + settings.CHECKOUT_PRICES_TTL,
-        email=customer.email,
-        user=customer,
-        shipping_address=address.get_copy(),
-        billing_address=address.get_copy(),
+def pay_with_the_payments_api() -> Handle:
+    """ARRANGE: a fresh checkout and its Payments API payment, which complete_checkout captures itself."""
+    checkout, total = _checkout()
+    payment = Payment.objects.create(
+        gateway="mirumee.payments.dummy",
+        checkout=checkout,
+        is_active=True,
+        total=total.amount,
+        currency=total.currency,
+        billing_email=checkout.email,
     )
-    checkout.set_country("US", commit=True)
-    CheckoutMetadata.objects.create(checkout=checkout)
-    manager = get_plugins_manager(allow_replica=False)
-    add_variant_to_checkout(fetch_checkout_info(checkout, [], manager), variant, 1)
-    checkout.assigned_delivery = checkout_delivery(checkout)
-    checkout.save()
-    lines, _ = fetch_checkout_lines(checkout)
-    total = calculations.calculate_checkout_total_with_gift_cards(
-        manager, fetch_checkout_info(checkout, lines, manager), lines
+    return checkout.pk, payment.pk
+
+
+def order_confirmation_and_money(handle: Handle) -> Outcome:
+    """OBSERVE: the order and its history, the confirmations the customer was sent, and where the money is."""
+    order = _order(handle[0])
+    payment = Payment.objects.get(pk=handle[1])
+    order_id = to_global_id_or_none(order) if order else None
+    return Outcome(
+        order=order is not None,
+        events=tuple(sorted(order.events.values_list("type", flat=True))) if order else (),
+        confirmations=current_shop().confirmations[order_id] if order_id else 0,
+        charged=payment.captured_amount > 0,
+        money_on=_money_on(Payment, payment.pk),
     )
-    return checkout, total.gross
 
 
-def _complete(customer) -> Callable[[Handle], None]:  # noqa: ANN001
-    def complete(handle: Handle) -> None:
-        # REAL PRODUCTION: complete_checkout, called as Saleor's checkoutComplete mutation calls it.
-        manager = get_plugins_manager(allow_replica=False)
-        checkout = Checkout.objects.get(pk=handle[0])
-        lines, _ = fetch_checkout_lines(checkout)
-        complete_checkout(
-            manager=manager,
-            checkout_info=fetch_checkout_info(checkout, lines, manager),
-            lines=lines,
-            payment_data={},
-            store_source=False,
-            user=customer,
-            app=None,
-            site_settings=SiteSettings.objects.get(site=Site.objects.get_current()),
-            redirect_url="https://www.example.com",
+COMPLETE_CHECKOUT = HandoffHistory(
+    name="complete checkout",
+    arrange=pay_with_the_payments_api,
+    transition=complete,
+    observe=order_confirmation_and_money,
+)
+
+CHECKOUT_AS_SHIPPED = DueWorkContract(
+    name="saleor checkout",
+    adoption=Adoption.LEGACY,
+    transactional=True,
+    fixtures=("saleor_shop",),
+    profiles={
+        Profile.A: KnownGap(
+            "no periodic task Saleor schedules selects an order whose after-commit work never ran: its events, "
+            "its ORDER_CREATED webhooks and its confirmation are owed by nothing but the lost callbacks"
+        ),
+        Profile.B: Decline(
+            "completion serialises on the checkout row lock (select_for_update) inside each of its transactions; "
+            "it holds no lease that could outlive a worker"
+        ),
+        Profile.C: KnownGap(
+            "with the Payments API the gateway captures the payment between two commits: a death after the "
+            "capture leaves an outcome Saleor never reconciles, so the customer is charged and no order is made"
+        ),
+        Profile.D: KnownGap(
+            "delete_expired_checkouts keeps checkouts holding Transactions API money, but prunes one holding a "
+            "captured Payments API payment, the only record that an order is owed: after 90 days that payment "
+            "belongs to nothing"
+        ),
+        Profile.E: NotApplicable("one completion writes each order's events and confirmation once; no two race"),
+        Profile.F: KnownGap(
+            "no product state records that an order is still to be confirmed, so no recovery can derive the "
+            "obligation the lost callback held"
+        ),
+    },
+    safety=SafetyContract(
+        name="saleor checkout",
+        adoption=Adoption.LEGACY,
+        profiles={
+            SafetyProfile.REPLAY_SAFE_EXECUTION: Decline(
+                "nothing in Saleor replays a lost confirmation (profile A), so there is no replay to make safe"
+            ),
+            SafetyProfile.BOUNDED_RETRY: NotApplicable("the post-commit callbacks are not retried"),
+        },
+    ),
+    handoffs=(COMPLETE_CHECKOUT,),
+    handoff_delivery=SALEOR,
+    handoff_gaps={
+        "complete checkout": (
+            "a death after the Payments API capture charges the customer with no order, which after 90 days "
+            "belongs to nothing; a death after the order commits leaves it unconfirmed with its history empty or "
+            "half-written; and a failing order_created callback, with no death at all, makes Django skip the "
+            "confirmation. test_what_each_failure_costs_the_customer pins each history"
         )
-
-    return complete
-
-
-def _order(checkout_pk: UUID) -> Order | None:
-    return Order.objects.filter(checkout_token=str(checkout_pk)).first()
+    },
+)
 
 
-def _money_on(model: type[Payment] | type[TransactionItem], pk: object) -> str:
-    """What a payment's money belongs to: its order, its checkout, or nothing at all."""
-    order_id, checkout_id = model.objects.filter(pk=pk).values_list("order_id", "checkout_id").get()
-    return "order" if order_id else "checkout" if checkout_id else "nothing"
-
-
-def _confirmations(sent: Counter[str], order: Order) -> int:
-    order_id = to_global_id_or_none(order)
-    assert order_id is not None, "a saved order has a global id"
-    return sent[order_id]
-
-
-@pytest.fixture
-def pay_with_the_payments_api(shop, confirmations: Counter[str]) -> HandoffHistory[Handle, Outcome]:  # noqa: ANN001
-    """A checkout paid through Saleor's Payments API (payment plugins; here its dummy gateway)."""
-
-    def arrange() -> Handle:
-        # ARRANGE: a fresh checkout and its payment, captured by complete_checkout itself.
-        checkout, total = _checkout(shop)
-        payment = Payment.objects.create(
-            gateway="mirumee.payments.dummy",
-            checkout=checkout,
-            is_active=True,
-            total=total.amount,
-            currency=total.currency,
-            billing_email=checkout.email,
-        )
-        return checkout.pk, payment.pk
-
-    def observe(handle: Handle) -> Outcome:
-        # OBSERVE: the order and its history, the confirmations the customer was sent, and where the money is.
-        order = _order(handle[0])
-        payment = Payment.objects.get(pk=handle[1])
-        return Outcome(
-            order=order is not None,
-            events=tuple(sorted(order.events.values_list("type", flat=True))) if order else (),
-            confirmations=_confirmations(confirmations, order) if order else 0,
-            charged=payment.captured_amount > 0,
-            money_on=_money_on(Payment, payment.pk),
-        )
-
-    return HandoffHistory(name="complete checkout", arrange=arrange, transition=_complete(shop[2]), observe=observe)
+@due_work_contract_suite(CHECKOUT_AS_SHIPPED, covers=(DueWorkSource(_post_create_order_actions, sites=2),))
+class TestCheckoutAsShipped:
+    pass
 
 
 PLACED = Outcome(
@@ -264,53 +378,95 @@ FINDINGS = {
 }
 
 
-def test_what_each_failure_costs_the_customer(pay_with_the_payments_api: HandoffHistory[Handle, Outcome]) -> None:
-    runs = crash_histories(SALEOR, pay_with_the_payments_api)
+@pytest.mark.django_db(transaction=True)
+def test_what_each_failure_costs_the_customer(saleor_shop: Shop) -> None:  # noqa: ARG001
+    runs = crash_histories(SALEOR, COMPLETE_CHECKOUT)
     assert runs[0].after == PLACED, "normal operation places, records and confirms the order"
     assert {run.label: run.after for run in runs[1:]} == FINDINGS
     with pytest.raises(AssertionError, match="Work was lost or repeated"):
         assert_histories_converge(SALEOR.name, runs)
 
 
-@pytest.fixture
-def pay_with_transactions_and_automatic_completion(shop, transaction_item_generator, transaction_events_generator):  # noqa: ANN001, ANN201
-    """A checkout paid through Saleor's Transactions API, in a channel that completes fully paid checkouts itself."""
-    channel = shop[0]
-    channel.automatically_complete_fully_paid_checkouts = True
-    channel.automatic_completion_delay = 0
-    channel.save()
+class Paid(BaseModel):
+    """The money and the order alone: whether a charged customer has an order to show for it."""
 
-    def arrange() -> Handle:
-        # ARRANGE: a fresh checkout, charged by the payment app before completion, as Saleor's own tests arrange it.
-        checkout, total = _checkout(shop)
-        transaction = transaction_item_generator(checkout_id=checkout.pk)
-        transaction_events_generator(
-            transaction=transaction,
-            psp_references=["1"],
-            types=[TransactionEventType.CHARGE_SUCCESS],
-            amounts=[total.amount],
-        )
-        recalculate_transaction_amounts(transaction)
-        # Settle the checkout's payment status now, as Saleor would on the next fetch, so that
-        # completing it writes nothing inside fetch_checkout_data's promise chain, where a
-        # simulated death (a BaseException) would leave the promise waiting forever.
-        update_checkout_payment_statuses(checkout, total, checkout_has_lines=True)
-        return checkout.pk, transaction.pk
+    model_config = ConfigDict(frozen=True)
 
-    def observe(handle: Handle) -> Paid:
-        # OBSERVE: whether the charged customer has an order, and where the money is.
-        transaction = TransactionItem.objects.get(pk=handle[1])
-        return Paid(
-            order=_order(handle[0]) is not None,
-            charged=transaction.charged_value > Decimal(0),
-            money_on=_money_on(TransactionItem, transaction.pk),
-        )
-
-    return HandoffHistory(name="complete checkout", arrange=arrange, transition=_complete(shop[2]), observe=observe)
+    order: bool
+    charged: bool
+    money_on: str
 
 
-def test_with_automatic_completion_a_charged_customer_always_gets_an_order(
-    pay_with_transactions_and_automatic_completion: HandoffHistory[Handle, Paid],
-) -> None:
-    """Positive control, Saleor's own design: money held as a transaction, and a beat task that completes it."""
-    assert_crash_at_every_commit_converges(SALEOR, pay_with_transactions_and_automatic_completion)
+def pay_with_transactions() -> Handle:
+    """ARRANGE: a fresh checkout, charged by the payment app before completion, as Saleor's own tests arrange it."""
+    shop = current_shop()
+    checkout, total = _checkout()
+    transaction = shop.transaction_item(checkout_id=checkout.pk)
+    shop.transaction_events(
+        transaction=transaction,
+        psp_references=["1"],
+        types=[TransactionEventType.CHARGE_SUCCESS],
+        amounts=[total.amount],
+    )
+    recalculate_transaction_amounts(transaction)
+    # Settle the checkout's payment status now, as Saleor would on the next fetch, so that
+    # completing it writes nothing inside fetch_checkout_data's promise chain, where a
+    # simulated death (a BaseException) would leave the promise waiting forever.
+    update_checkout_payment_statuses(checkout, total, checkout_has_lines=True)
+    return checkout.pk, transaction.pk
+
+
+def order_and_money(handle: Handle) -> Paid:
+    """OBSERVE: whether the charged customer has an order, and where the money is."""
+    transaction = TransactionItem.objects.get(pk=handle[1])
+    return Paid(
+        order=_order(handle[0]) is not None,
+        charged=transaction.charged_value > Decimal(0),
+        money_on=_money_on(TransactionItem, transaction.pk),
+    )
+
+
+COMPLETE_PAID_CHECKOUT = HandoffHistory(
+    name="complete paid checkout",
+    arrange=pay_with_transactions,
+    transition=complete,
+    observe=order_and_money,
+)
+
+CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
+    name="saleor checkout, Transactions API with automatic completion",
+    transactional=True,
+    fixtures=("saleor_shop", "automatic_completion"),
+    profiles={
+        Profile.A: Decline(
+            "recovery is Saleor's own trigger_automatic_checkout_completion_task, which the handoff history runs "
+            "among the beat tasks; this contract binds no sweep of its own"
+        ),
+        Profile.B: Decline("completion serialises on the checkout row lock; it holds no lease"),
+        Profile.C: Decline(
+            "the payment app charges before completion and records a TransactionItem, so completion makes no "
+            "gateway call whose outcome could be unknown"
+        ),
+        Profile.D: Decline("delete_expired_checkouts keeps every checkout holding Transactions API money"),
+        Profile.E: NotApplicable("one completion writes each order once; no two race"),
+        Profile.F: Decline(
+            "the obligation is the fully paid checkout itself, which automatic completion selects from product state"
+        ),
+    },
+    safety=SafetyContract(
+        name="saleor checkout, Transactions API with automatic completion",
+        profiles={
+            SafetyProfile.REPLAY_SAFE_EXECUTION: Decline(
+                "completing an already completed checkout returns its existing order"
+            ),
+            SafetyProfile.BOUNDED_RETRY: NotApplicable("automatic completion retries on the beat schedule, unbounded"),
+        },
+    ),
+    handoffs=(COMPLETE_PAID_CHECKOUT,),
+    handoff_delivery=SALEOR,
+)
+
+
+@due_work_contract_suite(CHECKOUT_WITH_AUTOMATIC_COMPLETION)
+class TestCheckoutWithAutomaticCompletion:
+    """Saleor's own design: money held as a transaction, and a beat task that completes a paid checkout."""

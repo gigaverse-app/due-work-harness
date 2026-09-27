@@ -22,10 +22,21 @@ from unittest import mock
 from uuid import uuid4
 
 import psycopg
-import pytest
 from psycopg import sql
 
-from due_work_harness import LossIsAbsorbedElsewhere
+from due_work_harness import (
+    Adoption,
+    Decline,
+    DueWorkContract,
+    ExtraProof,
+    KnownGap,
+    LossIsAbsorbedElsewhere,
+    NotApplicable,
+    Profile,
+    SafetyContract,
+    SafetyProfile,
+    due_work_contract_suite,
+)
 from due_work_harness.integrations.dbos import restart_until
 from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
 
@@ -93,39 +104,94 @@ def restart(order_id: int) -> None:
         restart_until(demo.main, lambda: _status(order_id) == "SENT")
 
 
-PLACE_ORDER = ProcessHistory(
-    name="place order",
-    initial=(None, 0),
-    run=place_order_in_a_child_process,
-    observe=observe,
-    recover=restart,
-    death_points=("after_order", "before_send"),
+def place_order(*death_points: str) -> ProcessHistory[int, tuple[str | None, int]]:
+    """Placing one order, the process dying at each of ``death_points``, recovered by the demo's own restart."""
+    return ProcessHistory(
+        name="place order",
+        initial=(None, 0),
+        run=place_order_in_a_child_process,
+        observe=observe,
+        recover=restart,
+        death_points=death_points,
+    )
+
+
+def deaths_before_the_notification() -> None:
+    # ARRANGE: the demo places an order in a child process that dies after the order commits, or before sending.
+    # REAL PRODUCTION: the demo's own main() restarts and DBOS recovers the workflow (restart).
+    # EXTERNAL SEAM: the notification lands in the same inbox the dead process wrote to.
+    # OBSERVE: the order's notification status, and how many notifications the customer received.
+    assert_process_deaths_converge(place_order("after_order", "before_send"))
+
+
+def a_death_after_the_notification() -> None:
+    # ARRANGE: the child process dies after the notification is sent, before DBOS records the step.
+    # REAL PRODUCTION: the demo's main() restarts and DBOS reruns the step it has no record of.
+    # EXTERNAL SEAM: the same inbox.
+    # OBSERVE: the customer's notification count.
+    assert_process_deaths_converge(place_order("after_send"))
+
+
+def _strand() -> int:
+    order_id, status = place_order_in_a_child_process("after_order")
+    if status != 1:
+        raise RuntimeError(f"the child process was to die after committing the order; it exited {status}")
+    return order_id
+
+
+#: The harness's own exemption probe, unmodified: lose the execution, require the demo's restart to absorb it.
+A_LOST_WORKFLOW_IS_ABSORBED_BY_A_RESTART = LossIsAbsorbedElsewhere(
+    strand=_strand, observe=lambda order_id: _status(order_id) == "SENT", absorb=restart
 )
 
 
-def test_placing_an_order_survives_a_death_before_the_notification() -> None:
-    assert_process_deaths_converge(PLACE_ORDER)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FINDING: a death after the notification is sent and before DBOS records the step makes recovery run "
-        "the step again, so the customer is notified twice. DBOS resumes from the last completed step, as "
-        "documented; the workflow runs once, but its external effect is at-least-once."
+PLACE_ORDER_CONTRACT = DueWorkContract(
+    name="DBOS transactional-outbox: place order",
+    adoption=Adoption.LEGACY,
+    profiles={
+        Profile.A: Decline(
+            "recovery is DBOS's own: the demo's main() relaunches every pending workflow when it starts, which "
+            "the process histories below prove against real deaths"
+        ),
+        Profile.B: NotApplicable("DBOS owns workflow execution and its recovery; the demo holds no lease of its own"),
+        Profile.C: KnownGap(
+            "a death after the notification is sent, before DBOS records the step, leaves the send's outcome "
+            "unknown to DBOS, which reruns it: the customer is notified twice. DBOS resumes from the last "
+            "completed step, as documented; the workflow runs once, but its external effect is at-least-once",
+            detect=a_death_after_the_notification,
+        ),
+        Profile.D: NotApplicable("DBOS retains workflow records itself; the demo configures no retention"),
+        Profile.E: NotApplicable("each workflow writes one order's status; no two results race"),
+        Profile.F: Decline(
+            "the obligation is the workflow DBOS enqueues in the order's own transaction, not a fact derived "
+            "from orders"
+        ),
+    },
+    safety=SafetyContract(
+        name="DBOS transactional-outbox: place order",
+        adoption=Adoption.LEGACY,
+        profiles={
+            SafetyProfile.REPLAY_SAFE_EXECUTION: KnownGap(
+                "the notification step is not idempotent: replaying it notifies the customer again (profile C "
+                "shows the replay happen)"
+            ),
+            SafetyProfile.BOUNDED_RETRY: NotApplicable("the demo's step declares no retries"),
+        },
+    ),
+    extras=(
+        ExtraProof(
+            name="placing an order survives a death before the notification", run=deaths_before_the_notification
+        ),
+        ExtraProof(
+            name="an order whose process died before its workflow ran is still notified",
+            run=A_LOST_WORKFLOW_IS_ABSORBED_BY_A_RESTART,
+        ),
     ),
 )
-def test_placing_an_order_survives_a_death_after_the_notification() -> None:
-    history = PLACE_ORDER.model_copy(update={"death_points": ("after_send",)})
-    assert_process_deaths_converge(history)
 
 
-def test_an_order_whose_process_died_before_its_workflow_ran_is_still_notified() -> None:
-    """The harness's exemption probe, unmodified: lose the execution, require production to absorb it."""
-
-    def strand() -> int:
-        order_id, status = place_order_in_a_child_process("after_order")
-        assert status == 1
-        return order_id
-
-    LossIsAbsorbedElsewhere(strand=strand, observe=lambda order_id: _status(order_id) == "SENT", absorb=restart)()
+# The enqueue is SQL inside the order's transaction, which a static scan cannot see,
+# so there is no site to cover: the contract stands on its crash histories alone.
+@due_work_contract_suite(PLACE_ORDER_CONTRACT)
+class TestPlaceOrder:
+    pass
