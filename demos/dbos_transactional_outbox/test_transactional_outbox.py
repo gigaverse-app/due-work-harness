@@ -11,21 +11,33 @@ The worker is DBOS's own executor, which a test cannot reach in-process, so the
 deaths are real: ``run_demo_process.py`` runs the demo in a child process that
 ``os._exit``\\ s at a named point, and recovery is the demo's ``main()`` starting
 again. The harness owns the verdict (:mod:`due_work_harness.process_histories`).
+
+Where DBOS has a capability, the contract claims it and the harness proves it
+against DBOS itself, through ``due_work_harness.integrations.dbos``: its
+workflow garbage collection (profile D), and the demo's notification step's
+retry budget. Each of those proofs launches the demo through its own
+``main()``, with only its HTTP server and its queue listener held back.
 """
 
 import os
 import subprocess
 import sys
+from collections import Counter
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 from uuid import uuid4
 
 import psycopg
+from dbos import DBOS, SetWorkflowID
 from psycopg import sql
 
 from due_work_harness import (
     Adoption,
+    BoundedRetry,
+    Claim,
     Decline,
     DueWorkContract,
     ExtraProof,
@@ -33,11 +45,13 @@ from due_work_harness import (
     LossIsAbsorbedElsewhere,
     NotApplicable,
     Profile,
+    Retention,
     SafetyContract,
     SafetyProfile,
     due_work_contract_suite,
 )
-from due_work_harness.integrations.dbos import restart_until
+from due_work_harness.integrations.dbos import OUTSTANDING, launched, restart_until, wait_until, workflow_status
+from due_work_harness.integrations.dbos import retention as dbos_retention
 from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
 
 HERE = Path(__file__).resolve().parent
@@ -145,22 +159,110 @@ A_LOST_WORKFLOW_IS_ABSORBED_BY_A_RESTART = LossIsAbsorbedElsewhere(
 )
 
 
+#: DBOS's own queue registration, before any proof holds it back.
+REGISTER_QUEUE = DBOS.register_queue
+#: Notification sends that reached the provider seam, by workflow.
+SENDS: Counter[str] = Counter()
+
+
+@contextmanager
+def the_demo_without_its_listener(send: Callable[[float], None]) -> Iterator[None]:
+    """The demo's own main(), with its HTTP server and its queue listener held back: enqueued work stays owed."""
+    with (
+        mock.patch.object(demo, "uvicorn", SimpleNamespace(run=lambda *_a, **_k: None)),
+        mock.patch.object(DBOS, "register_queue", lambda *_a, **_k: None),
+        # EXTERNAL SEAM: the demo's time.sleep(3) stands in for the notification provider.
+        mock.patch.object(demo, "time", SimpleNamespace(sleep=send)),
+        launched(demo.main),
+    ):
+        yield
+        # With the listener held back, whatever is still outstanding was arranged by this proof:
+        # cancel it through DBOS, so a later launch of the demo does not deliver it.
+        for workflow in DBOS.list_workflows(status=list(OUTSTANDING)):
+            DBOS.cancel_workflow(workflow.workflow_id)
+
+
+def order_owing_a_notification() -> str:
+    """An order placed through the demo; its notification workflow is enqueued and not yet run."""
+    demo.insert_order(f"customer-{uuid4().hex[:8]}", "widget", 1)
+    (queued,) = DBOS.list_queued_workflows(queue_name=demo.NOTIFICATION_QUEUE, sort_desc=True, limit=1)
+    return queued.workflow_id
+
+
+def order_notified() -> str:
+    """An order placed and notified through the demo's own workflow, now complete."""
+    order_id = demo.insert_order(f"customer-{uuid4().hex[:8]}", "widget", 1)
+    workflow_id = f"notified-{uuid4()}"
+    with SetWorkflowID(workflow_id):
+        demo.send_notification_workflow(order_id, "customer", "widget")
+    return workflow_id
+
+
+@contextmanager
+def the_demos_retention() -> Iterator[Retention]:
+    # ARRANGE: an order still owing its notification, and one notified (the demo's own workflows).
+    # REAL PRODUCTION: DBOS's garbage_collect, as its admin endpoint and conductor run it.
+    # EXTERNAL SEAM: the notification provider, which answers at once.
+    # OBSERVE: whether each workflow still exists, as DBOS records it.
+    with the_demo_without_its_listener(lambda _seconds: None):
+        yield dbos_retention(make_owed=order_owing_a_notification, make_finished=order_notified)
+
+
+def _provider_down(_seconds: float) -> None:
+    SENDS[DBOS.workflow_id or ""] += 1
+    raise ConnectionError("the notification provider is down")
+
+
+def listen_until_settled(workflow_id: str) -> None:
+    """DBOS's own queue listener, as the demo's main() registers it, until this workflow settles."""
+    if demo.NOTIFICATION_QUEUE not in {queue.name for queue in DBOS.list_queues()}:
+        REGISTER_QUEUE(demo.NOTIFICATION_QUEUE)
+    wait_until(
+        lambda: workflow_status(workflow_id) not in OUTSTANDING, timeout=30, what="the notification never settled"
+    )
+
+
+@contextmanager
+def the_notifications_retry() -> Iterator[BoundedRetry]:
+    # ARRANGE: an order whose notification provider is down (order_owing_a_notification).
+    # REAL PRODUCTION: DBOS's queue listener running the demo's workflow (listen_until_settled).
+    # EXTERNAL SEAM: the provider, which fails and is counted per workflow (SENDS).
+    # OBSERVE: the workflow's status, as DBOS records it.
+    SENDS.clear()
+    with the_demo_without_its_listener(_provider_down):
+        yield BoundedRetry(
+            name="send_notification_workflow",
+            # The demo's step declares no retries: one execution, then an error for good.
+            max_executions=1,
+            make_failing=order_owing_a_notification,
+            due_work=lambda: [workflow.workflow_id for workflow in DBOS.list_workflows(status=list(OUTSTANDING))],
+            run_once=listen_until_settled,
+            advance_to_due=lambda _workflow_id: None,
+            is_terminal=lambda workflow_id: workflow_status(workflow_id) not in OUTSTANDING,
+            failure_attempt_count=lambda workflow_id: SENDS[workflow_id],
+            observe=workflow_status,
+        )
+
+
 PLACE_ORDER_CONTRACT = DueWorkContract(
     name="DBOS transactional-outbox: place order",
     adoption=Adoption.LEGACY,
     profiles={
         Profile.A: Decline(
-            "recovery is DBOS's own: the demo's main() relaunches every pending workflow when it starts, which "
-            "the process histories below prove against real deaths"
+            "DBOS recovers pending workflows when an executor launches, not on a periodic tick, so there is no "
+            "sweep to bind: the process histories below prove that recovery against real deaths instead"
         ),
-        Profile.B: NotApplicable("DBOS owns workflow execution and its recovery; the demo holds no lease of its own"),
+        Profile.B: NotApplicable(
+            "the demo runs one executor, which recovers the workflows it started; no lease is handed between "
+            "executors (DBOS Conductor reassigns them in a fleet, outside the demo)"
+        ),
         Profile.C: KnownGap(
             "a death after the notification is sent, before DBOS records the step, leaves the send's outcome "
             "unknown to DBOS, which reruns it: the customer is notified twice. DBOS resumes from the last "
             "completed step, as documented; the workflow runs once, but its external effect is at-least-once",
             detect=a_death_after_the_notification,
         ),
-        Profile.D: NotApplicable("DBOS retains workflow records itself; the demo configures no retention"),
+        Profile.D: Claim(),
         Profile.E: NotApplicable("each workflow writes one order's status; no two results race"),
         Profile.F: Decline(
             "the obligation is the workflow DBOS enqueues in the order's own transaction, not a fact derived "
@@ -175,9 +277,11 @@ PLACE_ORDER_CONTRACT = DueWorkContract(
                 "the notification step is not idempotent: replaying it notifies the customer again (profile C "
                 "shows the replay happen)"
             ),
-            SafetyProfile.BOUNDED_RETRY: NotApplicable("the demo's step declares no retries"),
+            SafetyProfile.BOUNDED_RETRY: Claim(),
         },
+        retry=the_notifications_retry,
     ),
+    retention=the_demos_retention,
     extras=(
         ExtraProof(
             name="placing an order survives a death before the notification", run=deaths_before_the_notification

@@ -144,6 +144,7 @@ commit:
 | procrastinate `demo_django` | A worker death between committing the book and deferring its job leaves the book never indexed | `ATOMIC_REQUESTS = True` |
 | | `index_book` holds a transaction across its slow call | — |
 | | A job whose worker died is never picked up again | procrastinate's documented `retry_stalled_jobs` task |
+| procrastinate itself | `finish_job` does not check the worker: a worker presumed dead finishes a job another worker has since fetched | — (a fencing token on finish; reported by the demo's profile B claim) |
 | DBOS `transactional-outbox` | A death after sending the notification, before DBOS records the step, notifies the customer twice | an idempotent notification |
 | Saleor checkout | With the Payments API, a death between capturing the payment and creating the order charges the customer with no order; after 90 days the payment belongs to nothing | Saleor's Transactions API with automatic completion of paid checkouts |
 | | A death after the order commits leaves it unconfirmed, its history empty or half-written | — |

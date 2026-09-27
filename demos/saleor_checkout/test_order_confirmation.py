@@ -52,11 +52,12 @@ from saleor.checkout.complete_checkout import _post_create_order_actions, comple
 from saleor.checkout.fetch import fetch_checkout_info, fetch_checkout_lines
 from saleor.checkout.models import Checkout, CheckoutMetadata
 from saleor.checkout.payment_utils import update_checkout_payment_statuses
+from saleor.checkout.tasks import delete_expired_checkouts
 from saleor.checkout.tests.utils import add_variant_to_checkout
 from saleor.core.notify import NotifyEventType
 from saleor.graphql.core.utils import to_global_id_or_none
 from saleor.order.models import Order
-from saleor.payment import TransactionEventType
+from saleor.payment import ChargeStatus, TransactionEventType
 from saleor.payment.models import Payment, TransactionItem
 from saleor.payment.utils import recalculate_transaction_amounts
 from saleor.plugins.manager import PluginsManager, get_plugins_manager
@@ -67,6 +68,7 @@ from saleor.warehouse.models import Stock
 from due_work_harness import (
     Adoption,
     CallableDelivery,
+    Claim,
     Decline,
     DueWorkContract,
     DueWorkSource,
@@ -74,6 +76,7 @@ from due_work_harness import (
     KnownGap,
     NotApplicable,
     Profile,
+    Retention,
     SafetyContract,
     SafetyProfile,
     due_work_contract_suite,
@@ -280,6 +283,70 @@ COMPLETE_CHECKOUT = HandoffHistory(
     observe=order_confirmation_and_money,
 )
 
+#: Past USER_CHECKOUTS_TIMEDELTA (90 days), after which Saleor deletes a user's checkout.
+EXPIRED = timedelta(days=91)
+
+
+def _expire(checkout: Checkout) -> UUID:
+    # ARRANGE: untouched since before Saleor's expiry window (update() skips last_change's auto_now).
+    Checkout.objects.filter(pk=checkout.pk).update(last_change=timezone.now() - EXPIRED)
+    return checkout.pk
+
+
+def charged_through_the_payments_api() -> UUID:
+    """A checkout whose Payments API payment was captured, and whose order was never created: an order is owed."""
+    checkout, total = _checkout()
+    Payment.objects.create(
+        gateway="mirumee.payments.dummy",
+        checkout=checkout,
+        is_active=True,
+        total=total.amount,
+        captured_amount=total.amount,
+        charge_status=ChargeStatus.FULLY_CHARGED,
+        currency=total.currency,
+        billing_email=checkout.email,
+    )
+    return _expire(checkout)
+
+
+def charged_through_transactions() -> UUID:
+    """A checkout charged through the Transactions API, and whose order was never created: an order is owed."""
+    checkout_pk, _ = pay_with_transactions()
+    return _expire(Checkout.objects.get(pk=checkout_pk))
+
+
+def abandoned() -> UUID:
+    """A checkout nobody paid for, past its expiry: Saleor's own policy says it goes."""
+    checkout, _ = _checkout()
+    return _expire(checkout)
+
+
+def _checkout_retention(owed: Callable[[], UUID]) -> Retention:
+    return Retention(
+        name="saleor delete_expired_checkouts",
+        make_non_terminal=owed,
+        make_prunable=abandoned,
+        run_retention=delete_expired_checkouts,
+        still_exists=lambda checkout_pk: Checkout.objects.filter(pk=checkout_pk).exists(),
+    )
+
+
+def retention_of_payments_api_checkouts() -> Retention:
+    # ARRANGE: an expired checkout holding a captured Payments API payment, and an abandoned one.
+    # REAL PRODUCTION: Saleor's delete_expired_checkouts task, as its beat schedule runs it.
+    # EXTERNAL SEAM: none.
+    # OBSERVE: whether each checkout still exists.
+    return _checkout_retention(charged_through_the_payments_api)
+
+
+def retention_of_transactions_checkouts() -> Retention:
+    # ARRANGE: an expired checkout holding charged Transactions API money, and an abandoned one.
+    # REAL PRODUCTION: Saleor's delete_expired_checkouts task, as its beat schedule runs it.
+    # EXTERNAL SEAM: none.
+    # OBSERVE: whether each checkout still exists.
+    return _checkout_retention(charged_through_transactions)
+
+
 CHECKOUT_AS_SHIPPED = DueWorkContract(
     name="saleor checkout",
     adoption=Adoption.LEGACY,
@@ -298,10 +365,14 @@ CHECKOUT_AS_SHIPPED = DueWorkContract(
             "with the Payments API the gateway captures the payment between two commits: a death after the "
             "capture leaves an outcome Saleor never reconciles, so the customer is charged and no order is made"
         ),
-        Profile.D: KnownGap(
-            "delete_expired_checkouts keeps checkouts holding Transactions API money, but prunes one holding a "
-            "captured Payments API payment, the only record that an order is owed: after 90 days that payment "
-            "belongs to nothing"
+        Profile.D: Claim(
+            gaps={
+                "assert_retention_preserves_non_terminal_work": (
+                    "delete_expired_checkouts keeps checkouts holding Transactions API money, but deletes one "
+                    "holding a captured Payments API payment, the only record that an order is owed: after 90 "
+                    "days that payment belongs to nothing"
+                )
+            }
         ),
         Profile.E: NotApplicable("one completion writes each order's events and confirmation once; no two race"),
         Profile.F: KnownGap(
@@ -319,6 +390,7 @@ CHECKOUT_AS_SHIPPED = DueWorkContract(
             SafetyProfile.BOUNDED_RETRY: NotApplicable("the post-commit callbacks are not retried"),
         },
     ),
+    retention=retention_of_payments_api_checkouts,
     handoffs=(COMPLETE_CHECKOUT,),
     handoff_delivery=SALEOR,
     handoff_gaps={
@@ -439,15 +511,17 @@ CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
     fixtures=("saleor_shop", "automatic_completion"),
     profiles={
         Profile.A: Decline(
-            "recovery is Saleor's own trigger_automatic_checkout_completion_task, which the handoff history runs "
-            "among the beat tasks; this contract binds no sweep of its own"
+            "Saleor's recovery is trigger_automatic_checkout_completion_task, which the handoff history below "
+            "runs among the beat tasks and proves end to end. Its selection is built inline in the task, so no "
+            "sweep can be bound without restating the query in a test; extracting it into a callable would let "
+            "this contract claim profile A"
         ),
         Profile.B: Decline("completion serialises on the checkout row lock; it holds no lease"),
         Profile.C: Decline(
             "the payment app charges before completion and records a TransactionItem, so completion makes no "
             "gateway call whose outcome could be unknown"
         ),
-        Profile.D: Decline("delete_expired_checkouts keeps every checkout holding Transactions API money"),
+        Profile.D: Claim(),
         Profile.E: NotApplicable("one completion writes each order once; no two race"),
         Profile.F: Decline(
             "the obligation is the fully paid checkout itself, which automatic completion selects from product state"
@@ -462,6 +536,7 @@ CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
             SafetyProfile.BOUNDED_RETRY: NotApplicable("automatic completion retries on the beat schedule, unbounded"),
         },
     ),
+    retention=retention_of_transactions_checkouts,
     handoffs=(COMPLETE_PAID_CHECKOUT,),
     handoff_delivery=SALEOR,
 )

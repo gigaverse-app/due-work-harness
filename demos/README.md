@@ -29,11 +29,18 @@ Each demo **adopts the harness the way a project does**:
 If upstream changes a demo, a strict xfail turns red and the write-up here must
 change with it.
 
-| Demo | As-shipped contract | Covers | Fix contract |
-| --- | --- | --- | --- |
-| procrastinate | `DEMO_AS_SHIPPED`: B `KnownGap` (a dead worker's job, probed by `MissingReclaim`), the create-book handoff gap, and a held-transaction `ExtraProof` gap | `CreateBookView.form_valid` | `DEMO_WITH_ITS_FIXES`: `ATOMIC_REQUESTS`, and B declined with procrastinate's recipe as its `prove` |
-| DBOS | `PLACE_ORDER_CONTRACT`: real process deaths as `ExtraProof`s, C `KnownGap` probed by a death after the send | nothing: its enqueue is SQL, which a static scan cannot see | — |
-| Saleor | `CHECKOUT_AS_SHIPPED`: A, C, D, F `KnownGap`s and the complete-checkout handoff gap | `_post_create_order_actions` (its two `on_commit` sites) | `CHECKOUT_WITH_AUTOMATIC_COMPLETION`: the Transactions API with automatic completion |
+Where the framework has a capability, the contract **claims** it and the harness
+proves it against the framework itself, through its integration
+(`due_work_harness.integrations.procrastinate`, `.dbos`); a decline or "not
+applicable" is kept only where the framework genuinely lacks the capability,
+with the reason. Findings in the framework, not the demo, appear in both
+contracts, since the demo's fix cannot change them.
+
+| Demo | Claimed and proven against the framework | Found (strict xfails) | Covers | Fix contract |
+| --- | --- | --- | --- | --- |
+| procrastinate | B ownership (its workers, heartbeats and reclaim recipe), D retention (`remove_old_jobs`), replay safety, bounded retry | **in procrastinate:** `finish_job` does not check the worker, so a worker presumed dead finishes a job another worker has since fetched; **in the demo:** the create-book handoff, a transaction held during slow work, no stalled-job reclaim scheduled, no attempt recorded before the slow call (C) | `CreateBookView.form_valid` | `DEMO_WITH_ITS_FIXES`: `ATOMIC_REQUESTS`, and procrastinate's `retry_stalled_jobs` recipe |
+| DBOS | D retention (`garbage_collect`), bounded retry (the step's budget), recovery through real process deaths | a death after the send, before DBOS records the step, notifies twice (C, replay) | nothing: its enqueue is SQL, which a static scan cannot see | — |
+| Saleor | D retention (`delete_expired_checkouts`), claimed so the harness shows where it fails | `delete_expired_checkouts` deletes a checkout holding a captured Payments API payment (D); no sweep recovers lost after-commit work (A); the capture is never reconciled (C); nothing records that a confirmation is owed (F); the complete-checkout handoff | `_post_create_order_actions` (its two `on_commit` sites) | `CHECKOUT_WITH_AUTOMATIC_COMPLETION`: the Transactions API with automatic completion, which claims D and passes |
 
 ## Results
 
