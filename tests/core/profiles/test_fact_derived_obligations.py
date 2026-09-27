@@ -11,7 +11,6 @@ discrimination.
 """
 
 from collections.abc import Callable
-from dataclasses import replace
 
 import pytest
 
@@ -72,17 +71,15 @@ class _FakeModel:
 
 
 def test_profile_f_accepts_a_forwarder_to_a_production_settlement() -> None:
-    binding = replace(
-        _binding(_MaterialisingDeriver()),
-        settle=lambda product_id: _FakeModel.objects.settle(product_id),
+    binding = _binding(_MaterialisingDeriver()).model_copy(
+        update={"settle": lambda product_id: _FakeModel.objects.settle(product_id)}
     )
     assert_settlement_is_production_bound(binding)
 
 
 def test_profile_f_rejects_a_test_authored_settlement_transition() -> None:
-    binding = replace(
-        _binding(_MaterialisingDeriver()),
-        settle=lambda product_id: _FakeModel.objects.filter(pk=product_id).update(state="SETTLED"),
+    binding = _binding(_MaterialisingDeriver()).model_copy(
+        update={"settle": lambda product_id: _FakeModel.objects.filter(pk=product_id).update(state="SETTLED")}
     )
 
     with pytest.raises(AssertionError, match=r"settle.*test code.*update"):
@@ -90,9 +87,8 @@ def test_profile_f_rejects_a_test_authored_settlement_transition() -> None:
 
 
 def test_profile_f_rejects_a_test_authored_outstanding_selection() -> None:
-    binding = replace(
-        _binding(_MaterialisingDeriver()),
-        outstanding=lambda: _FakeModel.objects.filter(state="DUE").values_list("id", flat=True),
+    binding = _binding(_MaterialisingDeriver()).model_copy(
+        update={"outstanding": lambda: _FakeModel.objects.filter(state="DUE").values_list("id", flat=True)}
     )
 
     with pytest.raises(AssertionError, match=r"outstanding.*test code.*filter"):
@@ -100,9 +96,8 @@ def test_profile_f_rejects_a_test_authored_outstanding_selection() -> None:
 
 
 def test_profile_f_rejects_a_test_authored_desired_state_transition() -> None:
-    binding = replace(
-        _binding(_MaterialisingDeriver()),
-        move_desired_state=lambda product_id: _FakeModel.objects.filter(pk=product_id).update(file="moved"),
+    binding = _binding(_MaterialisingDeriver()).model_copy(
+        update={"move_desired_state": lambda product_id: _FakeModel.objects.filter(pk=product_id).update(file="moved")}
     )
 
     with pytest.raises(AssertionError, match=r"move_desired_state.*test code.*update"):
@@ -260,10 +255,8 @@ class _IdentityRotatingDerivation(_SelectionIsTheDerivation):
 def test_a_real_product_transition_may_rotate_the_obligation_identity() -> None:
     """An immutable-row lifecycle (replace, do not edit) satisfies invariant 3."""
     impl = _IdentityRotatingDerivation()
-    binding = replace(
-        reference_derivation_binding(impl),
-        move_desired_state=impl.move_desired_state,
-        identity_after_move=impl.identity_after_move,
+    binding = reference_derivation_binding(impl).model_copy(
+        update={"move_desired_state": impl.move_desired_state, "identity_after_move": impl.identity_after_move}
     )
     assert_moved_desired_state_is_superseded(binding)
 
@@ -356,7 +349,9 @@ class _AgedSweep:
 def _coherence_pair(*, narrow: bool) -> tuple[_AgedSweep, StateDerived]:
     impl = _SelectionIsTheDerivation()
     sweep = _AgedSweep(impl, narrow=narrow)
-    derived = replace(reference_derivation_binding(impl), make_recovery_eligible=sweep.make_recovery_eligible)
+    derived = reference_derivation_binding(impl).model_copy(
+        update={"make_recovery_eligible": sweep.make_recovery_eligible}
+    )
     return sweep, derived
 
 
@@ -390,6 +385,6 @@ def test_an_inert_derivation_cannot_prove_stopped_work_is_not_revived() -> None:
     predicate was never going to consider — satisfies "the stopped obligation
     is absent" while proving no stop predicate exists.
     """
-    binding = replace(reference_derivation_binding(), outstanding=lambda: [])
+    binding = reference_derivation_binding().model_copy(update={"outstanding": lambda: []})
     with pytest.raises(AssertionError, match="derived no ordinary obligation at all"):
         assert_stopped_work_is_not_revived(binding)

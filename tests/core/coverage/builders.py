@@ -17,7 +17,7 @@ def write_project(
     root: Path,
     files: dict[str, str],
     *,
-    sites: str = '["django", "celery", "procrastinate", "dbos"]',
+    sites: str = "[]",
     extra: str = "",
 ) -> CoverageConfig:
     (root / "pyproject.toml").write_text(dedent(PYPROJECT).format(sites=sites, extra=dedent(extra)), encoding="utf-8")

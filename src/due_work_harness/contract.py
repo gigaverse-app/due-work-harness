@@ -141,17 +141,19 @@ honest shape for an index audit of a query that claims and runs work inline.
 import inspect
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
 from typing import Any
 
 import pytest
+from pydantic import Field, SkipValidation
 
 from due_work_harness.binding import (
     assert_test_binding_delegates_to_production,
     authored_inversion_names,
+    callable_code,
     is_harness_owned,
+    is_test_authored,
     is_test_code,
     references_harness_assertion,
 )
@@ -164,6 +166,7 @@ from due_work_harness.crash_histories import (
     assert_crash_at_every_commit_converges,
 )
 from due_work_harness.host import current_host
+from due_work_harness.models import MISSING, HarnessModel, with_positional
 from due_work_harness.profiles.automatic_recovery import (
     DUE_WORK_PROOFS,
     SELECTION_PROOFS,
@@ -253,8 +256,7 @@ class SafetyProfile(Enum):
     BOUNDED_RETRY = "bounded retry"
 
 
-@dataclass(frozen=True)
-class DueWorkSource:
+class DueWorkSource(HarnessModel):
     """
     One production callable whose post-commit work this suite accounts for.
 
@@ -271,7 +273,8 @@ class DueWorkSource:
     contract is reviewed again.
     """
 
-    callable: Callable[..., object]
+    #: Not validated by Pydantic, so a non-callable is refused below as a design error.
+    callable: SkipValidation[Callable[..., object]]
     sites: int = 1
 
     #: Run the publisher with its own dispatch suppressed, and return the
@@ -290,7 +293,10 @@ class DueWorkSource:
     #: split between publication and recovery is reviewable rather than silent.
     unrecoverable_because: str | None = None
 
-    def __post_init__(self) -> None:
+    def __init__(self, function: Callable[..., object] = MISSING, /, **data: Any) -> None:
+        super().__init__(**with_positional(data, callable=function))
+
+    def model_post_init(self, _context: Any) -> None:
         if not callable(self.callable):
             raise DueWorkContractDesignError("DueWorkSource.callable must be callable")
         if self.sites < 1:
@@ -331,19 +337,17 @@ class DueWorkContractDesignError(Exception):
     """
 
 
-@dataclass(frozen=True)
-class Claim:
+class Claim(HarnessModel):
     """The domain has this capability; every proof of the profile runs."""
 
     #: Per-invariant legacy defects: proof ``__name__`` -> the reason it
     #: currently fails. Each becomes a centrally generated strict xfail, so
     #: whoever fixes the production gap is forced to delete its entry here.
     #: Legacy adoption only — a new feature claiming a profile must pass it.
-    gaps: Mapping[str, str] = field(default_factory=dict)
+    gaps: Mapping[str, str] = Field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class Decline:
+class Decline(HarnessModel):
     """The capability is deliberately absent, for an architectural reason."""
 
     because: str
@@ -355,16 +359,20 @@ class Decline:
     #: F's discovery proof against an edge-triggered sender).
     prove: Callable[[], None] | None = None
 
+    def __init__(self, because: str = MISSING, /, **data: Any) -> None:
+        super().__init__(**with_positional(data, because=because))
 
-@dataclass(frozen=True)
-class NotApplicable:
+
+class NotApplicable(HarnessModel):
     """The capability's precondition does not exist in this domain at all."""
 
     because: str
 
+    def __init__(self, because: str = MISSING, /, **data: Any) -> None:
+        super().__init__(**with_positional(data, because=because))
 
-@dataclass(frozen=True)
-class KnownGap:
+
+class KnownGap(HarnessModel):
     """
     The domain should have this capability and lacks it entirely.
 
@@ -376,6 +384,9 @@ class KnownGap:
 
     because: str
     detect: Callable[[], None] | None = None
+
+    def __init__(self, because: str = MISSING, /, **data: Any) -> None:
+        super().__init__(**with_positional(data, because=because))
 
 
 Disposition = Claim | Decline | NotApplicable | KnownGap
@@ -392,7 +403,7 @@ _ADOPTER_EVIDENCE_LABELS = (
 def _adopter_annotation_defect(owner: str, binding: Callable[..., Any]) -> str | None:
     """Require line-local review annotations that expose what is real and fake."""
     unwrapped = inspect.unwrap(binding)
-    code = _binding_code(unwrapped)
+    code = callable_code(unwrapped)
     if code is None:
         return f"{owner} is not inspectable, so its adopter evidence annotations cannot be verified"
     if is_harness_owned(code):
@@ -432,8 +443,7 @@ _UNWAIVABLE_SAFETY_PROOFS = frozenset(
 )
 
 
-@dataclass(frozen=True)
-class SafetyContract:
+class SafetyContract(HarnessModel):
     """Complete replay/retry assessment for one production effect."""
 
     name: str
@@ -444,7 +454,7 @@ class SafetyContract:
     fixtures: tuple[str, ...] = ()
     transactional: bool = False
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, _context: Any) -> None:
         errors = _safety_design_errors(self)
         if errors:
             raise DueWorkContractDesignError(
@@ -457,8 +467,7 @@ def _bound_safety_fields(contract: SafetyContract, profile: SafetyProfile) -> li
     return [name for name in _SAFETY_PROFILE_BINDINGS[profile] if getattr(contract, name) is not None]
 
 
-@dataclass(frozen=True)
-class ExtraProof:
+class ExtraProof(HarnessModel):
     """
     One domain-specific application of a standalone harness proof.
 
@@ -592,13 +601,12 @@ UNWAIVABLE_PROOFS = frozenset(
 _COHERENCE_PROOF_NAME = "assert_automatic_recovery_consumes_derived_obligations"
 
 
-@dataclass(frozen=True)
-class DueWorkContract:
+class DueWorkContract(HarnessModel):
     """
     One domain's durable work, declared completely.
 
     Bindings are zero-arg factories called fresh per generated test. A factory
-    may return the profile's binding dataclass directly, or a context manager
+    may return the profile's binding model directly, or a context manager
     yielding it — the shape for bindings that need to patch a dispatch path or
     install a recorder for the duration of a proof.
     """
@@ -652,18 +660,21 @@ class DueWorkContract:
     #: must reach the outcome of normal operation with notifications delivered
     #: (see :mod:`due_work_harness.crash_histories`). Requires
     #: :attr:`handoff_delivery`.
-    handoffs: tuple[HandoffHistory[Any, Any], ...] = ()
+    #: Bare ``HandoffHistory`` (implicitly ``[Any, Any]``): Pydantic would rebuild an
+    #: unparametrized history as a new ``HandoffHistory[Any, Any]`` instance.
+    handoffs: tuple[HandoffHistory, ...] = ()
 
     #: How the handoffs' published work reaches a worker: delivered, lost, and
     #: recovered the way production recovers it (a recovery tick, a job queue's
     #: stalled-job reclaim, a workflow relaunch). Every crash history runs
     #: through it, so declaring ``handoffs`` without it is a design error —
     #: without a recovery path there is nothing to converge with.
-    handoff_delivery: Delivery | None = None
+    #: A protocol implementation, so Pydantic does not check it.
+    handoff_delivery: SkipValidation[Delivery | None] = None
 
     #: Legacy findings on named handoffs: ``{history name: reason}``. Each
     #: becomes a strict xfail, under the same ``adoption`` policy as gaps.
-    handoff_gaps: Mapping[str, str] = field(default_factory=dict)
+    handoff_gaps: Mapping[str, str] = Field(default_factory=dict)
 
     #: Pytest fixtures every generated behavioral test must request.
     fixtures: tuple[str, ...] = ()
@@ -674,7 +685,7 @@ class DueWorkContract:
     #: database marks.
     transactional: bool = False
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, _context: Any) -> None:
         errors = _design_errors(self)
         if errors:
             raise DueWorkContractDesignError(
@@ -686,14 +697,6 @@ class DueWorkContract:
 
 def _bound_fields(contract: DueWorkContract, profile: Profile) -> list[str]:
     return [name for name in _PROFILE_BINDINGS[profile] if getattr(contract, name) is not None]
-
-
-def _binding_code(binding: Any) -> Any:
-    """The code object behind a callable binding — function or callable instance."""
-    code = getattr(binding, "__code__", None)
-    if code is None and callable(binding):
-        code = getattr(type(binding).__call__, "__code__", None)
-    return code
 
 
 def _bespoke_assertion_defect(owner: str, kind: str, binding: Any) -> str | None:
@@ -722,7 +725,7 @@ def _bespoke_assertion_defect(owner: str, kind: str, binding: Any) -> str | None
       :class:`~.gap_probes.DisprovenCapability` first forces the bindings
       through the profile's invariant-0 guards.
     """
-    code = _binding_code(binding)
+    code = callable_code(binding)
     if code is None:
         return (
             f"{owner}: {kind} is not a plain Python callable, so whether it "
@@ -760,12 +763,10 @@ def _bespoke_assertion_defect(owner: str, kind: str, binding: Any) -> str | None
 
 def _decline_proof_defect(owner: str, binding: Any) -> str | None:
     """A negative claim must come from production-owned absence semantics."""
-    code = _binding_code(binding)
-    if code is None:
+    authored = is_test_authored(binding)
+    if authored is None:
         return f"{owner}: the Decline negative proof is not an inspectable Python callable"
-    if is_harness_owned(code):
-        return None
-    if not is_test_code(code):
+    if not authored:
         return None
     return (
         f"{owner}: the Decline negative proof is test-authored. A test can make "
@@ -999,7 +1000,7 @@ def _extra_production_defects(extra: ExtraProof) -> list[str]:
 
     The standalone proofs — head-of-line blocking, redispatch waste, idle-tick
     cost, provider-transaction holding — take loose callables rather than a
-    typed binding dataclass, so none of the invariant-0 guards the profiles get
+    typed binding model, so none of the invariant-0 guards the profiles get
     ever ran on them. An ``ExtraProof`` whose closure builds its own rows, its
     own tick and its own observation therefore generated a green case
     certifying nothing, while passing every check this layer had: a unique
@@ -1007,7 +1008,7 @@ def _extra_production_defects(extra: ExtraProof) -> list[str]:
 
     Weaker than a profile binding on purpose, and the docstring says so: this
     proves the extra *reaches* production, not that the reference is
-    load-bearing. The durable fix is typed binding dataclasses for the
+    load-bearing. The durable fix is typed binding models for the
     standalone proofs, which would put them under the same guards as every
     profile field. Until then this raises the counterfeit's cost from free to
     deliberate, which is the standard every tripwire here is held to.
@@ -1070,8 +1071,7 @@ def _gap_policy_violations(contract: DueWorkContract) -> list[str]:
     ]
 
 
-@dataclass(frozen=True)
-class ContractCase:
+class ContractCase(HarnessModel):
     """One generated test: an id, a body, and the fixtures it needs."""
 
     id: str
@@ -1514,8 +1514,7 @@ def contract_report(contract: DueWorkContract) -> str:
     return "\n".join(lines)
 
 
-@dataclass(frozen=True)
-class ScheduledSelection:
+class ScheduledSelection(HarnessModel):
     """
     A scheduled selection that is not a full due-work sweep.
 
@@ -1570,13 +1569,13 @@ class ScheduledSelection:
     populate: Callable[[], None] | None = None
 
     #: Known legacy defects, proof ``__name__`` -> reason, strict-xfailed.
-    gaps: Mapping[str, str] = field(default_factory=dict)
+    gaps: Mapping[str, str] = Field(default_factory=dict)
 
     #: Pytest fixtures every generated case must request first — for example
     #: one a host needs to give a replica-routing proof a distinct replica.
     fixtures: tuple[str, ...] = ()
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, _context: Any) -> None:
         errors: list[str] = []
         annotation_defect = _adopter_annotation_defect(
             "scheduled selection `due_work` binding",

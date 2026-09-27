@@ -67,7 +67,6 @@ beside the other profiles rather than beside any one implementation.
 """
 
 from collections.abc import Callable, Collection
-from dataclasses import dataclass
 from typing import Any
 
 from due_work_harness.binding import (
@@ -77,14 +76,14 @@ from due_work_harness.binding import (
     assert_test_binding_delegates_to_production,
     assert_test_binding_forwards,
 )
+from due_work_harness.models import HarnessModel
 
 
 def _same_identity(identity: Any) -> Any:
     return identity
 
 
-@dataclass(frozen=True)
-class StateDerived:
+class StateDerived(HarnessModel):
     """
     One domain's derivation of obligations from product state.
 

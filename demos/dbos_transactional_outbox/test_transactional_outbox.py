@@ -16,7 +16,6 @@ again. The harness owns the verdict (:mod:`due_work_harness.process_histories`).
 import os
 import subprocess
 import sys
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -117,7 +116,7 @@ def test_placing_an_order_survives_a_death_before_the_notification() -> None:
     ),
 )
 def test_placing_an_order_survives_a_death_after_the_notification() -> None:
-    history = replace(PLACE_ORDER, death_points=("after_send",))
+    history = PLACE_ORDER.model_copy(update={"death_points": ("after_send",)})
     assert_process_deaths_converge(history)
 
 

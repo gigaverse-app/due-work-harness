@@ -9,7 +9,7 @@ or from a test::
     def test_every_handoff_is_accounted_for():
         assert_every_site_is_accounted_for()
 
-It is static and standard-library only: it imports neither the application nor
+It is static: it imports neither the application nor
 its tests, so it needs no framework, settings or database. See
 :mod:`.scan` for the rules and :mod:`.config` for ``[tool.due-work-harness]``.
 """
@@ -26,7 +26,7 @@ from due_work_harness.coverage.scan import (
     scan,
     unaccounted_baseline,
 )
-from due_work_harness.coverage.sites import BUILT_IN, SiteKind, installed_kinds
+from due_work_harness.coverage.sites import BUILT_IN, SiteKind, kinds_for
 
 
 def assert_every_site_is_accounted_for(root: Path | str = ".") -> CoverageReport:
@@ -45,7 +45,7 @@ __all__ = [
     "SiteKind",
     "assert_every_site_is_accounted_for",
     "baseline_growth",
-    "installed_kinds",
+    "kinds_for",
     "load_config",
     "production_sites",
     "scan",

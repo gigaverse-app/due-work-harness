@@ -17,7 +17,6 @@ due-work-harness = { path = "../..", editable = true }
 
 [tool.due-work-harness]
 production-packages = ["adopter_app"]
-sites = ["django"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

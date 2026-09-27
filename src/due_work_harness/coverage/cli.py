@@ -6,8 +6,8 @@
     due-work-harness baseline [--root DIR]
 
 ``check`` exits 1 on any problem. With ``--base-ref`` it also refuses baseline
-entries added since that git ref: the baseline records sites that predate
-adoption, and it only shrinks. ``sites`` prints the inventory with each site's
+entries added, or whose count grew, since that git ref: the baseline records
+sites that predate adoption, and it only shrinks. ``sites`` prints the inventory with each site's
 disposition. ``baseline`` prints a ``[tool.due-work-harness.baseline]`` table for
 the currently unaccounted sites, the starting point when adopting the harness in
 an existing project.
@@ -21,7 +21,6 @@ from pathlib import Path
 
 from due_work_harness.coverage.config import baseline_from, load_config
 from due_work_harness.coverage.scan import baseline_growth, scan, unaccounted_baseline
-from due_work_harness.coverage.sites import names
 
 
 class MissingBaseRef(ValueError):
@@ -55,11 +54,12 @@ def _check(root: Path, base_ref: str | None) -> int:
         previous = _previous_baseline(config.root, base_ref)
         if previous is not None:
             problems.extend(
-                f"{name} was added to the baseline since {base_ref}; the baseline only shrinks, so cover or exempt it"
+                f"{name} grew in the baseline since {base_ref} ({previous.get(name, 0)} -> {config.baseline[name]} "
+                f"site(s)); the baseline only shrinks, so cover or exempt it"
                 for name in baseline_growth(config.baseline, previous)
             )
     sites = sum(len(found) for found in report.sites.values())
-    kinds = ", ".join(names(config.kinds)) or "none installed"
+    kinds = ", ".join(report.kinds) or "no framework detected"
     if problems:
         print(f"due-work-harness: {len(problems)} problem(s) across {sites} handoff site(s) [{kinds}]")
         for problem in problems:

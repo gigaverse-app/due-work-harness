@@ -7,39 +7,47 @@ Coverage configuration: ``[tool.due-work-harness]`` in the project's ``pyproject
     production-packages = ["myapp"]     # dotted prefixes of the code under test (required)
     source-roots = ["src", "."]         # where module names start; the first root containing a file wins
     test-paths = ["."]                  # where contract and exemption suites are looked for
-    exclude = [".venv*", "node_modules", "build", "dist"]
-    sites = ["django", "celery"]        # default: every installed integration
+    exclude = ["migrations"]            # added to the built-in skips; may never hide production code
+    sites = ["celery"]                  # kinds to add to those detected from production's imports
     bridges = { "myapp.shared.after_commit" = 1 }   # forwarding helpers and their own site count
     bridge-methods = ["request_progress"]           # forwarding methods, matched by name
 
     [tool.due-work-harness.baseline]
     # Sites that predate adoption and have no disposition yet. It only shrinks:
-    # `due-work-harness check --base-ref <ref>` refuses entries added since <ref>.
+    # `due-work-harness check --base-ref <ref>` refuses entries added, or grown, since <ref>.
     "myapp.legacy.send_welcome_email" = 1
 """
 
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from due_work_harness.coverage.sites import SiteKind, installed_kinds, resolve_kinds
+from pydantic import Field
 
+from due_work_harness.coverage.sites import SiteKind, resolve_kinds
+from due_work_harness.models import HarnessModel
+
+#: Always skipped, except where production code lives (a package named ``build`` is still scanned).
 DEFAULT_EXCLUDE = (".venv*", "venv", "node_modules", "build", "dist", ".git", "__pycache__", ".tox", ".nox")
 
 
-@dataclass(frozen=True)
-class CoverageConfig:
+class CoverageConfig(HarnessModel):
     root: Path
     production_packages: tuple[str, ...]
     source_roots: tuple[str, ...] = ("src", ".")
     test_paths: tuple[str, ...] = (".",)
-    exclude: tuple[str, ...] = DEFAULT_EXCLUDE
-    kinds: tuple[SiteKind, ...] = field(default_factory=installed_kinds)
-    bridges: Mapping[str, int] = field(default_factory=dict)
+    #: Name patterns to skip in addition to :data:`DEFAULT_EXCLUDE`.
+    exclude: tuple[str, ...] = ()
+    #: Kinds scanned in addition to those production's imports enable.
+    kinds: tuple[SiteKind, ...] = ()
+    bridges: Mapping[str, int] = Field(default_factory=dict)
     bridge_methods: frozenset[str] = frozenset()
-    baseline: Mapping[str, int] = field(default_factory=dict)
+    baseline: Mapping[str, int] = Field(default_factory=dict)
+
+    def is_production(self, qualified: str) -> bool:
+        """Whether a dotted name lies inside one of the production packages."""
+        return any(qualified == package or qualified.startswith(f"{package}.") for package in self.production_packages)
 
 
 def _table(pyproject: Path) -> dict[str, Any] | None:
@@ -81,14 +89,13 @@ def load_config(root: Path | str = ".") -> CoverageConfig:
     packages = _strings(table, "production-packages", ())
     if not packages:
         raise ValueError("[tool.due-work-harness] production-packages must name the code under test")
-    kinds = table.get("sites")
     return CoverageConfig(
         root=root,
         production_packages=packages,
         source_roots=_strings(table, "source-roots", ("src", ".")),
         test_paths=_strings(table, "test-paths", (".",)),
-        exclude=_strings(table, "exclude", DEFAULT_EXCLUDE),
-        kinds=resolve_kinds(None if kinds is None else _strings(table, "sites", ())),
+        exclude=_strings(table, "exclude", ()),
+        kinds=resolve_kinds(_strings(table, "sites", ())),
         bridges=_counts(table, "bridges"),
         bridge_methods=frozenset(_strings(table, "bridge-methods", ())),
         baseline=_counts(table, "baseline"),

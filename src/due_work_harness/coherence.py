@@ -22,7 +22,7 @@ class RecoverySurface(Protocol):
     A :class:`~.profiles.automatic_recovery.DueWorkSweep` satisfies it — the contract
     layer passes one — and the harness's own self-tests satisfy it with a
     minimal in-memory surface, which is why the proof is typed to the slice
-    rather than to the full sweep dataclass.
+    rather than to the full sweep model.
     """
 
     @property

@@ -7,7 +7,6 @@ the suite.
 """
 
 import os
-from dataclasses import replace
 
 import pytest
 
@@ -24,24 +23,25 @@ mode = os.environ["DUE_WORK_REFERENCE_OUTCOME"]
 contract = declarations.REFERENCE_CONTRACT
 if mode != "conforming":
     # Reuse the conforming declaration; only the two intentionally broken proofs differ.
-    contract = replace(
-        contract,
-        adoption=Adoption.LEGACY,
-        profiles={
-            **contract.profiles,
-            Profile.A: KnownGap(
-                "self-test: deliberately missing capability", detect=declarations.annotated_missing_extra
+    contract = contract.model_copy(
+        update={
+            "adoption": Adoption.LEGACY,
+            "profiles": {
+                **contract.profiles,
+                Profile.A: KnownGap(
+                    "self-test: deliberately missing capability", detect=declarations.annotated_missing_extra
+                ),
+            },
+            "extras": contract.extras
+            + (
+                ExtraProof(
+                    name="known-broken-extra",
+                    run=declarations.annotated_missing_extra,
+                    gap="self-test: deliberately missing extra capability",
+                    no_production_callable_because=declarations.SELF_TEST_NO_PRODUCTION,
+                ),
             ),
-        },
-        extras=contract.extras
-        + (
-            ExtraProof(
-                name="known-broken-extra",
-                run=declarations.annotated_missing_extra,
-                gap="self-test: deliberately missing extra capability",
-                no_production_callable_because=declarations.SELF_TEST_NO_PRODUCTION,
-            ),
-        ),
+        }
     )
 
 

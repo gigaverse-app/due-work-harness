@@ -15,7 +15,6 @@ FRAMEWORKS = (
     "psycopg",
     "time_machine",
     "asgiref",
-    "pydantic",
 )
 core = [
     m.name

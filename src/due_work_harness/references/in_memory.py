@@ -27,10 +27,10 @@ refuse.
 
 import itertools
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
+from due_work_harness.models import MutableHarnessModel
 from due_work_harness.profiles.durable_retention import Retention
 from due_work_harness.profiles.eventual_convergence import (
     ConvergentWrite,
@@ -111,8 +111,7 @@ def reference_replay_safety_binding(
 # --- Standalone: bounded retry -------------------------------------------------
 
 
-@dataclass
-class RetryRow:
+class RetryRow(MutableHarnessModel):
     state: str = "DUE"
     executions: int = 0
 
@@ -183,8 +182,7 @@ def reference_bounded_retry_binding(
 REFERENCE_LEASE_SECONDS = 60.0
 
 
-@dataclass
-class OwnedRow:
+class OwnedRow(MutableHarnessModel):
     state: str = "READY"
     token: UUID | None = None
     lease_expires_at: float | None = None
@@ -265,8 +263,7 @@ class InMemoryOwner:
 REFERENCE_TERMINAL_STATES = ("SENT",)
 
 
-@dataclass
-class AmbiguousRow:
+class AmbiguousRow(MutableHarnessModel):
     state: str = "CLAIMED"
     token: UUID | None = None
     lease_expired: bool = False
@@ -396,15 +393,13 @@ def reference_snapshot_binding(worker: GuardedWorker | None = None) -> Supersede
 # --- Profile F: state-derived obligations ------------------------------------------
 
 
-@dataclass
-class Product:
+class Product(MutableHarnessModel):
     desired: str
     applied: str | None = None
     stopped: bool = False
 
 
-@dataclass
-class WorkRecord:
+class WorkRecord(MutableHarnessModel):
     desired: str
     revision: int = 0
     settled: bool = False

@@ -1,50 +1,58 @@
 """
-What counts as a handoff site: a call that passes work to something that can lose it.
+What counts as a handoff site: a reference to something that passes work to where it can be lost.
 
-A *site* is a call in production code after which the work it names exists only
-somewhere the process does not own: a callback that runs after the commit, a
-message on a broker, a job row a worker will pick up, a workflow a runtime will
-start. Each site needs a disposition — a contract that insures it, or a proven
-exemption — and the coverage check finds every one.
+A *site* is a place in production code after which the work it names exists
+only somewhere the process does not own: a callback that runs after the commit,
+a message on a broker, a job row a worker will pick up, a workflow a runtime
+will start. Each site needs a disposition — a contract that insures it, or a
+proven exemption — and the coverage check finds every one.
 
-Kinds are contributed per framework, and a kind is scanned by default when its
-framework is importable (``[tool.due-work-harness] sites = [...]`` narrows it).
-Matching is static and uses three shapes:
+Kinds are contributed per framework. A kind is scanned whenever the project's
+production code imports its framework, directly or through another module of
+the project; ``[tool.due-work-harness] sites = [...]`` adds kinds the scan
+cannot detect (a framework reached only through a third-party wrapper) and
+can never remove a detected one. Detection is static, so the check finds the
+same sites whether or not the framework is installed where it runs.
 
-* **direct calls** by callee name: Django's ``on_commit``, Celery's
-  ``send_task``, DBOS's ``start_workflow``. The names are specific enough to
-  match on their own.
-* **task methods**: ``.delay``/``.apply_async`` (Celery) or ``.defer`` (Procrastinate)
-  called on a function the project registered as a task. The scan first
-  indexes production functions decorated with the kind's task decorators
-  (``@shared_task``, ``@app.task``), then resolves each receiver through the
-  module's imports, so ``cache.delay(...)`` on an unrelated object is not a site.
+A site is a *reference*, called or not, so a handoff passed along is still
+found: ``sync_to_async(on_commit)(...)``, ``partial(on_commit, callback)`` and
+``callbacks.append(transaction.on_commit)`` are each one site. Binding a
+reference to a name (``hook = transaction.on_commit``, ``self.hook = ...``, a
+parameter default) is not itself a site; each use of that name is. Three shapes
+match:
+
+* **direct callables** by name: Django's ``on_commit``, Celery's ``send_task``,
+  DBOS's ``start_workflow``. The names are specific enough to match on their
+  own, including under an import alias.
+* **task methods**: ``.delay``/``.apply_async`` (Celery) or ``.defer``
+  (Procrastinate) on a function the project registers as a task, by decorator
+  (``@shared_task``, ``@app.task``) or by assignment (``send = shared_task(_send)``).
+  The receiver is resolved through imports, re-exports and local names, so
+  ``cache.delay(...)`` on an unrelated object is not a site, and
+  ``.configure(...)``/``.s(...)``/``.si(...)``/``.signature(...)``/``.set(...)``
+  between a task and its method are looked through.
 * **task arguments**: a call such as DBOS's ``queue.enqueue(workflow, ...)``,
   whose first argument is a registered workflow.
 
-Calls wrapped by ``sync_to_async(...)``/``async_to_sync(...)`` are unwrapped,
-and ``.configure(...)``/``.s(...)``/``.si(...)``/``.signature(...)`` between a
-task and its method are looked through.
-
-Known limit: a handoff made in SQL (a stored procedure that enqueues) or through
-a bound method passed along uncalled is invisible to a static scan.
+Known limits: a handoff made in SQL (a stored procedure that enqueues), reached
+through ``getattr`` with a computed name, or made on a task class instance
+(Celery's class-based tasks) is invisible to a static scan.
 """
 
-import importlib.util
 from collections.abc import Collection, Iterable
-from dataclasses import dataclass
+
+from due_work_harness.models import HarnessModel
 
 
-@dataclass(frozen=True)
-class SiteKind:
+class SiteKind(HarnessModel):
     name: str
-    #: The module whose presence enables this kind by default.
+    #: The top-level module whose import enables this kind.
     requires: str
-    #: Callee names that are sites wherever they are called.
+    #: Callable names that are sites wherever they are referenced.
     calls: frozenset[str] = frozenset()
     #: Decorator names (their last component) that register a deferred callable.
     task_decorators: frozenset[str] = frozenset()
-    #: Methods that hand work off when called on a registered task.
+    #: Methods that hand work off when referenced on a registered task.
     task_methods: frozenset[str] = frozenset()
     #: Calls that hand work off when their first argument is a registered task.
     task_argument_calls: frozenset[str] = frozenset()
@@ -74,26 +82,23 @@ DBOS = SiteKind(
 
 BUILT_IN: dict[str, SiteKind] = {kind.name: kind for kind in (DJANGO, CELERY, PROCRASTINATE, DBOS)}
 
-#: Adapters that run a callable later or elsewhere; ``wrapper(site)(...)`` is the site.
-CALL_WRAPPERS = frozenset({"sync_to_async", "async_to_sync"})
-
 #: Methods that return a configured copy of a task: ``task.configure(...).defer(...)``.
 TASK_CONFIGURATORS = frozenset({"configure", "s", "si", "signature", "set"})
 
 
-def installed_kinds() -> tuple[SiteKind, ...]:
-    """The built-in kinds whose framework is importable, without importing it."""
-    return tuple(kind for kind in BUILT_IN.values() if importlib.util.find_spec(kind.requires) is not None)
-
-
-def resolve_kinds(names: Iterable[str] | None) -> tuple[SiteKind, ...]:
-    """The kinds named in configuration, or every installed one when none are named."""
-    if names is None:
-        return installed_kinds()
+def resolve_kinds(names: Iterable[str]) -> tuple[SiteKind, ...]:
+    """The built-in kinds with these names; an unknown name is a configuration error."""
+    names = tuple(names)
     unknown = sorted(set(names) - set(BUILT_IN))
     if unknown:
         raise ValueError(f"unknown site kinds {unknown}; known kinds are {sorted(BUILT_IN)}")
     return tuple(BUILT_IN[name] for name in names)
+
+
+def kinds_for(imported: Collection[str], configured: Collection[SiteKind] = ()) -> tuple[SiteKind, ...]:
+    """The kinds whose framework is among ``imported`` top-level modules, plus ``configured``, in built-in order."""
+    wanted = {kind.name for kind in configured} | {kind.name for kind in BUILT_IN.values() if kind.requires in imported}
+    return tuple(kind for kind in BUILT_IN.values() if kind.name in wanted)
 
 
 def names(kinds: Collection[SiteKind]) -> list[str]:

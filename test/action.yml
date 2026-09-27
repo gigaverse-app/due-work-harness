@@ -44,7 +44,7 @@ runs:
       run: |
         status=0
         # shellcheck disable=SC2086 # the arguments are a list
-        uv run --no-sync pytest -m due_work -rxX --junitxml=due-work-results.xml $PYTEST_ARGS || status=$?
+        uv run --no-sync pytest -m due_work --due-work-verify -rxX --junitxml=due-work-results.xml $PYTEST_ARGS || status=$?
         uv run --no-sync python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
         import xml.etree.ElementTree as ET
         from pathlib import Path

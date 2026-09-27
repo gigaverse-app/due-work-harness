@@ -23,7 +23,6 @@ properties:
 """
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 from typing import Any
 
 from due_work_harness.binding import (
@@ -31,14 +30,14 @@ from due_work_harness.binding import (
     SELECTION_AUTHORING_OPERATIONS,
     assert_binding_reaches_production,
 )
+from due_work_harness.models import HarnessModel
 
 
 def _identity(value: Any) -> Any:
     return value
 
 
-@dataclass(frozen=True)
-class BoundedRetry:
+class BoundedRetry(HarnessModel):
     """One production retry lifecycle under a persistent transient failure."""
 
     name: str
@@ -81,7 +80,7 @@ class BoundedRetry:
     #: row.pk`` and arrange a real row.
     identity_of: Callable[[Any], Any] = _identity
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, _context: Any) -> None:
         if self.max_executions < 1:
             raise ValueError("BoundedRetry.max_executions must be at least one")
 

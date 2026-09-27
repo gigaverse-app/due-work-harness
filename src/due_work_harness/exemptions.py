@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from due_work_harness.binding import is_real_reason
+from due_work_harness.binding import is_real_reason, is_test_authored
 from due_work_harness.contract import DueWorkContractDesignError, DueWorkSource
 from due_work_harness.host import current_host
 
@@ -54,6 +54,14 @@ def exempt_due_work_suite(
     if not callable(prove):
         raise DueWorkContractDesignError(
             "an exemption must carry prove=, executable evidence that the loss is absorbed"
+        )
+    authored = is_test_authored(prove)
+    if authored is None:
+        raise DueWorkContractDesignError("an exemption's prove= is not an inspectable Python callable")
+    if authored:
+        raise DueWorkContractDesignError(
+            "an exemption's prove= is test-authored, and a proof the test wrote can make any loss look absorbed: "
+            "use a harness probe such as LossIsAbsorbedElsewhere, bound to the production paths the reason names"
         )
 
     def decorate(cls: type) -> type:

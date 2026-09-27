@@ -15,7 +15,7 @@ pytest proofs, and runs them against **your production code** — whatever queue
 job library or workflow engine it uses.
 
 ```text
-pip install due-work-harness            # the core: pytest only
+pip install due-work-harness            # the core: pytest and pydantic only
 pip install "due-work-harness[django]"  # plus the Django/PostgreSQL integration
 ```
 
@@ -85,7 +85,9 @@ forgotten. It scans production code for every call that hands work off —
 `on_commit`, a Celery `.delay`, a procrastinate `.defer`, a DBOS workflow start —
 attributes each to the exact function that makes it, and requires exactly one
 disposition per function: a contract suite that insures it, or an exemption
-that proves losing it costs nothing.
+that proves losing it costs nothing. Aliases, re-exports and handoffs passed
+along uncalled are still found, and a declaration counts only if pytest would
+actually run it; `pytest --due-work-verify` then checks that it did.
 
 ```python
 @due_work_contract_suite(ORDER_NOTIFICATIONS, covers=(DueWorkSource(OrderService.place),))
@@ -104,7 +106,7 @@ generated case carries the `due_work` mark). The path from `uv add` to CI is in
 
 ## Framework-free by construction
 
-The core imports nothing but pytest — no Django, SQLAlchemy, Celery,
+The core depends only on pytest and pydantic — no Django, SQLAlchemy, Celery,
 Procrastinate or DBOS. Proofs take plain callables. The few facts only a
 framework knows — whether a transaction is open, how to interrupt a commit,
 what plan a query runs — come from a `Host` you configure once:

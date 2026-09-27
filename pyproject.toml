@@ -23,9 +23,9 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Testing",
 ]
-# The core imports no framework. Every integration lives behind an extra and is
-# imported only when its framework is installed.
-dependencies = ["pytest>=8"]
+# The core imports no framework: its dependencies are pytest and pydantic. Every
+# integration lives behind an extra and is imported only when its framework is installed.
+dependencies = ["pytest>=8", "pydantic>=2.9"]
 
 [project.optional-dependencies]
 django = ["django>=4.2", "pytest-django>=4.8", "psycopg[binary]>=3.1", "time-machine>=2.10"]

@@ -9,8 +9,8 @@ framework-free. Frameworks reach them only through one small interface, the
 
 1. **The core imports no framework.** Nothing under `due_work_harness/` outside
    `integrations/` imports Django, SQLAlchemy, Celery, Procrastinate, DBOS, or
-   any database driver, at module level or inside functions. The only runtime
-   dependency is `pytest`. CI proves it by importing every core module in an
+   any database driver, at module level or inside functions. The runtime
+   dependencies are `pytest` and `pydantic`. CI proves it by importing every core module in an
    environment with none of them installed.
 2. **An integration imports its framework, and nothing imports an integration
    implicitly.** `due_work_harness.integrations.django` may import Django; the
@@ -25,6 +25,28 @@ framework-free. Frameworks reach them only through one small interface, the
 4. **Adapters bind production code; they do not reproduce it.** The binding
    tripwires in `binding.py` reject test-authored selections and transitions.
    What counts as production is the host's `production_packages`.
+
+## Models
+
+Structured values are Pydantic models built on `due_work_harness.models`, never
+dataclasses:
+
+- `HarnessModel` (frozen, `extra="forbid"`, arbitrary types allowed) for
+  declarations and results; `MutableHarnessModel` for state a proof accumulates.
+- Construction is by keyword. A class whose public API is naturally positional
+  (`DueWorkSource(fn)`, `ExternalCall(owner, "attr")`, `Decline("why", prove=...)`)
+  defines `__init__(self, first=MISSING, /, **data)` and forwards
+  `with_positional(data, field=first)`: Pydantic validates through `__init__(**fields)`,
+  so the positional parameter must also accept its field by name.
+- Checks that ran in `__post_init__` run in `model_post_init` and raise
+  `DueWorkContractDesignError` (or another non-`ValueError`) so the error reaches
+  the caller as itself; Pydantic wraps `ValueError`/`AssertionError` from there.
+- Copies use `model.model_copy(update={...})`. On a `HarnessModel` that copy is
+  validated like a new value (`model_post_init` runs, unknown keys are refused),
+  so a changed declaration cannot skip its design checks. Private state uses
+  `PrivateAttr`.
+- A user's own dataclasses and Pydantic models remain welcome as *observed
+  values*; the rule is about the harness's own types.
 
 ## The host
 
@@ -57,7 +79,8 @@ raises `WorkerDied`, except rollbacks; on exit a dead worker's session is closed
 due_work_harness/
   __init__.py            public API (re-exports)
   host.py                Host, configure, current_host, hosted
-  pytest_plugin.py       reads the due_work_harness_host ini option
+  models.py              HarnessModel, MutableHarnessModel, with_positional
+  pytest_plugin.py       the due_work_harness_host ini option; --due-work-verify
   worker_death.py        WorkerDied
   binding.py             adapter tripwires (authorship, delegation)
   helpers.py             contract_params, undeclared, assert_provider_call_holds_no_transaction
@@ -67,9 +90,13 @@ due_work_harness/
   crash_histories.py     HandoffHistory, ExternalCall, Delivery, histories and verdict
   process_histories.py   deaths of a real child process (stdlib only)
   exemptions.py          exempt_due_work_suite: a proven "losing this is fine"
-  coverage/              the static check: every handoff site has one disposition (stdlib only)
-    sites.py             site kinds per framework
-    scan.py              discovery, declarations and rules
+  coverage/              the static check: every handoff site has one disposition (imports nothing it scans)
+    sites.py             what a site is: kinds per framework
+    project.py           module discovery and static name resolution (imports, re-exports)
+    handoffs.py          handoff sites in production, by outermost function
+    declarations.py      contract and exemption declarations in test modules
+    report.py            Site, Disposition, CoverageReport
+    scan.py              the rules that match the two
     config.py            [tool.due-work-harness]
     cli.py               due-work-harness check | sites | baseline
   evidence/              observation reports

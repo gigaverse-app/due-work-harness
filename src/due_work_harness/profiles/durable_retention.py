@@ -36,17 +36,16 @@ into external providers.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from due_work_harness.binding import (
     INVOCATION_AUTHORING_OPERATIONS,
     assert_binding_reaches_production,
 )
+from due_work_harness.models import HarnessModel
 
 
-@dataclass(frozen=True)
-class Retention:
+class Retention(HarnessModel):
     """One domain's retention pass, described so the proofs can drive it."""
 
     name: str

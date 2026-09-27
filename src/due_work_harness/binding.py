@@ -29,6 +29,7 @@ and make the adapter forward to it.
 """
 
 import dis
+import functools
 import inspect
 import sys
 from collections.abc import Callable, Collection
@@ -90,7 +91,13 @@ INVOCATION_AUTHORING_OPERATIONS = SELECTION_AUTHORING_OPERATIONS | TRANSITION_AU
 ASSERTION_INVERSION_NAMES = frozenset({"raises", "AssertionError", "suppress"})
 
 
-def _callable_code(binding: Callable[..., Any]) -> CodeType | None:
+def callable_code(binding: Callable[..., Any]) -> CodeType | None:
+    """
+    The code object behind a binding: a function, a bound method, a wrapped callable,
+    a ``functools.partial`` (whose code is the wrapped function's) or a callable instance.
+    """
+    if isinstance(binding, functools.partial):
+        return callable_code(binding.func)
     function = getattr(binding, "__func__", binding)
     if callable(function):
         function = inspect.unwrap(function)
@@ -100,9 +107,33 @@ def _callable_code(binding: Callable[..., Any]) -> CodeType | None:
     return code
 
 
+def is_test_path(path: Path) -> bool:
+    """
+    Whether a file is test code: under a ``tests`` directory, or named as pytest collects tests.
+
+    The one rule for "test-authored": the binding tripwires apply it to a
+    callable's code and the coverage scan to the files it reads, so a module the
+    scan treats as production is never test code to the tripwires, or the reverse.
+    """
+    return "tests" in path.parts or path.name.startswith(("test_", "conftest")) or path.stem.endswith("_test")
+
+
 def is_test_code(code: CodeType) -> bool:
-    path = Path(code.co_filename)
-    return "tests" in path.parts or path.name.startswith(("test_", "conftest"))
+    return is_test_path(Path(code.co_filename))
+
+
+def is_test_authored(binding: Callable[..., Any]) -> bool | None:
+    """
+    Whether a callable was written in test code rather than by production or the harness.
+
+    ``None`` when it has no inspectable code. A test-authored *negative* claim (a
+    decline's proof, an exemption's proof that a lost handoff is absorbed) proves
+    only itself: a no-op or a copied query makes any loss look harmless.
+    """
+    code = callable_code(binding)
+    if code is None:
+        return None
+    return is_test_code(code) and not is_harness_owned(code)
 
 
 def _nested_test_callables(binding: Callable[..., Any]) -> Collection[Callable[..., Any]]:
@@ -116,7 +147,7 @@ def _nested_test_callables(binding: Callable[..., Any]) -> Collection[Callable[.
     return tuple(
         value
         for value in referenced
-        if callable(value) and (code := _callable_code(value)) is not None and is_test_code(code)
+        if callable(value) and (code := callable_code(value)) is not None and is_test_code(code)
     )
 
 
@@ -131,7 +162,7 @@ def _authored_operations(
         return set()
     seen.add(identity)
 
-    code = _callable_code(binding)
+    code = callable_code(binding)
     # Root-owned code is the trusted layer these tripwires exist to protect,
     # not a place authorship can hide: everything in the harness package is
     # reviewed as invariant/reference code, so it is exempt the same way
@@ -157,7 +188,7 @@ def assert_test_binding_forwards(
     production_shape: str,
 ) -> None:
     """Reject a semantic callback that authors ORM behavior in test code."""
-    code = _callable_code(binding)
+    code = callable_code(binding)
     assert code is not None, (
         f"{adopter}: {field} is not an inspectable Python callable, so the "
         "contract cannot establish whether it forwards to production or "
@@ -195,7 +226,7 @@ def _defining_file(value: Any) -> Path | None:
     if isinstance(value, ModuleType):
         module_file = getattr(value, "__file__", None)
         return Path(module_file) if module_file else None
-    code = _callable_code(value) if callable(value) else None
+    code = callable_code(value) if callable(value) else None
     if code is not None:
         return Path(code.co_filename)
     if inspect.isclass(value) or callable(value):
@@ -265,7 +296,7 @@ def _references_production_code(binding: Callable[..., Any], *, seen: set[int]) 
         defining = _defining_file(value)
         if defining is not None and _is_production_file(defining):
             return True
-        code = _callable_code(value) if callable(value) else None
+        code = callable_code(value) if callable(value) else None
         if code is not None and is_test_code(code) and _references_production_code(value, seen=seen):
             return True
     return False
@@ -302,7 +333,7 @@ def assert_test_binding_delegates_to_production(
     invisible" to "deliberate and reviewable", which is the standard every
     tripwire here is held to.
     """
-    code = _callable_code(binding)
+    code = callable_code(binding)
     assert code is not None, (
         f"{adopter}: {field} is not an inspectable Python callable, so the "
         "contract cannot establish whether it delegates to production"
@@ -385,7 +416,7 @@ def assert_test_binding_consumes_its_first_parameter(
     bytecode: it survives reformatting, comments, and the parameter being
     captured by a nested closure (which loads it through a cell).
     """
-    code = _callable_code(binding)
+    code = callable_code(binding)
     assert code is not None, (
         f"{adopter}: {field} is not an inspectable Python callable, so the "
         f"contract cannot establish whether it consumes {parameter_shape}"
@@ -428,7 +459,7 @@ def authored_inversion_names(binding: Callable[..., Any], *, seen: set[int] | No
         return set()
     seen.add(identity)
 
-    code = _callable_code(binding)
+    code = callable_code(binding)
     if code is None or not is_test_code(code) or is_harness_owned(code):
         return set()
 
@@ -461,7 +492,7 @@ def references_harness_assertion(binding: Callable[..., Any], *, seen: set[int] 
         if not callable(value):
             continue
         name = getattr(value, "__name__", "")
-        code = _callable_code(value)
+        code = callable_code(value)
         if name.startswith("assert_") and code is not None and is_harness_owned(code):
             return True
         if code is not None and is_test_code(code) and references_harness_assertion(value, seen=seen):

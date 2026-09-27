@@ -11,7 +11,7 @@ the GitHub Actions below.
 uv add --dev "due-work-harness[django]"     # or [celery], [procrastinate], [dbos]; combine as needed
 ```
 
-The core needs only pytest. An extra adds that framework's integration.
+The core needs only pytest and pydantic. An extra adds that framework's integration.
 
 ## 2. Configure the scan
 
@@ -21,7 +21,9 @@ The core needs only pytest. An extra adds that framework's integration.
 production-packages = ["myapp"]   # the code that must be accounted for
 ```
 
-Every installed integration's handoff sites are scanned by default:
+A kind is scanned whenever production code imports its framework, directly or
+through another module of the project, so the result is the same wherever the
+check runs, framework installed or not:
 
 | Kind | A site is |
 | --- | --- |
@@ -30,7 +32,12 @@ Every installed integration's handoff sites are scanned by default:
 | `procrastinate` | `.defer(...)` / `.defer_async(...)` on an `@app.task`, including after `.configure(...)` |
 | `dbos` | `DBOS.start_workflow(...)`, and `queue.enqueue(workflow, ...)` for a `@DBOS.workflow` |
 
-Narrow it with `sites = ["django", "celery"]`. See
+A site is any reference to the handoff, called or not, through any alias: a
+local name, a parameter default, `self.hook`, a re-export, `sync_to_async(...)`
+or `functools.partial(...)` all count, in the outermost function that contains
+them. `sites = ["celery"]` adds a kind the scan cannot detect (a framework
+reached only through a third-party wrapper); it never removes a detected one.
+`exclude` adds name patterns to skip, and may never hide production code. See
 [`coverage/config.py`](src/due_work_harness/coverage/config.py) for every key.
 
 ## 3. See what you have, and baseline the past
@@ -84,7 +91,10 @@ class TestSummaryEvictionExemption:
     pass
 ```
 
-The proof runs as a test. An exemption without one is refused.
+The proof runs as a test. An exemption without one is refused, and so is a
+proof written in the test itself (a lambda, a local function): it must be a
+harness probe such as `LossIsAbsorbedElsewhere`, whose `absorb` is the
+production path the reason names.
 
 Each call then removes its function from the baseline.
 
@@ -123,4 +133,16 @@ uv run pytest -m due_work
 ```
 
 Every case the harness generates carries the `due_work` mark, so `-m due_work`
-selects exactly the adoption suites.
+selects exactly the adoption suites. The `test` action also passes
+`--due-work-verify`, which fails the session unless every declaration the check
+counted ran a case: a suite skipped by an `importorskip`, deselected or never
+collected cannot keep its function accounted for. Add it to the plain command
+too:
+
+```bash
+uv run pytest -m due_work --due-work-verify
+```
+
+A declaration the check counts is one pytest will run as written: a
+module-level `Test*` class, not rebound later in its module, with no skip or
+xfail mark, using the harness's own decorator, `DueWorkSource` and contract.

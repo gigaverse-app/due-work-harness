@@ -29,9 +29,12 @@ or in the pytest configuration file::
 
 from collections.abc import Callable, Collection, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
+
+from pydantic import Field, SkipValidation
+
+from due_work_harness.models import HarnessModel
 
 
 class WorkerKiller(Protocol):
@@ -86,8 +89,7 @@ class SelectionInspector(Protocol):
         ...
 
 
-@dataclass(frozen=True)
-class Host:
+class Host(HarnessModel):
     """What the application's framework supplies. Every field is optional."""
 
     #: Top-level package names whose code is the system under test. Adapter
@@ -103,15 +105,17 @@ class Host:
     in_transaction: Callable[[], bool] | None = None
 
     #: Counts and interrupts commits on the calling thread's connection; crash
-    #: histories need it to kill a worker right after each commit.
-    worker_killer: WorkerKiller | None = None
+    #: histories need it to kill a worker right after each commit. A protocol,
+    #: not a runtime-checkable class, so Pydantic does not check it.
+    worker_killer: SkipValidation[WorkerKiller | None] = None
 
     #: The connection lifecycle of a thread a proof starts, for example to race
     #: two claims on two real connections.
     connection_scope: Callable[[], AbstractContextManager[None]] = nullcontext
 
     #: Database facts about a selection: index use, replica reads, scan ratio.
-    selection_inspectors: tuple[SelectionInspector, ...] = ()
+    #: Protocol implementations, so Pydantic does not check them.
+    selection_inspectors: SkipValidation[tuple[SelectionInspector, ...]] = ()
 
     #: Ambient per-call context a recovery tick must restore, such as the
     #: current tenant. ``None`` skips the proof that checks it.
@@ -131,7 +135,7 @@ class Host:
     sweep_proofs: tuple[Callable[[Any], None], ...] = ()
 
     #: Anything else an integration wants to carry; the core never reads it.
-    extras: dict[str, Any] = field(default_factory=dict)
+    extras: dict[str, Any] = Field(default_factory=dict)
 
     def inspector_for(self, selection: object, *, capability: str) -> SelectionInspector:
         for inspector in self.selection_inspectors:

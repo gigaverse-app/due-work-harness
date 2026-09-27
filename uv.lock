@@ -276,6 +276,7 @@ wheels = [
 name = "due-work-harness"
 source = { editable = "." }
 dependencies = [
+    { name = "pydantic" },
     { name = "pytest" },
 ]
 
@@ -321,6 +322,7 @@ requires-dist = [
     { name = "django", marker = "extra == 'django'", specifier = ">=4.2" },
     { name = "procrastinate", marker = "extra == 'procrastinate'", specifier = ">=3.0" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'django'", specifier = ">=3.1" },
+    { name = "pydantic", specifier = ">=2.9" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-django", marker = "extra == 'django'", specifier = ">=4.8" },
     { name = "time-machine", marker = "extra == 'django'", specifier = ">=2.10" },

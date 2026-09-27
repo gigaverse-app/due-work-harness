@@ -5,6 +5,7 @@ Each rule is shown passing on a conforming project and failing, with its own
 message, on the project that breaks it.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -33,7 +34,7 @@ CONTRACT_MODULE = """
 """
 
 EXEMPTION_MODULE = """
-    from due_work_harness import DueWorkSource, exempt_due_work_suite
+    from due_work_harness import DueWorkSource, LossIsAbsorbedElsewhere, exempt_due_work_suite
     from shop.orders import OrderService
 
     @exempt_due_work_suite(
@@ -46,8 +47,14 @@ EXEMPTION_MODULE = """
 """
 
 
+PROOF = (
+    "prove=LossIsAbsorbedElsewhere(strand=OrderService.place, observe=OrderService.place, absorb=OrderService.place),"
+)
+REASON = '"the next request re-derives the order summary from the database"'
+
+
 def _problems(root: Path, files: dict[str, str], extra: str = "") -> list[str]:
-    return scan(write_project(root, {"shop/orders.py": ORDERS, **files}, sites='["django"]', extra=extra)).problems
+    return scan(write_project(root, {"shop/orders.py": ORDERS, **files}, extra=extra)).problems
 
 
 def test_a_covered_site_is_accounted_for(tmp_path: Path) -> None:
@@ -64,9 +71,7 @@ def test_a_disposition_naming_a_function_with_no_site_is_stale(tmp_path: Path) -
     covered = CONTRACT_MODULE.format(source="DueWorkSource(OrderService.place), DueWorkSource(OrderService.refund)")
     orders = ORDERS + "\n        def refund(self):\n            pass\n"
     problems = scan(
-        write_project(
-            tmp_path, {"shop/orders.py": orders, "tests/test_orders_due_work.py": covered}, sites='["django"]'
-        )
+        write_project(tmp_path, {"shop/orders.py": orders, "tests/test_orders_due_work.py": covered})
     ).problems
     assert problems == [
         "shop.orders.OrderService.refund is covered (tests/test_orders_due_work.py::TestOrdersDueWork) but has no "
@@ -91,26 +96,46 @@ def test_two_dispositions_for_one_site_fail(tmp_path: Path) -> None:
 
 
 def test_a_proven_exemption_accounts_for_a_site(tmp_path: Path) -> None:
-    exemption = EXEMPTION_MODULE.format(
-        reason='"the next request re-derives the order summary from the database"', prove="prove=lambda: None,"
-    )
+    exemption = EXEMPTION_MODULE.format(reason=REASON, prove=PROOF)
+    assert _problems(tmp_path, {"tests/test_orders_exemption.py": exemption}) == []
+
+
+def test_a_proof_bound_to_a_module_level_probe_is_a_harness_proof(tmp_path: Path) -> None:
+    probe = "CHECK = LossIsAbsorbedElsewhere(strand=print, observe=print, absorb=print)\n\n    @exempt_due_work_suite("
+    exemption = EXEMPTION_MODULE.replace("@exempt_due_work_suite(", probe).format(reason=REASON, prove="prove=CHECK,")
     assert _problems(tmp_path, {"tests/test_orders_exemption.py": exemption}) == []
 
 
 @pytest.mark.parametrize(
     ("reason", "prove", "defect"),
     [
-        ('"the next request re-derives the order summary"', "", "an exemption must carry prove="),
-        ('"fine"', "prove=lambda: None,", "the exemption's reason is too thin"),
-        ("REASON", "prove=lambda: None,", "reason= must be a literal string"),
+        (REASON, "", "an exemption must carry prove="),
+        (REASON, "prove=lambda: None,", "prove= must be a harness probe"),
+        (REASON, "prove=OrderService,", None),
+        ('"fine"', PROOF, "the exemption's reason is too thin"),
+        ("REASON", PROOF, "reason= must be a literal string"),
     ],
-    ids=["no-proof", "thin-reason", "computed-reason"],
+    ids=["no-proof", "test-authored-proof", "production-proof", "thin-reason", "computed-reason"],
 )
-def test_an_exemption_needs_a_literal_reason_and_a_proof(tmp_path: Path, reason: str, prove: str, defect: str) -> None:
+def test_an_exemption_needs_a_literal_reason_and_a_proof_the_test_did_not_write(
+    tmp_path: Path, reason: str, prove: str, defect: str | None
+) -> None:
     exemption = EXEMPTION_MODULE.format(reason=reason, prove=prove)
     problems = _problems(tmp_path, {"tests/test_orders_exemption.py": exemption})
+    if defect is None:
+        assert problems == []
+        return
     assert any(defect in problem for problem in problems), problems
     assert any("hands work off with no disposition" in problem for problem in problems)
+
+
+def test_a_proof_defined_in_the_test_module_is_test_authored(tmp_path: Path) -> None:
+    local = "def absorbed():\n        pass\n\n    @exempt_due_work_suite("
+    exemption = EXEMPTION_MODULE.replace("@exempt_due_work_suite(", local).format(
+        reason=REASON, prove="prove=absorbed,"
+    )
+    problems = _problems(tmp_path, {"tests/test_orders_exemption.py": exemption})
+    assert any("prove= must be a harness probe" in problem for problem in problems), problems
 
 
 @pytest.mark.parametrize(
@@ -132,7 +157,7 @@ def test_an_exemption_needs_a_literal_reason_and_a_proof(tmp_path: Path, reason:
             CONTRACT_MODULE.replace('ORDERS = DueWorkContract(name="orders")', "ORDERS = make_contract()").format(
                 source="DueWorkSource(OrderService.place)"
             ),
-            "which this module does not build as DueWorkContract",
+            "which this module does not build as due_work_harness's DueWorkContract",
         ),
         (
             CONTRACT_MODULE.replace("class TestOrdersDueWork", "class OrdersDueWork").format(
@@ -140,8 +165,38 @@ def test_an_exemption_needs_a_literal_reason_and_a_proof(tmp_path: Path, reason:
             ),
             "is not a collected Test* class",
         ),
+        (
+            CONTRACT_MODULE.replace(
+                "from due_work_harness import DueWorkContract, DueWorkSource, due_work_contract_suite",
+                "from due_work_harness import DueWorkContract, DueWorkSource\n    from tests.fakes import due_work_contract_suite",
+            ).format(source="DueWorkSource(OrderService.place)"),
+            "due_work_contract_suite is not due_work_harness's",
+        ),
+        (
+            CONTRACT_MODULE.replace(
+                "from due_work_harness import DueWorkContract, DueWorkSource, due_work_contract_suite",
+                "from due_work_harness import DueWorkContract, due_work_contract_suite\n    from tests.fakes import DueWorkSource",
+            ).format(source="DueWorkSource(OrderService.place)"),
+            "DueWorkSource must be due_work_harness's",
+        ),
+        (
+            CONTRACT_MODULE.replace(
+                "from due_work_harness import DueWorkContract, DueWorkSource, due_work_contract_suite",
+                "from due_work_harness import DueWorkSource, due_work_contract_suite\n    from tests.fakes import DueWorkContract",
+            ).format(source="DueWorkSource(OrderService.place)"),
+            "which this module does not build as due_work_harness's DueWorkContract",
+        ),
     ],
-    ids=["path-string", "unimported-callable", "covers-not-inline", "contract-not-built-here", "not-collected"],
+    ids=[
+        "path-string",
+        "unimported-callable",
+        "covers-not-inline",
+        "contract-not-built-here",
+        "not-collected",
+        "spoofed-suite",
+        "spoofed-source",
+        "spoofed-contract",
+    ],
 )
 def test_a_malformed_declaration_is_refused(tmp_path: Path, module: str, defect: str) -> None:
     problems = _problems(tmp_path, {"tests/test_orders_due_work.py": module})
@@ -154,7 +209,7 @@ def test_a_baseline_accounts_for_a_legacy_site(tmp_path: Path) -> None:
 
 
 def test_the_adoption_baseline_lists_every_unaccounted_site(tmp_path: Path) -> None:
-    report = scan(write_project(tmp_path, {"shop/orders.py": ORDERS}, sites='["django"]'))
+    report = scan(write_project(tmp_path, {"shop/orders.py": ORDERS}))
     assert unaccounted_baseline(report) == {"shop.orders.OrderService.place": 1}
 
 
@@ -164,7 +219,6 @@ def test_a_forwarding_helper_must_declare_its_own_sites(tmp_path: Path) -> None:
         write_project(
             tmp_path,
             {"shop/orders.py": ORDERS, "shop/shared.py": shared},
-            sites='["django"]',
             extra='bridges = { "shop.shared.after_commit" = 2 }\n[tool.due-work-harness.baseline]\n'
             '"shop.orders.OrderService.place" = 1',
         )
@@ -173,3 +227,119 @@ def test_a_forwarding_helper_must_declare_its_own_sites(tmp_path: Path) -> None:
         "shop.shared.after_commit has 1 handoff site(s) but its disposition (bridge, pyproject.toml "
         "[tool.due-work-harness] bridges) accounts for 2: review it and update sites="
     ]
+
+
+def _nest(module: str) -> str:
+    nested = module.replace("@due_work_contract_suite", "def make():\n        @due_work_contract_suite")
+    return nested.replace(
+        "    class TestOrdersDueWork:\n        pass", "        class TestOrdersDueWork:\n            pass"
+    )
+
+
+@pytest.mark.parametrize(
+    ("edit", "defect"),
+    [
+        (_nest, "is not a module-level class"),
+        (lambda module: module + "\n    class TestOrdersDueWork:\n        pass\n", "is rebound on line"),
+        (lambda module: module + "\n    TestOrdersDueWork = None\n", "is rebound on line"),
+        (
+            lambda module: module.replace(
+                "@due_work_contract_suite", "@pytest.mark.skip\n    @due_work_contract_suite"
+            ),
+            "carries pytest.mark.skip",
+        ),
+        (
+            lambda module: module.replace(
+                "@due_work_contract_suite", "@pytest.mark.skipif(True, reason='x')\n    @due_work_contract_suite"
+            ),
+            "carries pytest.mark.skipif",
+        ),
+        (
+            lambda module: module.replace("        pass", "        pytestmark = pytest.mark.xfail"),
+            "carries pytest.mark.xfail",
+        ),
+        (lambda module: module + "\n    pytestmark = [pytest.mark.skip]\n", "carries pytest.mark.skip"),
+        (lambda module: module.replace("        pass", "        __test__ = False"), "sets __test__"),
+    ],
+    ids=[
+        "nested-class",
+        "shadowed-by-class",
+        "shadowed-by-assignment",
+        "skip-mark",
+        "skipif-mark",
+        "class-pytestmark",
+        "module-pytestmark",
+        "dunder-test",
+    ],
+)
+def test_a_declaration_that_would_not_run_does_not_count(
+    tmp_path: Path, edit: Callable[[str], str], defect: str
+) -> None:
+    module = "\n    import pytest\n" + CONTRACT_MODULE.format(source="DueWorkSource(OrderService.place)")
+    problems = _problems(tmp_path, {"tests/test_orders_due_work.py": edit(module)})
+    assert any(defect in problem for problem in problems), problems
+    assert any("hands work off with no disposition" in problem for problem in problems), problems
+
+
+def test_the_same_declaration_with_a_harmless_mark_counts(tmp_path: Path) -> None:
+    module = "\n    import pytest\n" + CONTRACT_MODULE.format(source="DueWorkSource(OrderService.place)")
+    module = module.replace("@due_work_contract_suite", "@pytest.mark.slow\n    @due_work_contract_suite")
+    assert _problems(tmp_path, {"tests/test_orders_due_work.py": module}) == []
+
+
+def test_the_harness_imported_as_a_module_is_the_harness(tmp_path: Path) -> None:
+    module = """
+        import due_work_harness as harness
+        from shop import orders
+
+        ORDERS = harness.DueWorkContract(name="orders")
+
+        @harness.due_work_contract_suite(ORDERS, covers=(harness.DueWorkSource(orders.OrderService.place),))
+        class TestOrdersDueWork:
+            pass
+    """
+    assert _problems(tmp_path, {"tests/test_orders_due_work.py": module}) == []
+
+
+def test_a_source_named_through_a_package_re_export_is_the_defining_function(tmp_path: Path) -> None:
+    module = CONTRACT_MODULE.replace("from shop.orders import OrderService", "from shop import OrderService")
+    files = {
+        "shop/__init__.py": "from shop.orders import OrderService\n",
+        "shop/orders.py": ORDERS,
+        "tests/test_orders_due_work.py": module.format(source="DueWorkSource(OrderService.place)"),
+    }
+    assert scan(write_project(tmp_path, files)).problems == []
+
+
+def test_a_site_outside_any_function_names_its_fix(tmp_path: Path) -> None:
+    orders = "from django.db import transaction\n\ntransaction.on_commit(print)\n"
+    (problem,) = scan(write_project(tmp_path, {"shop/orders.py": orders})).problems
+    assert problem.startswith("shop.orders.<module> (shop/orders.py:3, django) hands work off outside any function")
+
+
+@pytest.mark.parametrize(
+    ("exclude", "hidden"),
+    [('["build"]', "shop/build"), ('["legacy_*.py"]', "shop/legacy_orders.py")],
+    ids=["directory", "file"],
+)
+def test_exclude_may_not_hide_production_code(tmp_path: Path, exclude: str, hidden: str) -> None:
+    files = {
+        "shop/build/pipeline.py": ORDERS,
+        "shop/legacy_orders.py": ORDERS,
+        "build/generated.py": ORDERS,
+        "shop/tests/fixtures.py": ORDERS,
+    }
+    report = scan(write_project(tmp_path, files, extra=f"exclude = {exclude}"))
+    assert f"{hidden} holds production code but `exclude` hides it from the scan: narrow the pattern" in report.problems
+    assert not any("build/generated.py" in problem or "shop/tests" in problem for problem in report.problems)
+
+
+def test_a_built_in_skip_never_hides_production_code(tmp_path: Path) -> None:
+    report = scan(write_project(tmp_path, {"shop/build/pipeline.py": ORDERS, "build/generated.py": ORDERS}))
+    assert list(report.sites) == ["shop.build.pipeline.OrderService.place"]
+
+
+def test_an_excluded_directory_without_source_hides_nothing(tmp_path: Path) -> None:
+    files = {"shop/orders.py": ORDERS, "shop/__pycache__/orders.cpython-312.pyc": "bytecode"}
+    report = scan(write_project(tmp_path, files, extra='exclude = ["__pycache__"]'))
+    assert not any("holds production code" in problem for problem in report.problems), report.problems
