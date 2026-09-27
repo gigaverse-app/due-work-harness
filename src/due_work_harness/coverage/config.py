@@ -5,7 +5,8 @@ Coverage configuration: ``[tool.due-work-harness]`` in the project's ``pyproject
 
     [tool.due-work-harness]
     production-packages = ["myapp"]     # dotted prefixes of the code under test (required)
-    source-roots = ["src", "."]         # where module names start; the first root containing a file wins
+    source-roots = ["src", "."]         # where module names start; the first root containing a file wins;
+                                        # a root may lie outside the project ("../vendor/app")
     test-paths = ["."]                  # where contract and exemption suites are looked for
     exclude = ["migrations"]            # added to the built-in skips; may never hide production code
     sites = ["celery"]                  # kinds to add to those detected from production's imports

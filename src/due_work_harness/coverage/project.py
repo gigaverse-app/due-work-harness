@@ -62,7 +62,7 @@ class Project:
                     self._add(path)
 
     def _relative(self, path: Path) -> Path:
-        return path.relative_to(self.config.root)
+        return relative_path(self.config, path)
 
     def _holds_production(self, path: Path) -> bool:
         """Whether a file, or a directory with Python source in it, is (or contains) production code."""
@@ -168,6 +168,16 @@ class Project:
     def frameworks(self) -> set[str]:
         """Every dotted name imported anywhere in the code production reaches."""
         return {imported for module in self.reachable for imported in imported_names(self.tree(module), module)}
+
+
+def relative_path(config: CoverageConfig, path: Path) -> Path:
+    """
+    A path as the project names it: relative to its root, climbing out of it when needed.
+
+    A source root may lie outside the project's directory, as a pinned upstream
+    checkout next to the project that adopts it does (``../vendor/app``).
+    """
+    return Path(os.path.relpath(path, config.root))
 
 
 def parse_module(module: Module) -> ast.Module:

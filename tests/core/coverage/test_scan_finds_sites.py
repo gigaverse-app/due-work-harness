@@ -457,3 +457,15 @@ def test_a_file_this_python_cannot_parse_is_a_problem_not_a_crash(tmp_path: Path
     (problem,) = [problem for problem in report.problems if "broken.py" in problem]
     assert problem.startswith("shop/broken.py:1 cannot be parsed by Python 3.")
     assert problem.endswith("run the check with the project's Python or newer")
+
+
+def test_a_source_root_outside_the_project_is_scanned_and_named_from_the_project(tmp_path: Path) -> None:
+    project = tmp_path / "adopter"
+    project.mkdir()
+    upstream = tmp_path / "upstream" / "shop"
+    upstream.mkdir(parents=True)
+    (upstream / "__init__.py").write_text("", encoding="utf-8")
+    (upstream / "orders.py").write_text(ON_COMMIT, encoding="utf-8")
+    config = write_project(project, {}, extra='source-roots = ["../upstream"]')
+    (site,) = production_sites(config)["shop.orders.place"]
+    assert site.path == "../upstream/shop/orders.py"
