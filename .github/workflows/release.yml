@@ -1,0 +1,175 @@
+name: Release
+
+# On every push to main, release-please updates a release PR holding the next
+# SemVer version and changelog, derived from Conventional Commit messages.
+# Merging that PR tags vX.Y.Z and creates the GitHub release; this workflow
+# then builds that exact tag and publishes it to PyPI with Trusted Publishing
+# (OIDC, no stored token). See RELEASING.md.
+#
+# workflow_dispatch publishes an existing tag to TestPyPI or PyPI (a rehearsal,
+# or a publish that failed after tagging), or, with no tag and TestPyPI, the
+# dispatched commit's .devN version, which PyPI never receives.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish, for example v0.1.0. Empty with testpypi: publish this commit's dev version"
+        required: false
+        default: ""
+      index:
+        description: "Where to publish"
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    needs: release-please
+    if: >-
+      always() && (
+        (github.event_name == 'push' && needs.release-please.result == 'success' && needs.release-please.outputs.release_created == 'true')
+        || github.event_name == 'workflow_dispatch'
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.built.outputs.version }}
+    steps:
+      - id: tag
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name || inputs.tag }}
+          INDEX: ${{ inputs.index || 'pypi' }}
+        run: |
+          if [[ -z "$TAG" ]]; then
+            # Only a TestPyPI rehearsal may publish an untagged commit, as its .devN version.
+            if [[ "$INDEX" != "testpypi" ]]; then
+              echo "::error::publishing to PyPI needs a release tag" >&2
+              exit 1
+            fi
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A release is a plain SemVer core version: vMAJOR.MINOR.PATCH.
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG' is not a release tag of the form vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag || github.sha }}
+          # The version is read from the tag, so the tag must be present.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      - name: The built version is the tag
+        if: steps.tag.outputs.tag != ''
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          ls dist
+          test -f "dist/due_work_harness-${VERSION}-py3-none-any.whl"
+          test -f "dist/due_work_harness-${VERSION}.tar.gz"
+      - name: An untagged build is a dev release
+        if: steps.tag.outputs.tag == ''
+        run: |
+          ls dist
+          wheel=$(basename dist/*.whl)
+          [[ "$wheel" =~ ^due_work_harness-[0-9]+\.[0-9]+(\.[0-9]+)?\.dev[0-9]+-py3-none-any\.whl$ ]]
+      - id: built
+        run: |
+          wheel=$(basename dist/*.whl)
+          version=${wheel#due_work_harness-}
+          echo "version=${version%-py3-none-any.whl}" >> "$GITHUB_OUTPUT"
+      - name: The wheel alone installs, imports without any framework, and is typed
+        run: |
+          unzip -l dist/*.whl | grep -q "due_work_harness/py.typed"
+          uv venv /tmp/wheel && uv pip install --python /tmp/wheel dist/*.whl
+          /tmp/wheel/bin/python scripts/check_core_is_framework_free.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    needs: build
+    if: >-
+      always() && needs.build.result == 'success'
+      && (github.event_name == 'push' || inputs.index == 'pypi')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/due-work-harness/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    needs: build
+    if: >-
+      always() && needs.build.result == 'success'
+      && github.event_name == 'workflow_dispatch' && inputs.index == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/due-work-harness/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  attach-to-release:
+    needs: [build, publish-pypi]
+    if: always() && needs.publish-pypi.result == 'success' && needs.build.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"

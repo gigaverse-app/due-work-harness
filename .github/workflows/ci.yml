@@ -26,6 +26,8 @@ jobs:
       - run: uv sync --locked --only-group lint
       - run: uv run --no-sync ruff check
       - run: uv run --no-sync ruff format --check
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
 
   typecheck:
     runs-on: ubuntu-latest
@@ -117,6 +119,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The version is derived from tags, so build with the history that has them.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true

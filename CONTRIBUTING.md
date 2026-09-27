@@ -1,5 +1,16 @@
 # Contributing
 
+## Pull request titles
+
+Pull requests are squash-merged with their title as the commit message, and the
+title decides the next release, so it must be a
+[Conventional Commit](https://www.conventionalcommits.org/): `fix: ...`,
+`feat: ...`, `feat!: ...` for a breaking change, or `docs:`, `test:`, `ci:`,
+`build:`, `refactor:`, `chore:` for changes that do not release on their own.
+The `PR title` check enforces it. See [RELEASING.md](RELEASING.md).
+
+## Tooling
+
 The project is managed with [uv](https://docs.astral.sh/uv/). `uv.lock` is
 committed, and CI installs from it with `--locked`, so a change to dependencies
 must come with `uv lock`.

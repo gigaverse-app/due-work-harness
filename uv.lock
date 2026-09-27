@@ -274,7 +274,6 @@ wheels = [
 
 [[package]]
 name = "due-work-harness"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pytest" },
@@ -326,7 +325,7 @@ requires-dist = [
     { name = "pytest-django", marker = "extra == 'django'", specifier = ">=4.8" },
     { name = "time-machine", marker = "extra == 'django'", specifier = ">=2.10" },
 ]
-provides-extras = ["django", "celery", "procrastinate", "dbos"]
+provides-extras = ["celery", "dbos", "django", "procrastinate"]
 
 [package.metadata.requires-dev]
 demos = [
