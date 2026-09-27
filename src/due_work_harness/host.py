@@ -54,6 +54,22 @@ class WorkerKiller(Protocol):
     def __call__(self, kill_after: int | None) -> AbstractContextManager[Any]: ...
 
 
+class CallbackBreaker(Protocol):
+    """
+    Counts the after-commit callbacks a worker runs, and makes the chosen one fail.
+
+    ``fail_at`` is the 1-based callback to fail, or ``None`` to only count. A
+    callback counts when it runs, not when it is registered, so one discarded
+    with a rolled-back savepoint never counts. The context yields an object
+    whose ``callbacks`` attribute is the count so far and whose ``failed``
+    attribute says whether the failure happened. The chosen callback raises
+    :class:`~due_work_harness.worker_death.CallbackFailed` instead of running;
+    everything after that is the framework's own behaviour.
+    """
+
+    def __call__(self, fail_at: int | None) -> AbstractContextManager[Any]: ...
+
+
 class SelectionInspector(Protocol):
     """
     Facts about a selection that only the database can answer.
@@ -108,6 +124,11 @@ class Host(HarnessModel):
     #: histories need it to kill a worker right after each commit. A protocol,
     #: not a runtime-checkable class, so Pydantic does not check it.
     worker_killer: SkipValidation[WorkerKiller | None] = None
+
+    #: Counts the after-commit callbacks a worker runs and fails the chosen one;
+    #: crash histories use it to fail each callback in turn. Optional: without
+    #: it, that family of histories does not run.
+    callback_breaker: SkipValidation[CallbackBreaker | None] = None
 
     #: The connection lifecycle of a thread a proof starts, for example to race
     #: two claims on two real connections.

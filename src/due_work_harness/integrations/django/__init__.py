@@ -74,6 +74,7 @@ def django_host(
     lifecycle_proofs: bool = True,
 ) -> Host:
     """A host for a Django project whose own code lives in ``production_packages``."""
+    from due_work_harness.integrations.django.callbacks import django_callback_breaker
     from due_work_harness.integrations.django.commits import django_worker_killer
     from due_work_harness.integrations.django.selection import DjangoSelectionInspector
 
@@ -87,6 +88,7 @@ def django_host(
         database_marks=_database_marks,
         in_transaction=_in_transaction,
         worker_killer=django_worker_killer,
+        callback_breaker=django_callback_breaker,
         connection_scope=_connection_scope,
         selection_inspectors=(DjangoSelectionInspector(replica_aliases=replica_aliases),),
         ambient_context=ambient_context,

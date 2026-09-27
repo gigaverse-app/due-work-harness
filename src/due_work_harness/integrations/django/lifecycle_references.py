@@ -226,6 +226,37 @@ def fail_attempt_with_message_handoff(pk: int) -> None:
     transaction.on_commit(lambda: publish("reconcile", pk))
 
 
+AUDIT: list[int] = []
+
+
+def record_audit(pk: int) -> None:
+    """Unrelated after-commit bookkeeping, registered ahead of the handoff."""
+    AUDIT.append(pk)
+
+
+def fail_attempt_atomically_then_publishing(pk: int) -> None:
+    """Conforming: the failure and its successor commit together; publishing after the commit only saves a tick."""
+    classify_retryable_failure_atomically(pk)
+    successor = LifecycleAttempt.objects.get(retry_of_id=pk)
+    transaction.on_commit(lambda: publish("reconcile", successor.pk))
+
+
+@transaction.atomic
+def fail_attempt_publishing_after_an_audit(pk: int) -> None:
+    """The retry exists only as a message published by the second of two plain after-commit callbacks."""
+    LifecycleAttempt.objects.filter(pk=pk).update(status=Status.RETRYABLE_FAILED)
+    transaction.on_commit(lambda: record_audit(pk))
+    transaction.on_commit(lambda: publish("reconcile", pk))
+
+
+@transaction.atomic
+def fail_attempt_publishing_after_a_robust_audit(pk: int) -> None:
+    """The same, with robust callbacks: a failing audit no longer stops the publish, but a failing publish is lost."""
+    LifecycleAttempt.objects.filter(pk=pk).update(status=Status.RETRYABLE_FAILED)
+    transaction.on_commit(lambda: record_audit(pk), robust=True)
+    transaction.on_commit(lambda: publish("reconcile", pk), robust=True)
+
+
 def fail_attempt_swallowing_the_death(pk: int) -> None:
     """A split handoff behind a catch-all that logs and carries on."""
     try:
