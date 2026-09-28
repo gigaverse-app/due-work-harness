@@ -11,7 +11,7 @@ twice.
 
 The reference outcome is **normal operation**: the real transition runs with
 its notifications delivered, then the bounded recovery production performs.
-Five families of histories must reach that same outcome:
+Six families of histories must reach that same outcome:
 
 * **Notifications lost** — the same transition, every message it published
   dropped, then recovery. This finds work that exists only as a message.
@@ -40,6 +40,12 @@ Five families of histories must reach that same outcome:
   failed publish takes down with it: work handed off only to that message, and
   everything the code would have done after the publish — the rest of the
   callback, the callbacks after it, the caller's response.
+* **Each signal receiver failing** — when the host has a ``receiver_breaker``
+  for the signals an adopter names, for each receiver i those signals run, the
+  transition reruns and receiver i raises instead of running. This finds what a
+  framework does with a failing hook: a worker that records a finished task's
+  outcome and then lets a ``task_finished`` receiver's error rewrite it, or a
+  handoff made by a receiver that an earlier one's failure skips.
 
 The verdict is differential: the adopter supplies how to arrange the state, the
 real transition and an observation, never the expected value. Positive
@@ -72,14 +78,14 @@ What these histories do not claim:
 
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import pytest
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
-from due_work_harness.host import current_host
+from due_work_harness.host import CountedFaults, current_host
 from due_work_harness.models import MISSING, HarnessModel, MutableHarnessModel, with_positional
-from due_work_harness.worker_death import CallbackFailed, WorkerDied
+from due_work_harness.worker_death import WorkerDied
 
 
 class ExternalCall(HarnessModel):
@@ -208,17 +214,65 @@ class HistoryRun(HarnessModel):
     calls: int = 0
     callbacks: int = 0
     publications: int = 0
-    #: Whether the run was interrupted: a death, a failed callback, a refused publication, or its messages lost.
+    receivers: int = 0
+    #: Whether the run was interrupted: a death, a failed callback or receiver, a refused publication,
+    #: or its messages lost.
     interrupted: bool = False
 
 
-class _Worker:
-    """A transition's worker as the history sees it: commits from the host, calls from the seams."""
+class _FaultFamily(NamedTuple):
+    """One family of injected faults: which host breaker counts them, and how its histories are named."""
 
-    def __init__(self, database: Any, callbacks: Any, publications: Any, crash_after_call: int | None) -> None:
+    #: The Host field holding the breaker.
+    breaker: str
+    #: The HistoryRun field that counts the family's occurrences in a run.
+    counted: str
+    #: The label of the history in which occurrence ``i`` fails.
+    label: str
+    #: What the transition did ``n`` times, for the reproducibility message.
+    made: str
+    #: One occurrence, as the message names it.
+    occurrence: str
+    #: What a nondeterministic transition does, for the message.
+    varies: str
+
+
+#: The families of injected faults, in the order their histories run. Each breaker counts its
+#: occurrences during a transition and, when told to, makes one fail while the process lives on.
+_FAULT_FAMILIES = (
+    _FaultFamily(
+        breaker="callback_breaker",
+        counted="callbacks",
+        label="after-commit callback {i} failed",
+        made="ran {n} after-commit callback(s)",
+        occurrence="callback",
+        varies="registers callbacks",
+    ),
+    _FaultFamily(
+        breaker="publication_breaker",
+        counted="publications",
+        label="the broker refused publication {i}",
+        made="published {n} message(s)",
+        occurrence="publication",
+        varies="publishes",
+    ),
+    _FaultFamily(
+        breaker="receiver_breaker",
+        counted="receivers",
+        label="signal receiver {i} failed",
+        made="ran {n} signal receiver(s)",
+        occurrence="receiver",
+        varies="sends signals",
+    ),
+)
+
+
+class _Worker:
+    """A transition's worker as the history sees it: commits from the host, calls from the seams, counted faults."""
+
+    def __init__(self, database: Any, faults: dict[str, CountedFaults | None], crash_after_call: int | None) -> None:
         self._database = database
-        self._callbacks = callbacks
-        self._publications = publications
+        self._faults = faults
         self.calls = 0
         self._crash_after_call = crash_after_call
         self._died_after_call = False
@@ -227,21 +281,14 @@ class _Worker:
     def commits(self) -> int:
         return self._database.commits if self._database is not None else 0
 
-    @property
-    def callbacks(self) -> int:
-        return self._callbacks.callbacks if self._callbacks is not None else 0
+    def count(self, family: _FaultFamily) -> int:
+        faults = self._faults[family.counted]
+        return faults.count if faults is not None else 0
 
     @property
-    def callback_failed(self) -> bool:
-        return self._callbacks is not None and self._callbacks.failed
-
-    @property
-    def publications(self) -> int:
-        return self._publications.publications if self._publications is not None else 0
-
-    @property
-    def refusal(self) -> BaseException | None:
-        return self._publications.refusal if self._publications is not None else None
+    def injected_failures(self) -> tuple[BaseException, ...]:
+        """The ordinary exceptions this run injected, which may reach the caller as the application lets them."""
+        return tuple(faults.failure for faults in self._faults.values() if faults is not None and faults.failure)
 
     @property
     def dead(self) -> bool:
@@ -261,23 +308,27 @@ class _Worker:
             raise WorkerDied("the worker is dead; it calls nothing more")
 
 
+#: Which family's occurrence to fail in a run: (the family, the 1-based occurrence).
+type _Injection = tuple[_FaultFamily, int]
+
+
 @contextmanager
 def _worker(
     history: HandoffHistory[Any, Any],
     crash_after: int | None,
     crash_after_call: int | None,
-    fail_callback: int | None,
-    refuse_publication: int | None,
+    inject: _Injection | None,
 ) -> Iterator[_Worker]:
     host = current_host()
     with ExitStack() as stack:
         database = stack.enter_context(host.worker_killer(crash_after)) if host.worker_killer is not None else None
-        breaker = host.callback_breaker
-        callbacks = stack.enter_context(breaker(fail_callback)) if breaker is not None else None
-        refuser = host.publication_breaker
-        publications = stack.enter_context(refuser(refuse_publication)) if refuser is not None else None
+        faults: dict[str, CountedFaults | None] = {}
+        for family in _FAULT_FAMILIES:
+            breaker = getattr(host, family.breaker)
+            fail_at = inject[1] if inject is not None and inject[0] is family else None
+            faults[family.counted] = stack.enter_context(breaker(fail_at)) if breaker is not None else None
         patch = stack.enter_context(pytest.MonkeyPatch.context())
-        worker = _Worker(database, callbacks, publications, crash_after_call)
+        worker = _Worker(database, faults, crash_after_call)
 
         def seam(call: ExternalCall, original: Callable[..., Any]) -> Callable[..., Any]:
             def dying_after(*args: Any, **kwargs: Any) -> Any:
@@ -301,23 +352,20 @@ def _run(
     lose: bool = False,
     crash_after: int | None = None,
     crash_after_call: int | None = None,
-    fail_callback: int | None = None,
-    refuse_publication: int | None = None,
+    inject: _Injection | None = None,
 ) -> HistoryRun:
     handle = history.arrange()
     before = history.observe(handle)
     with delivery.session() as session:
-        with _worker(history, crash_after, crash_after_call, fail_callback, refuse_publication) as worker:
+        with _worker(history, crash_after, crash_after_call, inject) as worker:
             try:
                 history.transition(handle)
             except WorkerDied:
                 assert worker.dead, "WorkerDied escaped from something other than the simulated death"
-            except CallbackFailed:
-                # The failure reached the caller, as the framework re-raised it: a real request errors here.
-                assert worker.callback_failed, "CallbackFailed escaped from something other than the failed callback"
             except Exception as error:
-                # The refused publish reached the caller, as the application let it: a real request errors here.
-                if worker.refusal is None or not _caused_by(error, worker.refusal):
+                # An injected failure reached the caller, as the framework and the application let it:
+                # a real request errors here.
+                if not any(_caused_by(error, failure) for failure in worker.injected_failures):
                     raise
             else:
                 assert not worker.dead, (
@@ -325,13 +373,9 @@ def _run(
                     f"(a BaseException) and carried on. A dead process runs nothing further, so a handoff made "
                     f"after the catch would converge falsely; let it propagate"
                 )
-            commits, calls, callbacks, publications = (
-                worker.commits,
-                worker.calls,
-                worker.callbacks,
-                worker.publications,
-            )
-            interrupted = worker.dead or worker.callback_failed or worker.refusal is not None
+            commits, calls = worker.commits, worker.calls
+            counts = {family.counted: worker.count(family) for family in _FAULT_FAMILIES}
+            interrupted = worker.dead or bool(worker.injected_failures)
         if lose:
             session.lose()
             midway = history.observe(handle)
@@ -346,9 +390,8 @@ def _run(
         after=history.observe(handle),
         commits=commits,
         calls=calls,
-        callbacks=callbacks,
-        publications=publications,
         interrupted=interrupted or lose,
+        **counts,
     )
 
 
@@ -421,22 +464,16 @@ def crash_histories(delivery: Delivery, history: HandoffHistory[Any, Any]) -> li
             f"reached call {j}. The transition calls nondeterministically, so its histories are not reproducible"
         )
         runs.append(crashed)
-    for i in range(1, counted.callbacks + 1):
-        failed = _run(delivery, history, label=f"after-commit callback {i} failed", fail_callback=i)
-        assert failed.interrupted, (
-            f"{delivery.name}: handoff {history.name!r} ran {counted.callbacks} after-commit callback(s), but the "
-            f"rerun never reached callback {i}. The transition registers callbacks nondeterministically, so its "
-            f"histories are not reproducible"
-        )
-        runs.append(failed)
-    for j in range(1, counted.publications + 1):
-        refused = _run(delivery, history, label=f"the broker refused publication {j}", refuse_publication=j)
-        assert refused.interrupted, (
-            f"{delivery.name}: handoff {history.name!r} published {counted.publications} message(s), but the rerun "
-            f"never reached publication {j}. The transition publishes nondeterministically, so its histories are "
-            f"not reproducible"
-        )
-        runs.append(refused)
+    for family in _FAULT_FAMILIES:
+        made = getattr(counted, family.counted)
+        for i in range(1, made + 1):
+            failed = _run(delivery, history, label=family.label.format(i=i), inject=(family, i))
+            assert failed.interrupted, (
+                f"{delivery.name}: handoff {history.name!r} {family.made.format(n=made)}, but the rerun never "
+                f"reached {family.occurrence} {i}. The transition {family.varies} nondeterministically, so its "
+                f"histories are not reproducible"
+            )
+            runs.append(failed)
     return runs
 
 
@@ -475,3 +512,30 @@ def assert_histories_converge(name: str, runs: list[HistoryRun]) -> None:
 def assert_crash_at_every_commit_converges(delivery: Delivery, history: HandoffHistory[Any, Any]) -> None:
     """Lost messages, and a death right after any commit or named external call, reach normal operation's outcome."""
     assert_histories_converge(f"{delivery.name}: handoff {history.name!r}", crash_histories(delivery, history))
+
+
+def assert_pinned_outcomes(
+    delivery: Delivery, history: HandoffHistory[Any, Any], *, delivered: Any, outcomes: dict[str, Any]
+) -> list[HistoryRun]:
+    """
+    What every history of a handoff leaves, pinned: an adopter's findings table.
+
+    Normal operation must reach ``delivered``, and each interrupted history
+    must reach exactly its entry in ``outcomes``, keyed by label. A legacy gap
+    declared as one strict xfail says the handoff diverges; this says precisely
+    how, history by history, so a change upstream or in the harness shows which
+    entry moved. Returns the runs for any further assertion.
+    """
+    runs = crash_histories(delivery, history)
+    name = f"{delivery.name}: handoff {history.name!r}"
+    assert runs[0].after == delivered, f"{name}: normal operation reaches {runs[0].after!r}, not {delivered!r}"
+    actual = {run.label: run.after for run in runs[1:]}
+    moved = {
+        label: actual.get(label, "<not run>")
+        for label in actual.keys() | outcomes.keys()
+        if actual.get(label) != outcomes.get(label)
+    }
+    assert not moved, f"{name}: these histories no longer leave what the table pins: " + "; ".join(
+        f"{label}: pinned {outcomes.get(label, '<not pinned>')!r}, now {now!r}" for label, now in sorted(moved.items())
+    )
+    return runs

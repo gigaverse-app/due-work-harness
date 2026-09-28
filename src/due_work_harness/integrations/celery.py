@@ -134,20 +134,35 @@ class CeleryPublications:
 
     def __init__(self, refuse_at: int | None) -> None:
         self._refuse_at = refuse_at
-        self.publications = 0
-        self.refusal: Exception | None = None
+        self.count = 0
+        self.failure: Exception | None = None
+        #: Depth of non-eager apply_async calls in progress: their inner send_task is the same message.
+        self._inside_apply_async = 0
 
     def publish(self, task: str, send: Callable[[], Any]) -> Any:
         from kombu.exceptions import OperationalError
 
-        self.publications += 1
-        if self.publications == self._refuse_at:
+        self.count += 1
+        if self.count == self._refuse_at:
             # The error kombu raises when the broker cannot be reached, after Celery's publish retries.
-            self.refusal = OperationalError(
-                f"the broker refused publication {self.publications} ({task}): [Errno 111] Connection refused"
+            self.failure = OperationalError(
+                f"the broker refused publication {self.count} ({task}): [Errno 111] Connection refused"
             )
-            raise self.refusal
+            raise self.failure
         return send()
+
+    @contextmanager
+    def one_message(self) -> Iterator[None]:
+        """A non-eager apply_async in progress: the send_task it makes is its own message, not another."""
+        self._inside_apply_async += 1
+        try:
+            yield
+        finally:
+            self._inside_apply_async -= 1
+
+    @property
+    def inside_apply_async(self) -> bool:
+        return self._inside_apply_async > 0
 
 
 @contextmanager
@@ -158,7 +173,9 @@ def celery_publication_breaker(refuse_at: int | None) -> Iterator[CeleryPublicat
     Every ``Task.apply_async`` (and so ``delay``) and ``Celery.send_task`` is
     counted, then sent as it would be, eagerly or to the broker; the chosen one
     raises kombu's ``OperationalError`` instead, the error a publish meets when
-    the broker is down.
+    the broker is down. A non-eager ``apply_async`` publishes through
+    ``send_task``, and that is one message, counted once; an eager one runs the
+    task in place, and whatever the task publishes is counted as its own.
     """
     from celery import Celery
     from celery.app.task import Task
@@ -168,9 +185,17 @@ def celery_publication_breaker(refuse_at: int | None) -> Iterator[CeleryPublicat
     send_task = Celery.send_task
 
     def refusing_apply_async(task: Any, *args: Any, **kwargs: Any) -> Any:
-        return publications.publish(task.name, lambda: apply_async(task, *args, **kwargs))
+        def send() -> Any:
+            if task.app.conf.task_always_eager:
+                return apply_async(task, *args, **kwargs)
+            with publications.one_message():
+                return apply_async(task, *args, **kwargs)
+
+        return publications.publish(task.name, send)
 
     def refusing_send_task(app: Any, name: str, *args: Any, **kwargs: Any) -> Any:
+        if publications.inside_apply_async:
+            return send_task(app, name, *args, **kwargs)
         return publications.publish(name, lambda: send_task(app, name, *args, **kwargs))
 
     with (

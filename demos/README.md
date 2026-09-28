@@ -40,6 +40,7 @@ contracts, since the demo's fix cannot change them.
 | --- | --- | --- | --- | --- |
 | procrastinate | B ownership (its workers, heartbeats and reclaim recipe), D retention (`remove_old_jobs`), replay safety, bounded retry | **in procrastinate:** `finish_job` does not check the worker, so a worker presumed dead finishes a job another worker has since fetched; **in the demo:** the create-book handoff, a transaction held during slow work, no stalled-job reclaim scheduled, no attempt recorded before the slow call (C) | `CreateBookView.form_valid` | `DEMO_WITH_ITS_FIXES`: `ATOMIC_REQUESTS`, and procrastinate's `retry_stalled_jobs` recipe |
 | DBOS | D retention (`garbage_collect`), bounded retry (the step's budget), recovery through real process deaths | a death after the send, before DBOS records the step, notifies twice (C, replay) | nothing: its enqueue is SQL, which a static scan cannot see | — |
+| Wagtail on django-tasks-db | D retention (`prune_db_task_results`), claimed so the harness proves it | **in django-tasks-db:** a `task_finished` receiver that raises rewrites a task that ran as FAILED, a `task_started` one fails it before it runs, and a task whose worker died stays RUNNING forever (A, B, C); **in Wagtail:** deleting an image or document can orphan its file in storage, publishing can leave the CDN serving the old page, and nothing sweeps for either (A, F) | the two `post_delete_file_cleanup` handlers and `purge_urls_from_cache` | — |
 | Saleor | A recovery (automatic completion: 13 proofs, its selection observed from the tick it runs rather than restated), D retention (`delete_expired_checkouts`), claimed so the harness shows where each fails | automatic completion dispatches a paid checkout again while its completion is still in flight, and reports no backlog (A); `delete_expired_checkouts` deletes a checkout holding a captured Payments API payment (D); no sweep recovers lost after-commit work (A); the capture is never reconciled (C); nothing records that a confirmation is owed (F); the complete-checkout handoff | `_post_create_order_actions` (its two `on_commit` sites) | `CHECKOUT_WITH_AUTOMATIC_COMPLETION`: the Transactions API with automatic completion, which claims D and passes |
 
 ## Results
@@ -77,6 +78,17 @@ Two things to keep in mind when reading the findings: a customer who retries
 `checkoutComplete` within the 90 days does get the order, and deaths *after* a
 payment is captured are rare. Finding 3 needs no death at all.
 
+| [Wagtail](wagtail_tasks/) 8.0 on django-tasks-db 0.13, image and document deletion | Worker dies right after each commit of Wagtail's admin delete view, and its after-commit callback fails, then `db_worker` runs | **Finding.** The view commits the row, then enqueues `delete_file_from_storage_task` from `transaction.on_commit`: a death in between, or a failing enqueue, leaves the file in storage with nothing to delete it. Served straight from storage, a deleted original stays reachable at its URL | — |
+| Wagtail publishing, behind a CDN | Worker dies after each commit of a publish, and `page_published`'s receiver fails | **Finding.** Publishing commits the page, then enqueues the purge in a later write: a death between them, or the frontend cache's receiver raising, leaves the new content live and the old page cached | — |
+| django-tasks-db's `db_worker` running Wagtail's purge | Worker dies after each commit and after the CDN call; each `task_started` and `task_finished` receiver fails | **Finding.** A `task_finished` receiver that raises after the task ran rewrites its SUCCESSFUL record as FAILED, since `run_task` sends it inside the `try` that records failures; a raising `task_started` receiver fails the task before it runs. A task whose worker died stays RUNNING forever, a gap django-tasks-db already tracks | — |
+
+The Wagtail demo runs Wagtail's own test project from the wagtail wheel, with
+Postgres, django-tasks-db's database backend and a recording CDN. Its
+migrations seed the root page, site and collection, so its host restores them
+after each committing case (`django_host(serialized_rollback=True)`); what each
+of its 27 histories costs is pinned in
+[`test_wagtail_tasks.py`](wagtail_tasks/test_wagtail_tasks.py).
+
 ## Running them
 
 ```bash
@@ -91,6 +103,15 @@ due-work-harness check --root demos/dbos_transactional_outbox
 
 The DBOS demo creates and drops its own database (`dbos_outbox_demo`, override
 with `DBOS_DEMO_DATABASE`).
+
+The Wagtail demo is its own pytest rootdir, so that `--due-work-verify` reads its
+coverage table; Wagtail's source is fetched only for the coverage check:
+
+```bash
+python demos/fetch_upstream.py wagtail
+cd demos/wagtail_tasks && PGDATABASE=wagtail_tasks pytest --create-db --due-work-verify
+due-work-harness check --root demos/wagtail_tasks
+```
 
 The Saleor demo runs in Saleor's own environment, built from its `uv.lock` on
 Linux (Saleor's development dependencies do not build on Windows):

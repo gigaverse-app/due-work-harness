@@ -107,8 +107,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      # Saleor too: the README's demo GIF shows the coverage scan of its checkout.
-      - run: uv run --no-project python demos/fetch_upstream.py procrastinate dbos-demo-apps saleor
+      # Saleor too: the README's demo GIF shows the coverage scan of its checkout. Wagtail's source is
+      # what the Wagtail demo's coverage check reads; the demo itself runs the wheel from PyPI.
+      - run: uv run --no-project python demos/fetch_upstream.py procrastinate dbos-demo-apps saleor wagtail
       - run: uv sync --locked --no-default-groups --extra django --group demos
       # procrastinate's demos ship only in its source tree, pinned by fetch_upstream.py.
       - run: uv pip install -e demos/.upstream/procrastinate
@@ -118,6 +119,12 @@ jobs:
         run: uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings -rxX
       - name: DBOS transactional-outbox
         run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX
+      # Wagtail 8.0 on django-tasks-db, both from PyPI; the demo's own directory is pytest's rootdir.
+      - name: Wagtail on django-tasks-db
+        working-directory: demos/wagtail_tasks
+        env:
+          PGDATABASE: wagtail_tasks
+        run: uv run --no-sync --project ../.. pytest --create-db --due-work-verify
       - name: the README's demo GIF prints what the harness prints
         run: uv run --no-sync pytest demos/test_readme_gif.py -p no:django
       # Each demo is an adopter: its handoffs are checked the way an adopter's CI checks them.
@@ -130,6 +137,11 @@ jobs:
         uses: ./check
         with:
           working-directory: demos/dbos_transactional_outbox
+          package: ${{ github.workspace }}
+      - name: Wagtail on django-tasks-db, every handoff accounted for
+        uses: ./check
+        with:
+          working-directory: demos/wagtail_tasks
           package: ${{ github.workspace }}
 
   saleor:

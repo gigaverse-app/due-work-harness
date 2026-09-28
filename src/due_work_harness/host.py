@@ -54,17 +54,43 @@ class WorkerKiller(Protocol):
     def __call__(self, kill_after: int | None) -> AbstractContextManager[Any]: ...
 
 
+class CountedFaults(Protocol):
+    """
+    What a fault breaker's context yields while a transition runs.
+
+    ``count`` is how many of the family's occurrences have run so far: callbacks
+    run, messages published, receivers called. ``failure`` is the exception the
+    chosen occurrence raised instead of running, or ``None`` while none has. The
+    crash histories drive every family the same way from these two.
+    """
+
+    count: int
+    failure: BaseException | None
+
+
 class CallbackBreaker(Protocol):
     """
     Counts the after-commit callbacks a worker runs, and makes the chosen one fail.
 
     ``fail_at`` is the 1-based callback to fail, or ``None`` to only count. A
     callback counts when it runs, not when it is registered, so one discarded
-    with a rolled-back savepoint never counts. The context yields an object
-    whose ``callbacks`` attribute is the count so far and whose ``failed``
-    attribute says whether the failure happened. The chosen callback raises
+    with a rolled-back savepoint never counts. The context yields
+    :class:`CountedFaults`. The chosen callback raises
     :class:`~due_work_harness.worker_death.CallbackFailed` instead of running;
     everything after that is the framework's own behaviour.
+    """
+
+    def __call__(self, fail_at: int | None) -> AbstractContextManager[Any]: ...
+
+
+class ReceiverBreaker(Protocol):
+    """
+    Counts the signal (or hook) receivers a worker runs, and makes the chosen one fail.
+
+    ``fail_at`` is the 1-based receiver to fail, or ``None`` to only count. The
+    context yields :class:`CountedFaults`. The chosen receiver raises
+    :class:`~due_work_harness.worker_death.ReceiverFailed` instead of running;
+    everything after that is the framework's own dispatch.
     """
 
     def __call__(self, fail_at: int | None) -> AbstractContextManager[Any]: ...
@@ -75,9 +101,8 @@ class PublicationBreaker(Protocol):
     Counts the messages a worker publishes to its broker, and makes the chosen publish fail.
 
     ``refuse_at`` is the 1-based publication to refuse, or ``None`` to only
-    count. The context yields an object whose ``publications`` attribute is the
-    count so far and whose ``refusal`` attribute is the exception the refused
-    publish raised, or ``None``. The refused publish raises the broker client's
+    count. The context yields :class:`CountedFaults`. The refused publish raises
+    the broker client's
     own connection error, as a broker that is down or drops the connection
     would, while the process lives on; everything after that is the
     application's own behaviour.
@@ -150,6 +175,11 @@ class Host(HarnessModel):
     #: broker that is down would; crash histories refuse each publication in
     #: turn. Optional: without it, that family of histories does not run.
     publication_breaker: SkipValidation[PublicationBreaker | None] = None
+
+    #: Counts the receivers of the signals an adopter names and fails the chosen
+    #: one; crash histories fail each receiver in turn. Optional: without it,
+    #: that family of histories does not run.
+    receiver_breaker: SkipValidation[ReceiverBreaker | None] = None
 
     #: The connection lifecycle of a thread a proof starts, for example to race
     #: two claims on two real connections.

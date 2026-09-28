@@ -27,15 +27,15 @@ class DjangoCallbacks:
 
     def __init__(self, fail_at: int | None) -> None:
         self._fail_at = fail_at
-        self.callbacks = 0
-        self.failed = False
+        self.count = 0
+        self.failure: CallbackFailed | None = None
 
     def run(self, callback: Callable[[], Any]) -> Any:
-        self.callbacks += 1
-        if self.callbacks == self._fail_at:
-            self.failed = True
+        self.count += 1
+        if self.count == self._fail_at:
             name = getattr(callback, "__qualname__", repr(callback))
-            raise CallbackFailed(f"after-commit callback {self.callbacks} ({name}) failed")
+            self.failure = CallbackFailed(f"after-commit callback {self.count} ({name}) failed")
+            raise self.failure
         return callback()
 
 

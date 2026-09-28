@@ -61,6 +61,7 @@ dataclasses:
 | `worker_killer(kill_after)` | `WorkerKiller \| None` | crash histories (death after each commit) |
 | `callback_breaker(fail_at)` | `CallbackBreaker \| None` | crash histories (each after-commit callback failing) |
 | `publication_breaker(refuse_at)` | `PublicationBreaker \| None` | crash histories (the broker refusing each publication; `celery_publication_breaker` for Celery) |
+| `receiver_breaker(fail_at)` | `ReceiverBreaker \| None` | crash histories (each receiver of the signals an adopter names failing; `django_receiver_breaker(*signals)` for Django) |
 | `connection_scope()` | `Callable[[], ContextManager]` | two-connection races (profile B) |
 | `selection_inspectors` | `tuple[SelectionInspector, ...]` | profile A database proofs: `index_served(selection)`, `replica_read(selection)`, `scan_counts(selection)`, `statements_during(run)` |
 | `ambient_context()` | `Callable[[], object] \| None` | profile A `AMBIENT_CONTEXT_PROOFS`: a tick restores ambient context (opt-in; fails when unset) |

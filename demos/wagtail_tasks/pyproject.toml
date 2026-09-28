@@ -1,0 +1,21 @@
+# The harness against Wagtail 8.0 on django-tasks-db, both unmodified from PyPI.
+#
+# Not an installable project: it runs in the repository's environment, whose demos
+# group pins Wagtail and django-tasks-db. This file configures pytest, so that this
+# directory is the rootdir and `pytest --due-work-verify` reads the coverage table below.
+
+[tool.pytest.ini_options]
+addopts = ["--ds=demos.wagtail_tasks.settings", "-p", "no:cacheprovider", "-rxX"]
+pythonpath = ["../.."]
+
+# The demo as an adopter configures the coverage check: `due-work-harness check --root demos/wagtail_tasks`.
+[tool.due-work-harness]
+production-packages = ["wagtail"]
+source-roots = ["../.upstream/wagtail"]
+test-paths = ["."]
+
+[tool.due-work-harness.baseline]
+# Feature detection, the slug-change hook and the reference index hand work off too: no contract insures them yet.
+"wagtail.images.signal_handlers.post_save_image_feature_detection" = 1
+"wagtail.models.pages.AbstractPage.save" = 1
+"wagtail.signal_handlers.update_reference_index_on_save" = 1

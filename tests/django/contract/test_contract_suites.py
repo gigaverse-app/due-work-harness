@@ -121,3 +121,30 @@ def test_a_declines_proof_and_a_known_gaps_probe_run_with_the_contracts_database
     assert set(probing) == {"B-declined", "C-known_gap", "REPLAY_SAFE_EXECUTION-declined", "BOUNDED_RETRY-known_gap"}
     for case_id, param in probing.items():
         assert _django_db(param).kwargs.get("transaction") is transactional, case_id
+
+
+def test_a_host_for_seeded_migrations_restores_them_after_committing_cases() -> None:
+    from due_work_harness.integrations.django import django_host
+
+    host = django_host(production_packages=set(), serialized_rollback=True)
+    (committing,) = host.database_marks(True)
+    (rolled_back,) = host.database_marks(False)
+    assert committing.kwargs == {"transaction": True, "serialized_rollback": True}
+    # A case that rolls back never flushes, so it has nothing to restore.
+    assert rolled_back.kwargs == {"transaction": False}
+    (default,) = django_host(production_packages=set()).database_marks(True)
+    assert default.kwargs == {"transaction": True}
+
+
+def test_a_hand_written_test_gets_the_hosts_database_marks() -> None:
+    from due_work_harness import configure, due_work_database
+    from due_work_harness.integrations.django import django_host
+
+    configure(django_host(production_packages=set(), serialized_rollback=True))
+
+    @due_work_database()
+    def findings() -> None:
+        pass
+
+    (mark,) = findings.pytestmark  # type: ignore[attr-defined]
+    assert (mark.name, mark.kwargs) == ("django_db", {"transaction": True, "serialized_rollback": True})

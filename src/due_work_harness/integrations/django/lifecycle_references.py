@@ -24,6 +24,7 @@ from typing import Any
 
 from django.db import connection, models, transaction
 from django.db.models import QuerySet
+from django.dispatch import Signal
 from django.test.utils import isolate_apps
 from django.utils import timezone
 
@@ -295,6 +296,36 @@ def fail_attempt_publishing_after_a_robust_audit(pk: int) -> None:
     LifecycleAttempt.objects.filter(pk=pk).update(status=Status.RETRYABLE_FAILED)
     transaction.on_commit(lambda: record_audit(pk), robust=True)
     transaction.on_commit(lambda: publish("reconcile", pk), robust=True)
+
+
+#: A signal the reference sends once a failure is classified, as a framework sends its hooks.
+attempt_failed = Signal()
+
+
+def audit_the_failure(sender: object, pk: int, **kwargs: object) -> None:
+    """The signal's first receiver: unrelated bookkeeping."""
+    record_audit(pk)
+
+
+def reconcile_the_failure(sender: object, pk: int, **kwargs: object) -> None:
+    """The signal's second receiver: it hands off the retry."""
+    publish("reconcile", pk)
+
+
+attempt_failed.connect(audit_the_failure, dispatch_uid="due-work-harness reference audit")
+attempt_failed.connect(reconcile_the_failure, dispatch_uid="due-work-harness reference reconcile")
+
+
+def fail_attempt_announcing_it(pk: int) -> None:
+    """The retry is handed off by the second receiver of a signal sent after the commit."""
+    classify_retryable_failure(pk)
+    attempt_failed.send(sender=LifecycleAttempt, pk=pk)
+
+
+def fail_attempt_atomically_then_announcing_it(pk: int) -> None:
+    """Conforming: the failure and its successor commit together; the signal after it only saves a tick."""
+    classify_retryable_failure_atomically(pk)
+    attempt_failed.send(sender=LifecycleAttempt, pk=pk)
 
 
 def fail_attempt_swallowing_the_death(pk: int) -> None:

@@ -60,7 +60,9 @@ provides-extras = ["celery", "dbos", "django", "procrastinate"]
 [package.metadata.requires-dev]
 demos = [
     { name = "dbos", specifier = "==3.1.0" },
+    { name = "django-tasks-db", specifier = "==0.13.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
+    { name = "wagtail", specifier = "==8.0" },
 ]
 dev = [
     { name = "celery-types", specifier = ">=0.22" },

@@ -79,6 +79,37 @@ from due_work_harness.integrations.celery import celery_publication_breaker
 configure(django_host(production_packages={"myapp"}, publication_breaker=celery_publication_breaker))
 ```
 
+Name the signals whose receivers matter to your work, and crash histories fail
+each receiver in turn, as one with a bug or an unreachable backend would. If
+your migrations seed rows your code needs (a CMS's root page), keep them across
+committing cases:
+
+```python
+from django.tasks.signals import task_finished, task_started
+
+from due_work_harness.integrations.django.receivers import django_receiver_breaker
+
+configure(
+    django_host(
+        production_packages={"myapp"},
+        receiver_breaker=django_receiver_breaker(task_started, task_finished),
+        serialized_rollback=True,
+    )
+)
+```
+
+On django-tasks-db, recovery is its worker:
+`integrations.django_tasks.db_worker_once()` runs `manage.py db_worker --batch`.
+`integrations.django_tasks.worker_contract(name=..., enqueue=..., effect=...)`
+is django-tasks-db's own contract with that worker, bound to one of your tasks:
+you enqueue it and say how to see its effect, and the framework's dispositions,
+retention proof and known gaps come with it.
+
+To pin what every crash history of a handoff leaves — a findings table that
+names exactly which history moved when something changes — use
+`assert_pinned_outcomes(delivery, history, delivered=..., outcomes=...)`, and give
+the test the host's database marks with `@due_work_database()`.
+
 ## 5. Give each site a disposition
 
 **Cover it with a contract**: the proofs that it survives lost messages and

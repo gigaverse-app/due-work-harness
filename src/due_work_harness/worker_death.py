@@ -11,3 +11,14 @@ class CallbackFailed(Exception):  # noqa: N818 - named for what happened, like W
     handling. Django, for one, skips every later non-robust callback of the same
     commit and re-raises; a ``robust=True`` callback's failure is logged instead.
     """
+
+
+class ReceiverFailed(Exception):  # noqa: N818 - named for what happened, like WorkerDied
+    """
+    A signal receiver failed, as a real one does: a bug, or the backend it reports to unreachable.
+
+    An ordinary ``Exception``: the process lives on. What happens next is the
+    framework's own dispatch and the sender's error handling. Django's
+    ``Signal.send`` propagates it to the sender and skips the receivers after
+    it; ``send_robust`` logs it and carries on.
+    """

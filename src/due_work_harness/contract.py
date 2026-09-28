@@ -1156,6 +1156,24 @@ def _database_marks(transactional: bool) -> list[Any]:
     return list(current_host().database_marks(transactional))
 
 
+def due_work_database(transactional: bool = True) -> Callable[[Any], Any]:
+    """
+    Give a hand-written test the database marks the host gives generated cases.
+
+    A findings table or an extra proof written by hand needs the same database
+    access as the generated suite: with the Django host, real commits and, where
+    the host is configured for it, the serialized rollback that restores seeded
+    rows. Taking them from the host keeps the two from drifting apart.
+    """
+
+    def apply(test: Any) -> Any:
+        for mark in _database_marks(transactional):
+            test = mark(test)
+        return test
+
+    return apply
+
+
 def _proof_marks(contract_transactional: bool, proof_name: str) -> list[Any]:
     return _database_marks(contract_transactional or proof_name in _TRANSACTIONAL_PROOFS)
 

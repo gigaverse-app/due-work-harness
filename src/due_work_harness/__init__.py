@@ -49,6 +49,7 @@ from due_work_harness.contract import (
     contract_cases,
     contract_report,
     due_work_contract_suite,
+    due_work_database,
     safety_contract_cases,
     safety_contract_suite,
     scheduled_selection_cases,
@@ -62,6 +63,7 @@ from due_work_harness.crash_histories import (
     HistoryRun,
     assert_crash_at_every_commit_converges,
     assert_histories_converge,
+    assert_pinned_outcomes,
 )
 from due_work_harness.exemptions import exempt_due_work_suite
 from due_work_harness.gap_probes import (
@@ -153,6 +155,7 @@ __all__ = [
     "contract_cases",
     "contract_report",
     "due_work_contract_suite",
+    "due_work_database",
     "safety_contract_cases",
     "safety_contract_suite",
     "scheduled_selection_cases",
@@ -181,6 +184,7 @@ __all__ = [
     "HistoryRun",
     "assert_crash_at_every_commit_converges",
     "assert_histories_converge",
+    "assert_pinned_outcomes",
     # Profile A: automatic recovery.
     "DUE_WORK_PROOFS",
     "SELECTION_PROOFS",
