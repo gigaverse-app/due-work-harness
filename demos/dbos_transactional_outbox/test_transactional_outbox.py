@@ -134,12 +134,11 @@ def place_order(*death_points: str) -> ProcessHistory[int, tuple[str | None, int
     )
 
 
-def deaths_before_the_notification() -> None:
-    # ARRANGE: the demo places an order in a child process that dies after the order commits, or before sending.
-    # REAL PRODUCTION: the demo's own main() restarts and DBOS recovers the workflow (restart).
-    # EXTERNAL SEAM: the notification lands in the same inbox the dead process wrote to.
-    # OBSERVE: the order's notification status, and how many notifications the customer received.
-    assert_process_deaths_converge(place_order("after_order", "before_send"))
+# ARRANGE: the demo places an order in a child process that dies after the order commits, or before sending.
+# REAL PRODUCTION: the demo's own main() restarts and DBOS recovers the workflow (restart).
+# EXTERNAL SEAM: the notification lands in the same inbox the dead process wrote to.
+# OBSERVE: the order's notification status, and how many notifications the customer received.
+DEATHS_BEFORE_THE_NOTIFICATION = place_order("after_order", "before_send")
 
 
 def a_death_after_the_notification() -> None:
@@ -286,10 +285,9 @@ PLACE_ORDER_CONTRACT = DueWorkContract(
         retry=the_notifications_retry,
     ),
     retention=the_demos_retention,
+    # Placing an order survives a death before the notification: a process handoff of its own.
+    process_handoffs=(DEATHS_BEFORE_THE_NOTIFICATION,),
     extras=(
-        ExtraProof(
-            name="placing an order survives a death before the notification", run=deaths_before_the_notification
-        ),
         ExtraProof(
             name="an order whose process died before its workflow ran is still notified",
             run=A_LOST_WORKFLOW_IS_ABSORBED_BY_A_RESTART,

@@ -116,6 +116,39 @@ class ExternalCall(HarnessModel):
         return f"{owner}.{self.attribute}"
 
 
+class Findings(HarnessModel):
+    """
+    What a history set leaves, declared with the history: normal operation's outcome, and each divergence.
+
+    ``delivered`` is what normal operation reaches. ``outcomes`` maps the label
+    of each history that reaches something else to what it reaches; every
+    history not named must reach ``delivered``. Declared on a history, the
+    table is checked in the same run as the convergence verdict, so the
+    histories run once, and a finding that moves fails the case rather than
+    passing as the known gap.
+    """
+
+    delivered: Any
+    outcomes: dict[str, Any] = {}
+
+    def __init__(self, delivered: Any = MISSING, outcomes: dict[str, Any] | None = None, /, **data: Any) -> None:
+        super().__init__(
+            **with_positional(data, delivered=delivered, outcomes=outcomes if outcomes is not None else MISSING)
+        )
+
+
+class HistoriesDiverged(AssertionError):
+    """
+    The differential verdict's failure: some history reached another outcome than normal operation.
+
+    Raised only for a history that declares its :class:`Findings` (others raise
+    a plain ``AssertionError``, as before). A declared gap on such a history is
+    a strict xfail for this exception only, so a binding that breaks, or a
+    positive control that fails, is reported as the failure it is instead of as
+    the known gap.
+    """
+
+
 class HandoffHistory[HandleT, ObservationT](HarnessModel):
     """
     One production transition that commits work and hands work off.
@@ -135,6 +168,8 @@ class HandoffHistory[HandleT, ObservationT](HarnessModel):
     transition: Callable[[HandleT], object]
     observe: Callable[[HandleT], ObservationT]
     external_calls: tuple[ExternalCall, ...] = ()
+    #: Optional: what the histories leave, checked in the same run as the verdict.
+    findings: Findings | None = None
 
 
 class DeliverySession(Protocol):
@@ -493,7 +528,9 @@ def crash_histories(delivery: Delivery, history: HandoffHistory[Any, Any]) -> li
     return runs
 
 
-def assert_histories_converge(name: str, runs: list[HistoryRun]) -> None:
+def assert_histories_converge(
+    name: str, runs: list[HistoryRun], *, divergence: type[AssertionError] = AssertionError
+) -> None:
     """
     The differential verdict: every interrupted history reaches normal operation's outcome.
 
@@ -501,6 +538,9 @@ def assert_histories_converge(name: str, runs: list[HistoryRun]) -> None:
     in-process — a separate executor, a real process — arrange the deaths
     themselves and hand the runs here (see :mod:`due_work_harness.process_histories`);
     the verdict and its positive controls stay with the harness.
+
+    A divergence raises ``divergence``: :class:`HistoriesDiverged` for a history
+    that declares its findings, so its gap's xfail can accept that alone.
     """
     delivered, interrupted = runs[0], runs[1:]
     assert delivered.after != delivered.before, (
@@ -511,13 +551,14 @@ def assert_histories_converge(name: str, runs: list[HistoryRun]) -> None:
     uninterrupted = [run.label for run in interrupted if not run.interrupted]
     assert not uninterrupted, f"{name}: these histories were never interrupted: {uninterrupted}"
     divergent = {run.label: run.after for run in interrupted if run.after != delivered.after}
-    assert not divergent, (
-        f"{name}: normal operation reaches {delivered.after!r}, but these histories reach something else: "
-        f"{divergent!r}. Work was lost or repeated. A loss is work handed off only by a message, a commit hook "
-        f"or code after a commit that a dead worker never runs: commit the handoff with the state that owes it, "
-        f"or make that state selectable by recovery. A repeat is recovery redoing an external call whose effect "
-        f"already exists: make the call idempotent, or record the attempt before it"
-    )
+    if divergent:
+        raise divergence(
+            f"{name}: normal operation reaches {delivered.after!r}, but these histories reach something else: "
+            f"{divergent!r}. Work was lost or repeated. A loss is work handed off only by a message, a commit hook "
+            f"or code after a commit that a dead worker never runs: commit the handoff with the state that owes "
+            f"it, or make that state selectable by recovery. A repeat is recovery redoing an external call whose "
+            f"effect already exists: make the call idempotent, or record the attempt before it"
+        )
     assert any(run.after != run.midway for run in interrupted), (
         f"{name}: positive control failed: every history converged, but recovery changed the observation in "
         f"none of them, so agreement proves nothing. Either recovery is inert — normal operation then never "
@@ -526,8 +567,28 @@ def assert_histories_converge(name: str, runs: list[HistoryRun]) -> None:
 
 
 def assert_crash_at_every_commit_converges(delivery: Delivery, history: HandoffHistory[Any, Any]) -> None:
-    """Lost messages, and a death right after any commit or named external call, reach normal operation's outcome."""
-    assert_histories_converge(f"{delivery.name}: handoff {history.name!r}", crash_histories(delivery, history))
+    """
+    Lost messages, and a death right after any commit or named external call, reach normal operation's outcome.
+
+    When the history declares its :class:`Findings`, the same runs are first
+    held to that table: a finding that moved fails here, as an ordinary
+    ``AssertionError``, before the verdict raises :class:`HistoriesDiverged`.
+    """
+    name = f"{delivery.name}: handoff {history.name!r}"
+    runs = crash_histories(delivery, history)
+    assert_findings_hold(name, runs, history.findings)
+    assert_histories_converge(name, runs, divergence=divergence_for(history.findings))
+
+
+def divergence_for(findings: Findings | None) -> type[AssertionError]:
+    """What a history's divergence raises: HistoriesDiverged once it declares findings, else AssertionError."""
+    return AssertionError if findings is None else HistoriesDiverged
+
+
+def assert_findings_hold(name: str, runs: list[HistoryRun], findings: Findings | None) -> None:
+    """The runs match a history's declared findings table; nothing to check when it declares none."""
+    if findings is not None:
+        assert_runs_match_table(name, runs, delivered=findings.delivered, outcomes=findings.outcomes)
 
 
 def assert_pinned_outcomes(

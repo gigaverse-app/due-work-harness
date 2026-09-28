@@ -39,7 +39,7 @@ from due_work_harness.contract import (
     SafetyContract,
     SafetyProfile,
 )
-from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, HandoffHistory
+from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, Findings, HandoffHistory
 from due_work_harness.gap_probes import MissingReclaim
 from due_work_harness.integrations import task_queues
 from due_work_harness.integrations.task_queues import TaskOutcome
@@ -113,6 +113,7 @@ def worker_history(
     effect: Callable[[str], Any],
     external_calls: Sequence[ExternalCall] = (),
     name: str = "the worker runs a task",
+    findings: Findings | None = None,
 ) -> HandoffHistory[str, TaskOutcome]:
     """
     The worker itself as the transition: db_worker runs one task the adopter enqueued.
@@ -128,6 +129,7 @@ def worker_history(
         run_worker=db_worker_once(),
         external_calls=external_calls,
         name=name,
+        findings=findings,
     )
 
 
@@ -213,6 +215,7 @@ def worker_contract(
     external_calls: Sequence[ExternalCall] = (),
     delivery: Delivery | None = None,
     min_age_days: int = 14,
+    findings: Findings | None = None,
 ) -> DueWorkContract:
     """
     django-tasks-db's contract with its worker, bound to one of the adopter's tasks.
@@ -224,7 +227,7 @@ def worker_contract(
     and each worker signal receiver failing — are a legacy handoff gap. The
     contract is transactional: the worker commits for real.
     """
-    history = worker_history(enqueue=enqueue, effect=effect, external_calls=external_calls)
+    history = worker_history(enqueue=enqueue, effect=effect, external_calls=external_calls, findings=findings)
     return DueWorkContract(
         name=name,
         adoption=Adoption.LEGACY,

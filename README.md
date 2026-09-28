@@ -130,10 +130,26 @@ or repeated. ...
 ```
 
 That's the duplicate email, caught in a test instead of in a support ticket.
+
+In a contract, a history declares its findings, and the generated case holds
+the runs to that table and to the verdict at once. The histories run once, a
+declared gap is a strict xfail for the divergence alone, and a finding that
+moves fails as itself:
+
+```python
+HandoffHistory(
+    name="place order",
+    arrange=new_cart,
+    transition=place_order,
+    observe=...,
+    findings=Findings(("SENT", 1), {"worker died after external call 1": ("SENT", 2)}),
+)
+```
 When a test can't reach the worker at all (a workflow engine's own executor),
 `process_histories` runs the real program in a child process, kills it at named
 points with `os._exit`, restarts it the way production would, and applies the
-same verdict. That is how the DBOS demo above works.
+same verdict. That is how the DBOS demo above works; a contract declares such
+histories as `process_handoffs`, beside `handoffs`.
 
 ## Six ways due work goes missing: lifecycle profiles
 

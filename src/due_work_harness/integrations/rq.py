@@ -27,7 +27,7 @@ on the worker's Redis client, passing ``receiver_breaker=rq_callback_breaker``.
 Helpers import RQ lazily, so importing this module never requires it.
 """
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -42,7 +42,7 @@ from due_work_harness.contract import (
     SafetyContract,
     SafetyProfile,
 )
-from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, HandoffHistory
+from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, Findings, HandoffHistory
 from due_work_harness.faults import CountedHooks
 from due_work_harness.host import current_host
 from due_work_harness.integrations.task_queues import (
@@ -329,6 +329,10 @@ def bounded_retry(
     )
 
 
+#: The worker contract's crash histories, by name: for ``handoff_gaps`` and ``findings``.
+ONE_QUEUE = "the worker runs a task"
+TWO_QUEUES = "a worker on two queues runs a task"
+
 #: What RQ's worker does not promise, for any adopter's contract.
 NO_SWEEP = (
     "RQ keeps no owed state to sweep: a dead worker's job is found by StartedJobRegistry.cleanup from its expired "
@@ -359,6 +363,7 @@ def worker_contract(
     delivery: Delivery | None = None,
     gaps: dict[Profile | SafetyProfile, dict[str, str]] | None = None,
     handoff_gaps: dict[str, str] | None = None,
+    findings: Mapping[str, Findings] | None = None,
     fixtures: tuple[str, ...] = (),
 ) -> DueWorkContract:
     """
@@ -371,14 +376,23 @@ def worker_contract(
     job with a worker on ``queue``, and, when ``other_queue`` is given, with a
     worker listening on both, which RQ dequeues differently. ``gaps`` (by
     profile or safety profile) and ``handoff_gaps`` declare what the adopter
-    found, each a strict xfail. ``fixtures`` are requested by every generated
+    found, each a strict xfail; ``findings`` pins what each history leaves, by
+    history name (:data:`ONE_QUEUE`, :data:`TWO_QUEUES`), checked in the same
+    run as its verdict. ``fixtures`` are requested by every generated
     case, for example one that empties the Redis database.
     """
+    findings = findings or {}
     run_worker = worker_pass(connection, [queue])
     status_of = job_status(connection)
     histories: list[HandoffHistory[str, TaskOutcome]] = [
         worker_history(
-            enqueue=enqueue, effect=effect, status_of=status_of, run_worker=run_worker, external_calls=external_calls
+            enqueue=enqueue,
+            effect=effect,
+            status_of=status_of,
+            run_worker=run_worker,
+            external_calls=external_calls,
+            name=ONE_QUEUE,
+            findings=findings.get(ONE_QUEUE),
         )
     ]
     if other_queue is not None:
@@ -389,7 +403,8 @@ def worker_contract(
                 status_of=status_of,
                 run_worker=worker_pass(connection, [other_queue, queue]),
                 external_calls=external_calls,
-                name="a worker on two queues runs a task",
+                name=TWO_QUEUES,
+                findings=findings.get(TWO_QUEUES),
             )
         )
     recovery_queues = [queue] if other_queue is None else [other_queue, queue]
@@ -431,6 +446,8 @@ def worker_contract(
 
 __all__ = [
     "AT_LEAST_ONCE",
+    "ONE_QUEUE",
+    "TWO_QUEUES",
     "NO_SWEEP",
     "SERVER_CLOCK_RETENTION",
     "bounded_retry",

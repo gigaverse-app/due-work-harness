@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from due_work_harness.contract import Decline, NotApplicable
-from due_work_harness.crash_histories import ExternalCall, HandoffHistory
+from due_work_harness.crash_histories import ExternalCall, Findings, HandoffHistory
 from due_work_harness.models import HarnessModel
 
 #: The shutdown signals task-queue workers install their own handlers for.
@@ -74,6 +74,7 @@ def worker_history(
     run_worker: Callable[..., object],
     external_calls: Sequence[ExternalCall] = (),
     name: str = "the worker runs a task",
+    findings: Findings | None = None,
 ) -> HandoffHistory[str, TaskOutcome]:
     """
     The worker itself as the transition: ``run_worker`` runs the task ``enqueue`` enqueued.
@@ -92,6 +93,7 @@ def worker_history(
         transition=run_worker,
         observe=observe,
         external_calls=tuple(external_calls),
+        findings=findings,
     )
 
 
