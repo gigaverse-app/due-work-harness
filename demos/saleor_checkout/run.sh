@@ -17,9 +17,12 @@ export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$saleor/.venv}"
 
 # Saleor's own requires-python picks its interpreter, whatever a caller set in UV_PYTHON.
 (cd "$saleor" && env -u UV_PYTHON uv sync --frozen --quiet)
-# The harness takes its version from git tags; a checkout without them still installs.
-SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DUE_WORK_HARNESS="${SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DUE_WORK_HARNESS:-0.0.0}" \
-  uv pip install --quiet --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps -e "$repo"
+# The harness takes its version from git tags; a checkout without them still installs, as 0.0.0.
+# hatch-vcs reads only the generic override, not setuptools-scm's per-package one.
+if ! git -C "$repo" describe --tags >/dev/null 2>&1; then
+  export SETUPTOOLS_SCM_PRETEND_VERSION="${SETUPTOOLS_SCM_PRETEND_VERSION:-0.0.0}"
+fi
+uv pip install --quiet --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps -e "$repo"
 
 cd "$here"
 if [[ "${1:-}" == "--prepare-db" ]]; then
