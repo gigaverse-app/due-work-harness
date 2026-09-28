@@ -66,6 +66,7 @@ dev = [
     { name = "celery-types", specifier = ">=0.22" },
     { name = "django-stubs", specifier = ">=5.1" },
     { name = "pyrefly", specifier = ">=1.0,<2" },
+    { name = "pytest-xdist", specifier = ">=3.6" },
     { name = "ruff", specifier = ">=0.8" },
 ]
 lint = [
@@ -74,6 +75,7 @@ lint = [
     { name = "pyrefly", specifier = ">=1.0,<2" },
     { name = "ruff", specifier = ">=0.8" },
 ]
+xdist = [{ name = "pytest-xdist", specifier = ">=3.6" }]
 
 [[package]]
 name = "iniconfig"
