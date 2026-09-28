@@ -63,6 +63,11 @@ local_scheme = "no-local-version"
 [tool.hatch.build.targets.wheel]
 packages = ["src/due_work_harness"]
 
+[tool.hatch.build.targets.sdist]
+# The README's recorded demo is a picture of the demos, not part of them; demos/test_readme_gif.py
+# needs only the tape and its environment, which ship.
+exclude = ["docs/demo.gif"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"

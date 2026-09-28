@@ -106,7 +106,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv run --no-project python demos/fetch_upstream.py procrastinate dbos-demo-apps
+      # Saleor too: the README's demo GIF shows the coverage scan of its checkout.
+      - run: uv run --no-project python demos/fetch_upstream.py procrastinate dbos-demo-apps saleor
       - run: uv sync --locked --no-default-groups --extra django --group demos
       # procrastinate's demos ship only in its source tree, pinned by fetch_upstream.py.
       - run: uv pip install -e demos/.upstream/procrastinate
@@ -116,6 +117,8 @@ jobs:
         run: uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings -rxX
       - name: DBOS transactional-outbox
         run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX
+      - name: the README's demo GIF prints what the harness prints
+        run: uv run --no-sync pytest demos/test_readme_gif.py -p no:django
       # Each demo is an adopter: its handoffs are checked the way an adopter's CI checks them.
       - name: procrastinate demo_django, every handoff accounted for
         uses: ./check
