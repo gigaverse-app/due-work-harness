@@ -19,10 +19,10 @@ Set FontFamily "DejaVu Sans Mono"
 Set FontSize 15
 Set LineHeight 1.15
 Set Width 1480
-Set Height 900
+Set Height 640
 Set Padding 24
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 28ms
+Set TypingSpeed 22ms
 Set CursorBlink false
 
 Hide
@@ -41,7 +41,7 @@ Enter
 Type "pytest demos/procrastinate_demo_django -k 'Shipped and handoff' --xfail-tb -q"
 Enter
 Wait+Screen /xfailed/
-Sleep 5s
+Sleep 4s
 
 Hide
 Type "clear"
@@ -52,7 +52,7 @@ Enter
 Type "pytest demos/procrastinate_demo_django -k 'Fixes and handoff' -v"
 Enter
 Wait+Screen /passed/
-Sleep 3s
+Sleep 2500ms
 
 Hide
 Type "clear"
@@ -63,7 +63,7 @@ Enter
 Type "pytest demos/dbos_transactional_outbox -p no:django -k C-known_gap --xfail-tb -q"
 Enter
 Wait+Screen@60s /xfailed/
-Sleep 5s
+Sleep 4s
 
 Hide
 Type "clear"
@@ -74,4 +74,4 @@ Enter
 Type "due-work-harness check --root demos/saleor_checkout"
 Enter
 Wait+Screen /handoff site/
-Sleep 4s
+Sleep 3500ms
