@@ -70,6 +70,22 @@ class CallbackBreaker(Protocol):
     def __call__(self, fail_at: int | None) -> AbstractContextManager[Any]: ...
 
 
+class PublicationBreaker(Protocol):
+    """
+    Counts the messages a worker publishes to its broker, and makes the chosen publish fail.
+
+    ``refuse_at`` is the 1-based publication to refuse, or ``None`` to only
+    count. The context yields an object whose ``publications`` attribute is the
+    count so far and whose ``refusal`` attribute is the exception the refused
+    publish raised, or ``None``. The refused publish raises the broker client's
+    own connection error, as a broker that is down or drops the connection
+    would, while the process lives on; everything after that is the
+    application's own behaviour.
+    """
+
+    def __call__(self, refuse_at: int | None) -> AbstractContextManager[Any]: ...
+
+
 class SelectionInspector(Protocol):
     """
     Facts about a selection that only the database can answer.
@@ -129,6 +145,11 @@ class Host(HarnessModel):
     #: crash histories use it to fail each callback in turn. Optional: without
     #: it, that family of histories does not run.
     callback_breaker: SkipValidation[CallbackBreaker | None] = None
+
+    #: Counts the messages a worker publishes and refuses the chosen one, as a
+    #: broker that is down would; crash histories refuse each publication in
+    #: turn. Optional: without it, that family of histories does not run.
+    publication_breaker: SkipValidation[PublicationBreaker | None] = None
 
     #: The connection lifecycle of a thread a proof starts, for example to race
     #: two claims on two real connections.

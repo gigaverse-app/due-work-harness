@@ -8,7 +8,9 @@ the common Celery case, reading the beat schedule from a Celery app's
 ``CELERY_BEAT_SCHEDULE`` setting (Django is imported only then).
 :func:`celery_publications` is a ``publication_recorder`` for hosts whose
 workers publish through Celery, and :func:`held_publications` records each held
-message with its arguments; both import Celery when entered.
+message with its arguments; :func:`celery_publication_breaker` is a
+``publication_breaker`` that refuses one publish as a broker that is down
+would. Each imports Celery when entered.
 """
 
 import importlib
@@ -125,6 +127,57 @@ def held_publications() -> Iterator[list[Publication]]:
     held: list[Publication] = []
     with _holding(held.append):
         yield held
+
+
+class CeleryPublications:
+    """The Celery messages a crash history refuses: how many were published, and the refusal raised."""
+
+    def __init__(self, refuse_at: int | None) -> None:
+        self._refuse_at = refuse_at
+        self.publications = 0
+        self.refusal: Exception | None = None
+
+    def publish(self, task: str, send: Callable[[], Any]) -> Any:
+        from kombu.exceptions import OperationalError
+
+        self.publications += 1
+        if self.publications == self._refuse_at:
+            # The error kombu raises when the broker cannot be reached, after Celery's publish retries.
+            self.refusal = OperationalError(
+                f"the broker refused publication {self.publications} ({task}): [Errno 111] Connection refused"
+            )
+            raise self.refusal
+        return send()
+
+
+@contextmanager
+def celery_publication_breaker(refuse_at: int | None) -> Iterator[CeleryPublications]:
+    """
+    Count Celery publications and refuse publication ``refuse_at``: the host's ``publication_breaker``.
+
+    Every ``Task.apply_async`` (and so ``delay``) and ``Celery.send_task`` is
+    counted, then sent as it would be, eagerly or to the broker; the chosen one
+    raises kombu's ``OperationalError`` instead, the error a publish meets when
+    the broker is down.
+    """
+    from celery import Celery
+    from celery.app.task import Task
+
+    publications = CeleryPublications(refuse_at)
+    apply_async = Task.apply_async
+    send_task = Celery.send_task
+
+    def refusing_apply_async(task: Any, *args: Any, **kwargs: Any) -> Any:
+        return publications.publish(task.name, lambda: apply_async(task, *args, **kwargs))
+
+    def refusing_send_task(app: Any, name: str, *args: Any, **kwargs: Any) -> Any:
+        return publications.publish(name, lambda: send_task(app, name, *args, **kwargs))
+
+    with (
+        mock.patch.object(Task, "apply_async", refusing_apply_async),
+        mock.patch.object(Celery, "send_task", refusing_send_task),
+    ):
+        yield publications
 
 
 @contextmanager

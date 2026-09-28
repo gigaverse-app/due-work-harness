@@ -11,7 +11,7 @@ twice.
 
 The reference outcome is **normal operation**: the real transition runs with
 its notifications delivered, then the bounded recovery production performs.
-Four families of histories must reach that same outcome:
+Five families of histories must reach that same outcome:
 
 * **Notifications lost** — the same transition, every message it published
   dropped, then recovery. This finds work that exists only as a message.
@@ -33,6 +33,13 @@ Four families of histories must reach that same outcome:
   error would, while the process lives on. This finds work handed off only to a
   callback, and work lost because an *earlier* callback failed: Django skips
   every later callback of the same commit.
+* **The broker refusing each publication** — when the host has a
+  ``publication_breaker``, for each message j the transition publishes, it
+  reruns and publish j raises the broker client's own connection error, as a
+  broker that is down would, while the process lives on. This finds what a
+  failed publish takes down with it: work handed off only to that message, and
+  everything the code would have done after the publish — the rest of the
+  callback, the callbacks after it, the caller's response.
 
 The verdict is differential: the adopter supplies how to arrange the state, the
 real transition and an observation, never the expected value. Positive
@@ -200,16 +207,18 @@ class HistoryRun(HarnessModel):
     commits: int = 0
     calls: int = 0
     callbacks: int = 0
-    #: Whether the run was interrupted: a death, a failed callback, or its messages lost.
+    publications: int = 0
+    #: Whether the run was interrupted: a death, a failed callback, a refused publication, or its messages lost.
     interrupted: bool = False
 
 
 class _Worker:
     """A transition's worker as the history sees it: commits from the host, calls from the seams."""
 
-    def __init__(self, database: Any, callbacks: Any, crash_after_call: int | None) -> None:
+    def __init__(self, database: Any, callbacks: Any, publications: Any, crash_after_call: int | None) -> None:
         self._database = database
         self._callbacks = callbacks
+        self._publications = publications
         self.calls = 0
         self._crash_after_call = crash_after_call
         self._died_after_call = False
@@ -225,6 +234,14 @@ class _Worker:
     @property
     def callback_failed(self) -> bool:
         return self._callbacks is not None and self._callbacks.failed
+
+    @property
+    def publications(self) -> int:
+        return self._publications.publications if self._publications is not None else 0
+
+    @property
+    def refusal(self) -> BaseException | None:
+        return self._publications.refusal if self._publications is not None else None
 
     @property
     def dead(self) -> bool:
@@ -250,14 +267,17 @@ def _worker(
     crash_after: int | None,
     crash_after_call: int | None,
     fail_callback: int | None,
+    refuse_publication: int | None,
 ) -> Iterator[_Worker]:
     host = current_host()
     with ExitStack() as stack:
         database = stack.enter_context(host.worker_killer(crash_after)) if host.worker_killer is not None else None
         breaker = host.callback_breaker
         callbacks = stack.enter_context(breaker(fail_callback)) if breaker is not None else None
+        refuser = host.publication_breaker
+        publications = stack.enter_context(refuser(refuse_publication)) if refuser is not None else None
         patch = stack.enter_context(pytest.MonkeyPatch.context())
-        worker = _Worker(database, callbacks, crash_after_call)
+        worker = _Worker(database, callbacks, publications, crash_after_call)
 
         def seam(call: ExternalCall, original: Callable[..., Any]) -> Callable[..., Any]:
             def dying_after(*args: Any, **kwargs: Any) -> Any:
@@ -282,11 +302,12 @@ def _run(
     crash_after: int | None = None,
     crash_after_call: int | None = None,
     fail_callback: int | None = None,
+    refuse_publication: int | None = None,
 ) -> HistoryRun:
     handle = history.arrange()
     before = history.observe(handle)
     with delivery.session() as session:
-        with _worker(history, crash_after, crash_after_call, fail_callback) as worker:
+        with _worker(history, crash_after, crash_after_call, fail_callback, refuse_publication) as worker:
             try:
                 history.transition(handle)
             except WorkerDied:
@@ -294,14 +315,23 @@ def _run(
             except CallbackFailed:
                 # The failure reached the caller, as the framework re-raised it: a real request errors here.
                 assert worker.callback_failed, "CallbackFailed escaped from something other than the failed callback"
+            except Exception as error:
+                # The refused publish reached the caller, as the application let it: a real request errors here.
+                if worker.refusal is None or not _caused_by(error, worker.refusal):
+                    raise
             else:
                 assert not worker.dead, (
                     f"handoff {history.name!r} kept running after its worker died: something caught WorkerDied "
                     f"(a BaseException) and carried on. A dead process runs nothing further, so a handoff made "
                     f"after the catch would converge falsely; let it propagate"
                 )
-            commits, calls, callbacks = worker.commits, worker.calls, worker.callbacks
-            interrupted = worker.dead or worker.callback_failed
+            commits, calls, callbacks, publications = (
+                worker.commits,
+                worker.calls,
+                worker.callbacks,
+                worker.publications,
+            )
+            interrupted = worker.dead or worker.callback_failed or worker.refusal is not None
         if lose:
             session.lose()
             midway = history.observe(handle)
@@ -317,8 +347,19 @@ def _run(
         commits=commits,
         calls=calls,
         callbacks=callbacks,
+        publications=publications,
         interrupted=interrupted or lose,
     )
+
+
+def _caused_by(error: BaseException, cause: BaseException) -> bool:
+    """Whether ``error`` is ``cause``, or was raised while handling it or from it."""
+    seen: BaseException | None = error
+    while seen is not None:
+        if seen is cause:
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
 
 
 def assert_handoff_bindings_are_production_bound(delivery: Delivery, history: HandoffHistory[Any, Any]) -> None:
@@ -388,6 +429,14 @@ def crash_histories(delivery: Delivery, history: HandoffHistory[Any, Any]) -> li
             f"histories are not reproducible"
         )
         runs.append(failed)
+    for j in range(1, counted.publications + 1):
+        refused = _run(delivery, history, label=f"the broker refused publication {j}", refuse_publication=j)
+        assert refused.interrupted, (
+            f"{delivery.name}: handoff {history.name!r} published {counted.publications} message(s), but the rerun "
+            f"never reached publication {j}. The transition publishes nondeterministically, so its histories are "
+            f"not reproducible"
+        )
+        runs.append(refused)
     return runs
 
 

@@ -10,7 +10,8 @@ successor together, including inside a savepoint. Deaths after a named
 external call find a notification that recovery repeats, and converge once the
 recipient honours an idempotency key. Failing each after-commit callback finds
 a handoff that a failing *earlier* callback skips, and shows what ``robust=True``
-does and does not fix. Agreement alone is not a pass: a recovery that recovers
+does and does not fix. Refusing each Celery publication, as a broker that is down
+would, finds a handoff behind an earlier publish. Agreement alone is not a pass: a recovery that recovers
 nothing fails.
 """
 
@@ -196,6 +197,18 @@ def test_a_failing_earlier_callback_skips_the_handoff_after_it() -> None:
         _converges(ref.RETRY_DELIVERY, _history(ref.fail_attempt_publishing_after_an_audit))
     assert "'after-commit callback 1 failed': ('retryable_failed', ())" in str(divergence.value)
     assert "'after-commit callback 2 failed': ('retryable_failed', ())" in str(divergence.value)
+
+
+def test_a_handoff_committed_with_its_state_survives_a_refused_publication() -> None:
+    runs = crash_histories(ref.RETRY_DELIVERY, _history(ref.fail_attempt_atomically_then_notifying))
+    assert [run.label for run in runs if run.label.startswith("the broker")] == ["the broker refused publication 1"]
+    _converges(ref.RETRY_DELIVERY, _history(ref.fail_attempt_atomically_then_notifying))
+
+
+def test_a_refused_publication_skips_the_handoff_after_it() -> None:
+    with pytest.raises(AssertionError) as divergence:
+        _converges(ref.RETRY_DELIVERY, _history(ref.fail_attempt_publishing_after_a_notification))
+    assert "'the broker refused publication 1': ('retryable_failed', ())" in str(divergence.value)
 
 
 def test_robust_callbacks_protect_later_callbacks_but_not_their_own_handoff() -> None:
