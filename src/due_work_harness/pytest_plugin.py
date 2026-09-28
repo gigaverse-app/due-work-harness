@@ -6,6 +6,11 @@ and the test run. The scan counts a function as covered or exempt because a
 declaration exists; this option fails the session unless every one of those
 declarations also ran at least one case here — so a suite that is skipped by an
 ``importorskip``, deselected, or never collected cannot keep a function counted.
+
+``pytest --due-work-summary`` prints, after the run, what every generated suite
+produced: each class's cases with their outcome, and each known gap's reason.
+A contract class is empty in the source, so this is where a reader sees what
+it generated and which declared gaps it reports as strict xfails.
 """
 
 from importlib import import_module
@@ -19,6 +24,8 @@ from due_work_harness.host import Host, configure
 
 VERIFY = "--due-work-verify"
 VERIFY_PLUGIN = "due-work-verify"
+SUMMARY = "--due-work-summary"
+SUMMARY_PLUGIN = "due-work-summary"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -34,6 +41,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="fail unless every contract and exemption suite the coverage scan counts ran at least one case",
     )
+    parser.getgroup("due-work-harness").addoption(
+        SUMMARY,
+        action="store_true",
+        default=False,
+        help="after the run, list every generated case by suite with its outcome, and each known gap's reason",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -44,6 +57,8 @@ def pytest_configure(config: pytest.Config) -> None:
     # sees only its share, and would rescan the whole project at its own session's end for nothing.
     if config.getoption(VERIFY) and not hasattr(config, "workerinput"):
         config.pluginmanager.register(_SuitesRan(config), VERIFY_PLUGIN)
+    if config.getoption(SUMMARY) and not hasattr(config, "workerinput"):
+        config.pluginmanager.register(_Summary(), SUMMARY_PLUGIN)
     path = config.getini("due_work_harness_host")
     if not path:
         return
@@ -96,3 +111,48 @@ class _SuitesRan:
         terminalreporter.section("due-work-harness: declared suites that did not run", red=True)
         for problem in self.problems:
             terminalreporter.line(f"  - {problem}")
+
+
+class _Summary:
+    """Collects the outcome of every generated case, then prints them by suite."""
+
+    def __init__(self) -> None:
+        #: suite (``file::Class``) -> [(outcome, case, gap reason)], in run order.
+        self.suites: dict[str, list[tuple[str, str, str]]] = {}
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if "due_work" not in report.keywords:
+            return
+        if report.when == "call" or (report.when == "setup" and not report.passed):
+            suite, _, case = report.nodeid.rpartition("::")
+            reason = getattr(report, "wasxfail", "")
+            if reason and report.skipped:
+                outcome = "XFAIL"
+            elif reason:
+                outcome = "XPASS"
+            else:
+                outcome = report.outcome.upper()
+            name = case.split("[", 1)[1][:-1] if "[" in case else case
+            self.suites.setdefault(suite, []).append((outcome, name, reason))
+
+    def pytest_terminal_summary(self, terminalreporter: pytest.TerminalReporter) -> None:
+        if not self.suites:
+            return
+        terminalreporter.section("due-work-harness: what each suite generated")
+        for suite, cases in self.suites.items():
+            counts: dict[str, int] = {}
+            for outcome, _name, _reason in cases:
+                counts[outcome] = counts.get(outcome, 0) + 1
+            tally = ", ".join(f"{counts[outcome]} {word}" for outcome, word in _WORDS.items() if outcome in counts)
+            terminalreporter.line(f"{suite}: {tally}")
+            for outcome, name, reason in cases:
+                gap = f"  ({_shorten(reason)})" if reason else ""
+                terminalreporter.line(f"  {outcome:<7} {name}{gap}")
+
+
+#: Outcomes in pytest's own order and words.
+_WORDS = {"PASSED": "passed", "FAILED": "failed", "SKIPPED": "skipped", "XFAIL": "xfailed", "XPASS": "xpassed"}
+
+
+def _shorten(reason: str, limit: int = 110) -> str:
+    return reason if len(reason) <= limit else reason[: limit - 1].rstrip() + "…"

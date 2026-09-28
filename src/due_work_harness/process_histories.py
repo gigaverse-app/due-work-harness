@@ -32,6 +32,13 @@ A child that exits with status 0 is taken to have run normally; any other
 status is a death. Normal operation (``None``) must exit 0, and each death
 point must not.
 
+The child and the parent speak one protocol, so an adopter writes no
+environment plumbing: the parent passes :func:`fault_environment` to the child,
+and the child calls :func:`die_here` at each death point, or asks
+:func:`fault_fires` at a failure point, then fails its own way. A marker file
+makes each fault fire once across every process the child starts (a worker's
+pool, a restarted executor), and :func:`fault_happened` tells the parent it did.
+
 Some faults the program survives: a hook that raises, a broker that refuses a
 publish. Name those in ``failure_points``; the child fails there and lives on,
 and ``run`` reports a non-zero status when the failure happened, so a point the
@@ -39,12 +46,54 @@ program never reached is caught as a run that was never interrupted. Their
 histories are labelled with the point's own name, deaths with ``died at``.
 """
 
+import os
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from due_work_harness.crash_histories import HistoryRun, assert_histories_converge, assert_runs_match_table
 from due_work_harness.models import HarnessModel
+
+#: The child's environment: the point to fail at, and the marker recording that it did.
+FAULT_VARIABLE = "DUE_WORK_FAULT"
+FAULT_MARKER_VARIABLE = "DUE_WORK_FAULT_MARKER"
+
+
+def fault_environment(point: str | None, marker: Path | None = None) -> dict[str, str]:
+    """PARENT: the environment telling a child to fail at ``point`` (``None``: run normally)."""
+    return {FAULT_VARIABLE: point or "", FAULT_MARKER_VARIABLE: str(marker) if marker is not None else ""}
+
+
+def fault_fires(point: str) -> bool:
+    """
+    CHILD: whether to fail at ``point`` now.
+
+    True when the parent asked for ``point`` and, with a marker, this is the
+    first time any process of the child got here: the marker is created
+    atomically, so a worker's pool children cannot all fail.
+    """
+    if os.environ.get(FAULT_VARIABLE) != point:
+        return False
+    marker = os.environ.get(FAULT_MARKER_VARIABLE)
+    if not marker:
+        return True
+    try:
+        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        return False
+    return True
+
+
+def die_here(point: str) -> None:
+    """CHILD: FAULT INJECTION. Exit at once, as a killed process would, when the parent asked to die at ``point``."""
+    if fault_fires(point):
+        os._exit(1)
+
+
+def fault_happened(marker: Path) -> bool:
+    """PARENT: whether the child reached the fault it was given (it needs the marker to tell)."""
+    return marker.exists()
 
 
 class ProcessHistory[HandleT, ObservationT](HarnessModel):

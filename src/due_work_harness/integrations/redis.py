@@ -36,10 +36,10 @@ and that has no database for the harness to watch.
 
 from collections.abc import Callable, Collection, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from datetime import datetime
 from typing import Any
 
 from due_work_harness.host import Host, PublicationBreaker, ReceiverBreaker
+from due_work_harness.integrations.clocks import time_machine_clock
 from due_work_harness.worker_death import WorkerDied
 
 #: Commands whose writes the server cannot report in advance.
@@ -187,12 +187,6 @@ def redis_reply_breaker(client: Any) -> Callable[[int | None], AbstractContextMa
     return breaker
 
 
-def _frozen_clock(moment: datetime) -> AbstractContextManager[Any]:
-    import time_machine
-
-    return time_machine.travel(moment, tick=False)
-
-
 def redis_host(
     client: Any,
     production_packages: Collection[str],
@@ -214,7 +208,7 @@ def redis_host(
         reply_breaker=redis_reply_breaker(client),
         publication_breaker=publication_breaker,
         receiver_breaker=receiver_breaker,
-        frozen_clock=_frozen_clock,
+        frozen_clock=time_machine_clock,
     )
 
 

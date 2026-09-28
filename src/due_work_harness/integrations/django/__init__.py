@@ -20,7 +20,7 @@ What the host supplies:
 * ``connection_scope`` — ``close_old_connections`` around a racing thread;
 * ``selection_inspectors`` — :class:`.selection.DjangoSelectionInspector` for
   QuerySet selections (PostgreSQL plans, replica reads, statement capture);
-* ``frozen_clock`` — ``time_machine.travel(moment, tick=False)``;
+* ``frozen_clock`` — :func:`~due_work_harness.integrations.clocks.time_machine_clock`;
 * ``sweep_proofs`` — the lifecycle-state proofs (2b/2c), which read a QuerySet's
   WHERE clause and the model's ``choices``;
 * ``publication_recorder`` — pass one for your queue (for example
@@ -31,10 +31,10 @@ What the host supplies:
 import functools
 from collections.abc import Callable, Collection, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from datetime import datetime
 from typing import Any
 
 from due_work_harness.host import Host, PublicationBreaker, ReceiverBreaker
+from due_work_harness.integrations.clocks import time_machine_clock
 
 
 def _database_marks(transactional: bool, *, serialized_rollback: bool = False) -> list[Any]:
@@ -60,12 +60,6 @@ def _connection_scope() -> Iterator[None]:
         yield
     finally:
         close_old_connections()
-
-
-def _frozen_clock(moment: datetime) -> AbstractContextManager[Any]:
-    import time_machine
-
-    return time_machine.travel(moment, tick=False)
 
 
 def django_host(
@@ -109,7 +103,7 @@ def django_host(
         publication_recorder=publication_recorder,
         publication_breaker=publication_breaker,
         receiver_breaker=receiver_breaker,
-        frozen_clock=_frozen_clock,
+        frozen_clock=time_machine_clock,
         sweep_proofs=sweep_proofs,
     )
 

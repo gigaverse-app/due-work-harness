@@ -27,7 +27,6 @@ on the worker's Redis client, passing ``receiver_breaker=rq_callback_breaker``.
 Helpers import RQ lazily, so importing this module never requires it.
 """
 
-import signal
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -39,7 +38,6 @@ from due_work_harness.contract import (
     Claim,
     Decline,
     DueWorkContract,
-    NotApplicable,
     Profile,
     SafetyContract,
     SafetyProfile,
@@ -47,12 +45,16 @@ from due_work_harness.contract import (
 from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, HandoffHistory
 from due_work_harness.faults import CountedHooks
 from due_work_harness.host import current_host
-from due_work_harness.integrations.task_queues import TaskOutcome, worker_history
+from due_work_harness.integrations.task_queues import (
+    TaskOutcome,
+    keeping_signal_handlers,
+    replay_safety_is_the_functions,
+    settled_by_one_worker,
+    the_obligation_is_the,
+    worker_history,
+)
 from due_work_harness.profiles.bounded_ownership import FencedOwnership
 from due_work_harness.safety.bounded_retry import BoundedRetry
-
-#: The signals RQ's worker installs its own handlers for.
-_WORKER_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM") if hasattr(signal, name))
 
 
 def worker_pass(
@@ -86,12 +88,10 @@ def worker_pass(
         )
         if not starting:
             worker.last_cleaned_at = now()
-        handlers = {signum: signal.getsignal(signum) for signum in _WORKER_SIGNALS}
         try:
-            worker.work(burst=True, max_jobs=max_jobs, logging_level="WARNING")
+            with keeping_signal_handlers():
+                worker.work(burst=True, max_jobs=max_jobs, logging_level="WARNING")
         finally:
-            for signum, handler in handlers.items():
-                signal.signal(signum, handler)
             thread = worker.pubsub_thread
             if thread is not None and thread.is_alive():
                 thread.stop()
@@ -403,16 +403,15 @@ def worker_contract(
             Profile.B: Claim(gaps=gaps.get(Profile.B, {})),
             Profile.C: Decline(AT_LEAST_ONCE),
             Profile.D: Decline(SERVER_CLOCK_RETENTION),
-            Profile.E: NotApplicable("one execution settles each job"),
-            Profile.F: NotApplicable("the obligation is the job itself, not a fact derived from product state"),
+            Profile.E: settled_by_one_worker("job"),
+            Profile.F: the_obligation_is_the("job"),
         },
         safety=SafetyContract(
             name=name,
             adoption=Adoption.LEGACY,
             profiles={
-                SafetyProfile.REPLAY_SAFE_EXECUTION: Decline(
-                    "a job can run more than once (a retry, or a reclaim after a worker's death), so rerunning must "
-                    "be safe, but that is a property of each job's function, not of RQ"
+                SafetyProfile.REPLAY_SAFE_EXECUTION: replay_safety_is_the_functions(
+                    "job", "RQ", runs_again="a retry, or a reclaim after a worker's death"
                 ),
                 SafetyProfile.BOUNDED_RETRY: Claim(gaps=gaps.get(SafetyProfile.BOUNDED_RETRY, {})),
             },
