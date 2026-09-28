@@ -42,7 +42,8 @@ from due_work_harness.contract import (
 )
 from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, HandoffHistory
 from due_work_harness.gap_probes import MissingReclaim
-from due_work_harness.models import HarnessModel
+from due_work_harness.integrations import task_queues
+from due_work_harness.integrations.task_queues import TaskOutcome
 from due_work_harness.profiles.durable_retention import Retention
 
 #: The signals db_worker installs its own handlers for.
@@ -108,11 +109,10 @@ def tasks_run_by(tick: Callable[[], object]) -> list[str]:
     return started
 
 
-class TaskOutcome(HarnessModel):
-    """What django-tasks-db recorded for a task, and what its effect was."""
+def _status_of(task_id: str) -> str:
+    from django_tasks_db.models import DBTaskResult
 
-    status: str
-    effect: Any
+    return DBTaskResult.objects.get(id=task_id).status
 
 
 def worker_history(
@@ -127,22 +127,15 @@ def worker_history(
 
     ``enqueue`` enqueues one of the adopter's tasks and returns its id;
     ``effect`` observes what the task did (for example, how many times a CDN was
-    asked to purge its URL). The observation is the task's recorded status with
-    that effect, so a history in which the effect happened but the record says
-    otherwise diverges.
+    asked to purge its URL). See :func:`due_work_harness.integrations.task_queues.worker_history`.
     """
-
-    def observe(task_id: str) -> TaskOutcome:
-        from django_tasks_db.models import DBTaskResult
-
-        return TaskOutcome(status=DBTaskResult.objects.get(id=task_id).status, effect=effect(task_id))
-
-    return HandoffHistory(
+    return task_queues.worker_history(
+        enqueue=enqueue,
+        effect=effect,
+        status_of=_status_of,
+        run_worker=db_worker_once(),
+        external_calls=external_calls,
         name=name,
-        arrange=enqueue,
-        transition=db_worker_once(),
-        observe=observe,
-        external_calls=tuple(external_calls),
     )
 
 

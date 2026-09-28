@@ -19,28 +19,11 @@ from unittest import mock
 
 from django.dispatch import Signal
 
+from due_work_harness.faults import CountedHooks
 from due_work_harness.host import ReceiverBreaker
-from due_work_harness.worker_death import ReceiverFailed
 
-
-class DjangoReceivers:
-    """The signal receivers a crash history fails: how many ran, and the failure raised."""
-
-    def __init__(self, fail_at: int | None) -> None:
-        self._fail_at = fail_at
-        self.count = 0
-        self.failure: ReceiverFailed | None = None
-
-    def counted(self, receiver: Callable[..., Any]) -> Callable[..., Any]:
-        def run(*args: Any, **kwargs: Any) -> Any:
-            self.count += 1
-            if self.count == self._fail_at:
-                name = getattr(receiver, "__qualname__", repr(receiver))
-                self.failure = ReceiverFailed(f"signal receiver {self.count} ({name}) failed")
-                raise self.failure
-            return receiver(*args, **kwargs)
-
-        return run
+#: Kept for adopters that imported it by this name.
+DjangoReceivers = CountedHooks
 
 
 def django_receiver_breaker(*signals: Signal) -> ReceiverBreaker:
@@ -48,8 +31,8 @@ def django_receiver_breaker(*signals: Signal) -> ReceiverBreaker:
     assert signals, "name the signals whose receivers crash histories should fail"
 
     @contextmanager
-    def breaker(fail_at: int | None) -> Iterator[DjangoReceivers]:
-        receivers = DjangoReceivers(fail_at)
+    def breaker(fail_at: int | None) -> Iterator[CountedHooks]:
+        receivers = CountedHooks(fail_at)
         with ExitStack() as stack:
             for signal in signals:
                 live = signal._live_receivers
