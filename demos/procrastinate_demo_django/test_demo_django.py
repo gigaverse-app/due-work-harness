@@ -267,8 +267,9 @@ WHY_NOT_DERIVED = (
     "without its job is never indexed, which is procrastinate's model rather than a defect"
 )
 STALE_WORKER_FINISHES = (
-    "procrastinate's finish_job updates a job by id without checking its worker: a worker presumed dead, whose "
-    "job was reclaimed and fetched by another worker, can still mark it finished while the new owner runs it"
+    "procrastinate's finish_job and retry_job update a job by id without checking its worker: a worker presumed "
+    "dead, whose job was reclaimed and fetched by another worker, can still mark it finished, or send it back to "
+    "todo to run a second time, while the new owner runs it"
 )
 
 

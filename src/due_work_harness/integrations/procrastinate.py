@@ -135,10 +135,10 @@ def ownership(
     returns its id. A claim registers a worker and fetches a job exactly as
     procrastinate's worker does (``JobManager.register_worker`` then
     ``fetch_job``); the token is that worker's id, the only owner identity
-    procrastinate records. The fenced write is ``finish_job``; renewing the
-    lease is the worker's heartbeat; reclaiming a stalled job is procrastinate's
-    documented recipe (``get_stalled_jobs`` then ``retry_job``), applied to that
-    one job. The app's connector must run synchronously in the calling thread,
+    procrastinate records. The fenced writes are the worker's two settlements,
+    ``finish_job`` and ``retry_job``; renewing the lease is the worker's
+    heartbeat; reclaiming a stalled job is procrastinate's documented recipe
+    (``get_stalled_jobs`` then ``retry_job``), applied to that one job. The app's connector must run synchronously in the calling thread,
     as the Django connector does.
 
     A retried job is stamped with the application's clock and fetched by the
@@ -148,7 +148,7 @@ def ownership(
     """
     from uuid import NAMESPACE_URL, UUID, uuid5
 
-    from procrastinate import jobs
+    from procrastinate import jobs, utils
 
     manager = app.job_manager
     workers: dict[UUID, int] = {}
@@ -187,6 +187,16 @@ def ownership(
         del token
         try:
             _run(manager.finish_job_by_id_async(job_id=job_id, status=jobs.Status.SUCCEEDED, delete_job=False))
+        except Exception:
+            return False
+        return True
+
+    def retry(job_id: int, token: UUID) -> bool:
+        # The worker's other settlement, what it writes when an attempt fails with retries
+        # left: retry_job takes no owner either.
+        del token
+        try:
+            _run(manager.retry_job_by_id_async(job_id=job_id, retry_at=utils.utcnow()))
         except Exception:
             return False
         return True
@@ -231,6 +241,7 @@ def ownership(
         make_claimable=defer,
         claim=claim,
         fenced_write=finish,
+        other_fenced_writes={"retry": retry},
         renew_lease=heartbeat,
         expire_lease=expire,
         reclaim_stalled=reclaim,

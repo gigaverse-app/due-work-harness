@@ -228,6 +228,15 @@ class InMemoryOwner:
         row.lease_expires_at = None
         return True
 
+    def fenced_retry(self, row_id: int, token: UUID) -> bool:
+        """A second owner write: the attempt failed, so the row goes back to be claimed again."""
+        row = self.rows[row_id]
+        if token != row.token:
+            return False
+        row.state = "READY"
+        row.lease_expires_at = None
+        return True
+
     def renew_lease(self, row_id: int, token: UUID) -> bool:
         row = self.rows[row_id]
         if token != row.token:
