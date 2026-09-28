@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.1](https://github.com/gigaverse-app/due-work-harness/compare/v0.1.0...v0.1.1) (2026-09-28)
+
+
+### Bug fixes
+
+* **verify:** only the xdist controller verifies declared suites ([c628f16](https://github.com/gigaverse-app/due-work-harness/commit/c628f16492251733bf9f2bd75f1cf1fb4b983b20))
+
+
+### Documentation
+
+* a recorded demo GIF of the harness finding real bugs, and a README rewrite ([#8](https://github.com/gigaverse-app/due-work-harness/issues/8)) ([3e2f6a0](https://github.com/gigaverse-app/due-work-harness/commit/3e2f6a0a285143a87c1859865d0c4f9a83a58851))
+
 ## 0.1.0 (2026-09-28)
 
 
