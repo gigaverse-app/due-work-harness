@@ -13,6 +13,10 @@
 lost messages, dead workers and uncertain external calls, and that the test
 saying so isn't lying.
 
+**What it is, in 45 seconds** (with sound):
+
+https://github.com/user-attachments/assets/498ac071-080c-45d2-abdb-13aee405568b
+
 ## Your happy-path test is an optimist
 
 Most applications record something now and finish it later: send the
@@ -58,6 +62,11 @@ harness finds when code like this is copied into production, and the one change
 that makes the same proof pass. Every finding is a strict xfail with its
 explanation, so an upstream fix turns it red. The full write-up:
 [`demos/README.md`](https://github.com/gigaverse-app/due-work-harness/blob/main/demos/README.md).
+
+**The findings, in 30 seconds**: Saleor's checkout run, its fix passing, then DBOS,
+procrastinate and the coverage scan, all real output:
+
+https://github.com/user-attachments/assets/ed065709-3372-40dd-8dc9-7f64dc60ef90
 
 ## Install
 
