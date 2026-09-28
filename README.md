@@ -252,6 +252,14 @@ configure(django_host(production_packages={"myapp"}))
 | `[redis]` | `redis_host()`: a commit counter for a queue kept in Redis (each pipeline or write command a commit, judged by the server's own command flags), and a reply breaker that lets a write land and loses its answer |
 | `[rq]` | RQ's worker as the transition and as recovery (later workers' maintenance, with the clock moved on), its ownership bound to profile B, a breaker for job callbacks, and `worker_contract()`: RQ's whole contract for any adopter's jobs |
 
+## Finding weaknesses in a project of your own or someone else's
+
+The [upstream playbook](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/upstream-playbook.md)
+is the cycle behind the findings above, written to be repeated: choose a target, map its handoffs, adopt
+the harness in a fork, confirm each finding on its own, declare the findings, improve the harness with what
+the probe needed, and disclose with the templates in
+[`docs/upstream-templates`](https://github.com/gigaverse-app/due-work-harness/tree/main/docs/upstream-templates).
+
 ## Status
 
 Alpha. The proofs were extracted from a production codebase, where they guard
