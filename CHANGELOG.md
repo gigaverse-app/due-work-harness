@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.2.0...v0.3.0) (2026-09-28)
+
+
+### Features
+
+* **integrations:** Redis, RQ and Celery's real worker, with lost-reply and survivable-failure histories ([#15](https://github.com/gigaverse-app/due-work-harness/issues/15)) ([93ba16d](https://github.com/gigaverse-app/due-work-harness/commit/93ba16dd697f8202af32b987b06b2dc7623b3f18))
+
+
+### Bug fixes
+
+* **demos:** the Saleor run's version fallback actually applies ([6e1cf41](https://github.com/gigaverse-app/due-work-harness/commit/6e1cf4189c6c0f241648eb1e386cb37f9eb3b8b5))
+
 ## [0.2.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.1.1...v0.2.0) (2026-09-28)
 
 
