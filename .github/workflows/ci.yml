@@ -84,6 +84,25 @@ jobs:
       - run: uv sync --locked --no-default-groups --extra django --extra celery
       - run: uv run --no-sync pytest tests/django --ds=tests.django.settings
 
+  # Redis-backed queues, and Celery's real worker as a child process on a Redis broker.
+  redis:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      REDIS_URL: redis://localhost:6379/14
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-default-groups --extra rq --extra celery
+      - run: uv run --no-sync pytest tests/rq tests/celery_worker -p no:django -rxX
+
   demos:
     runs-on: ubuntu-latest
     services:
