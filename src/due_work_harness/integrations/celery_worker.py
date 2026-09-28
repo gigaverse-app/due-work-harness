@@ -49,12 +49,12 @@ from due_work_harness.contract import (
     Adoption,
     Decline,
     DueWorkContract,
-    ExtraProof,
     NotApplicable,
     Profile,
     SafetyContract,
     SafetyProfile,
 )
+from due_work_harness.crash_histories import Findings
 from due_work_harness.helpers import wait_until
 from due_work_harness.integrations.task_queues import (
     replay_safety_is_the_functions,
@@ -64,7 +64,6 @@ from due_work_harness.integrations.task_queues import (
 from due_work_harness.process_histories import (
     FAULT_VARIABLE,
     ProcessHistory,
-    assert_process_deaths_converge,
     fault_environment,
     fault_fires,
     fault_happened,
@@ -130,6 +129,7 @@ def worker_history[HandleT, ObservationT](
     timeout: float = 60.0,
     env: Mapping[str, str] | None = None,
     log: Path | None = None,
+    findings: Findings | None = None,
 ) -> ProcessHistory[HandleT, ObservationT]:
     """
     One task through the application's real worker, failing at each of Celery's stages, recovered by a restart.
@@ -169,6 +169,7 @@ def worker_history[HandleT, ObservationT](
         recover=recover,
         death_points=tuple(death_points),
         failure_points=tuple(failure_points),
+        findings=findings,
     )
 
 
@@ -194,9 +195,11 @@ def worker_contract(
     """
     Celery's contract with its worker: one task through the real worker, failing at each of Celery's stages.
 
-    ``history`` is :func:`worker_history` for one of the adopter's tasks. What
-    it finds is declared as ``gap``, a strict xfail. The profiles Celery leaves
-    to the broker or to the task are declined with the reason.
+    ``history`` is :func:`worker_history` for one of the adopter's tasks, a
+    process handoff of the contract. What it finds is declared as ``gap``, a
+    strict xfail, and, when the history carries its ``findings``, pinned
+    history by history in the same run. The profiles Celery leaves to the
+    broker or to the task are declined with the reason.
     """
     return DueWorkContract(
         name=name,
@@ -221,13 +224,8 @@ def worker_contract(
                 ),
             },
         ),
-        extras=(
-            ExtraProof(
-                name=f"{history.name}: a failure at each of Celery's stages reaches normal operation's outcome",
-                run=lambda: assert_process_deaths_converge(history),
-                gap=gap,
-            ),
-        ),
+        process_handoffs=(history,),
+        handoff_gaps={history.name: gap} if gap is not None else {},
         fixtures=fixtures,
     )
 

@@ -52,7 +52,13 @@ from pathlib import Path
 from typing import Any
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
-from due_work_harness.crash_histories import HistoryRun, assert_histories_converge, assert_runs_match_table
+from due_work_harness.crash_histories import (
+    Findings,
+    HistoryRun,
+    assert_findings_hold,
+    assert_histories_converge,
+    assert_runs_match_table,
+)
 from due_work_harness.models import HarnessModel
 
 #: The child's environment: the point to fail at, and the marker recording that it did.
@@ -122,6 +128,9 @@ class ProcessHistory[HandleT, ObservationT](HarnessModel):
     #: The named faults the child survives: it fails there and lives on.
     failure_points: tuple[str, ...] = ()
 
+    #: Optional: what the histories leave, checked in the same run as the verdict.
+    findings: Findings | None = None
+
 
 def _run(history: ProcessHistory[Any, Any], point: str | None) -> HistoryRun:
     handle, status = history.run(point)
@@ -164,8 +173,15 @@ def process_histories(history: ProcessHistory[Any, Any]) -> list[HistoryRun]:
 
 
 def assert_process_deaths_converge(history: ProcessHistory[Any, Any]) -> None:
-    """A death at every named point, then production's own restart, reaches normal operation's outcome."""
-    assert_histories_converge(history.name, process_histories(history))
+    """
+    A death or failure at every named point, then production's own restart, reaches normal operation's outcome.
+
+    When the history declares its :class:`~due_work_harness.crash_histories.Findings`,
+    the same runs are first held to that table.
+    """
+    runs = process_histories(history)
+    assert_findings_hold(history.name, runs, history.findings)
+    assert_histories_converge(history.name, runs)
 
 
 def assert_pinned_process_outcomes(

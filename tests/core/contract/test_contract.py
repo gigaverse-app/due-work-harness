@@ -45,13 +45,14 @@ from due_work_harness.contract import (
     safety_contract_cases,
     scheduled_selection_cases,
 )
-from due_work_harness.crash_histories import CallableDelivery, HandoffHistory
+from due_work_harness.crash_histories import CallableDelivery, Findings, HandoffHistory, HistoriesDiverged
 from due_work_harness.gap_probes import (
     DisprovenCapability,
     MissingReclaim,
     MissingScheduledConsumer,
 )
 from due_work_harness.host import Host
+from due_work_harness.process_histories import ProcessHistory
 from due_work_harness.profiles.automatic_recovery import assert_in_flight_work_is_not_redispatched
 from due_work_harness.profiles.fact_derived_obligations import (
     StateDerived,
@@ -1090,3 +1091,101 @@ def test_a_generated_handoff_case_fails_a_split_handoff_through_the_contract_del
     case = _ledger_handoff_case(in_memory_handoffs.fail_with_split_handoff)
     with pytest.raises(AssertionError, match=r"'worker died after commit 1': \('retryable_failed', \(\)\)"):
         case.values[0].run()
+
+
+# Declared findings: the histories run once, the table and the verdict both judge them.
+
+SPLIT_DELIVERED = ("retryable_failed", ("running",))
+SPLIT_FINDINGS = Findings(SPLIT_DELIVERED, {"worker died after commit 1": ("retryable_failed", ())})
+
+
+def _split_history(findings: Findings | None) -> HandoffHistory[int, Any]:
+    return HandoffHistory(
+        name="retryable failure",
+        arrange=in_memory_handoffs.running_attempt,
+        transition=in_memory_handoffs.fail_with_split_handoff,
+        observe=in_memory_handoffs.attempt_and_successors,
+        findings=findings,
+    )
+
+
+def _split_case(findings: Findings | None, **overrides: Any) -> Any:
+    contract = _contract(
+        handoffs=(_split_history(findings),),
+        handoff_delivery=in_memory_handoffs.RETRY_DELIVERY,
+        handoff_gaps={"retryable failure": WHY},
+        adoption=Adoption.LEGACY,
+        **overrides,
+    )
+    return _params_by_id(contract_cases(contract))["handoff-retryable failure-assert_crash_at_every_commit_converges"]
+
+
+def test_a_gap_on_a_history_with_findings_xfails_for_the_divergence_alone(marking_host: Host) -> None:
+    xfail = {mark.name: mark for mark in _split_case(SPLIT_FINDINGS).marks}["xfail"]
+    assert xfail.kwargs == {"strict": True, "reason": WHY, "raises": HistoriesDiverged}
+
+
+def test_findings_that_hold_leave_the_verdict_to_report_the_divergence(ledger_host: Host) -> None:
+    with pytest.raises(HistoriesDiverged, match=r"'worker died after commit 1': \('retryable_failed', \(\)\)"):
+        _split_case(SPLIT_FINDINGS).values[0].run()
+
+
+def test_a_finding_that_moved_fails_as_itself_not_as_the_known_gap(ledger_host: Host) -> None:
+    moved = Findings(SPLIT_DELIVERED, {"worker died after commit 2": ("retryable_failed", ())})
+    with pytest.raises(AssertionError, match="no longer leave what the table pins") as raised:
+        _split_case(moved).values[0].run()
+    assert not isinstance(raised.value, HistoriesDiverged)
+
+
+def test_findings_and_gaps_must_agree() -> None:
+    with pytest.raises(DueWorkContractDesignError, match="declares findings in which histories diverge, but no"):
+        _contract(
+            handoffs=(_split_history(SPLIT_FINDINGS),),
+            handoff_delivery=in_memory_handoffs.RETRY_DELIVERY,
+            adoption=Adoption.LEGACY,
+        )
+    with pytest.raises(DueWorkContractDesignError, match="its findings table has no divergent history"):
+        _split_case(Findings(SPLIT_DELIVERED))
+
+
+def _process_history(findings: Findings | None = None) -> ProcessHistory[int, tuple[str, int]]:
+    def run(point: str | None) -> tuple[int, int]:
+        attempt = in_memory_handoffs.running_attempt()
+        if point is None:
+            in_memory_handoffs.complete_notifying(attempt)
+            return attempt, 0
+        if point == "after_send":
+            in_memory_handoffs.RECIPIENT.notify(attempt)
+        return attempt, 1
+
+    return ProcessHistory(
+        name="completion",
+        initial=("absent", 0),
+        run=run,
+        observe=in_memory_handoffs.status_and_notifications,
+        recover=in_memory_handoffs.recover_after_death,
+        death_points=("before_send", "after_send"),
+        findings=findings,
+    )
+
+
+def test_a_process_handoff_is_a_case_of_its_own_with_its_gap(ledger_host: Host) -> None:
+    findings = Findings(("complete", 1), {"died at after_send": ("complete", 2)})
+    contract = _contract(
+        process_handoffs=(_process_history(findings),),
+        handoff_gaps={"completion": WHY},
+        adoption=Adoption.LEGACY,
+    )
+    case = _params_by_id(contract_cases(contract))["process-completion-assert_process_deaths_converge"]
+    assert {mark.name: mark for mark in case.marks}["xfail"].kwargs["raises"] is HistoriesDiverged
+    with pytest.raises(HistoriesDiverged, match=r"'died at after_send': \('complete', 2\)"):
+        case.values[0].run()
+
+
+def test_process_and_in_process_handoff_names_share_one_namespace() -> None:
+    with pytest.raises(DueWorkContractDesignError, match="handoff history names must be unique"):
+        _contract(
+            handoffs=(_handoff("completion"),),
+            handoff_delivery=_DELIVERY,
+            process_handoffs=(_process_history(),),
+        )

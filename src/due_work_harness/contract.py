@@ -163,10 +163,12 @@ from due_work_harness.coherence import (
 from due_work_harness.crash_histories import (
     Delivery,
     HandoffHistory,
+    HistoriesDiverged,
     assert_crash_at_every_commit_converges,
 )
 from due_work_harness.host import current_host
 from due_work_harness.models import MISSING, HarnessModel, with_positional
+from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
 from due_work_harness.profiles.automatic_recovery import (
     DUE_WORK_PROOFS,
     SELECTION_PROOFS,
@@ -672,8 +674,19 @@ class DueWorkContract(HarnessModel):
     #: A protocol implementation, so Pydantic does not check it.
     handoff_delivery: SkipValidation[Delivery | None] = None
 
-    #: Legacy findings on named handoffs: ``{history name: reason}``. Each
-    #: becomes a strict xfail, under the same ``adoption`` policy as gaps.
+    #: Production transitions run as real processes that really die (see
+    #: :mod:`due_work_harness.process_histories`): a worker in a child process, an
+    #: application restarted. Each generates one case, beside ``handoffs``, and
+    #: recovers through its own ``recover``; no ``handoff_delivery`` is needed.
+    #: Bare ``ProcessHistory`` for the same reason as ``handoffs``.
+    process_handoffs: tuple[ProcessHistory, ...] = ()
+
+    #: Legacy findings on named handoffs, in-process or process: ``{history name:
+    #: reason}``. Each becomes a strict xfail, under the same ``adoption`` policy
+    #: as gaps. When the history also declares its ``findings`` table, the xfail
+    #: accepts only the histories diverging as that table says
+    #: (:class:`~due_work_harness.crash_histories.HistoriesDiverged`): a binding
+    #: that breaks, or a finding that moved, fails the case.
     handoff_gaps: Mapping[str, str] = Field(default_factory=dict)
 
     #: Pytest fixtures every generated behavioral test must request.
@@ -874,13 +887,31 @@ def _design_errors(contract: DueWorkContract) -> list[str]:
             "`handoff_delivery=` is set but no handoff history is declared, so nothing would run "
             "through it. Declare the handoffs it recovers, or drop the delivery"
         )
-    names = [history.name for history in contract.handoffs]
+    histories: list[HandoffHistory[Any, Any] | ProcessHistory[Any, Any]] = [
+        *contract.handoffs,
+        *contract.process_handoffs,
+    ]
+    names = [history.name for history in histories]
     duplicated = sorted({name for name in names if names.count(name) > 1})
     if duplicated:
         errors.append(f"handoff history names must be unique: {duplicated}")
     unknown_gaps = sorted(set(contract.handoff_gaps) - set(names))
     if unknown_gaps:
         errors.append(f"handoff_gaps name no declared handoff history: {unknown_gaps}")
+    for history in histories:
+        if history.findings is None:
+            continue
+        gap = history.name in contract.handoff_gaps
+        if history.findings.outcomes and not gap:
+            errors.append(
+                f"handoff {history.name!r} declares findings in which histories diverge, but no handoff_gaps entry: "
+                f"a divergence the table pins fails the verdict. Declare the gap with its reason"
+            )
+        if gap and not history.findings.outcomes:
+            errors.append(
+                f"handoff {history.name!r} declares a gap, but its findings table has no divergent history, so "
+                f"the gap could never be the reason it fails. Pin what diverges, or drop the gap"
+            )
     if contract.safety is None:
         errors.append(
             "no safety contract declares REPLAY_SAFE_EXECUTION and BOUNDED_RETRY. "
@@ -1260,23 +1291,43 @@ def _handoff_runner(delivery: Delivery, history: HandoffHistory[Any, Any]) -> Ca
     return run
 
 
-def _handoff_cases(contract: DueWorkContract) -> list[Any]:
-    """One transactional crash-history case per declared handoff."""
-    if not contract.handoffs:
+def _gap_mark(contract: DueWorkContract, history: HandoffHistory[Any, Any] | ProcessHistory[Any, Any]) -> list[Any]:
+    """A declared handoff gap's strict xfail: for the divergence alone once the history pins its findings."""
+    reason = contract.handoff_gaps.get(history.name)
+    if reason is None:
         return []
-    delivery = contract.handoff_delivery
-    assert delivery is not None, "DueWorkContract validation requires handoff_delivery with handoffs"
+    if history.findings is None:
+        return [pytest.mark.xfail(strict=True, reason=reason)]
+    return [pytest.mark.xfail(strict=True, reason=reason, raises=HistoriesDiverged)]
+
+
+def _process_runner(history: ProcessHistory[Any, Any]) -> Callable[[], None]:
+    def run() -> None:
+        assert_process_deaths_converge(history)
+
+    return run
+
+
+def _handoff_cases(contract: DueWorkContract) -> list[Any]:
+    """One crash-history case per declared handoff, in-process (transactional) or as a real process."""
     params: list[Any] = []
-    for history in contract.handoffs:
-        marks = _database_marks(True)
-        reason = contract.handoff_gaps.get(history.name)
-        if reason is not None:
-            marks.append(pytest.mark.xfail(strict=True, reason=reason))
+    if contract.handoffs:
+        delivery = contract.handoff_delivery
+        assert delivery is not None, "DueWorkContract validation requires handoff_delivery with handoffs"
+        for history in contract.handoffs:
+            case = ContractCase(
+                id=f"handoff-{history.name}-assert_crash_at_every_commit_converges",
+                run=_handoff_runner(delivery, history),
+                fixtures=contract.fixtures,
+            )
+            params.append(pytest.param(case, id=case.id, marks=_database_marks(True) + _gap_mark(contract, history)))
+    for history in contract.process_handoffs:
         case = ContractCase(
-            id=f"handoff-{history.name}-assert_crash_at_every_commit_converges",
-            run=_handoff_runner(delivery, history),
+            id=f"process-{history.name}-assert_process_deaths_converge",
+            run=_process_runner(history),
             fixtures=contract.fixtures,
         )
+        marks = _database_marks(contract.transactional) + _gap_mark(contract, history)
         params.append(pytest.param(case, id=case.id, marks=marks))
     return params
 

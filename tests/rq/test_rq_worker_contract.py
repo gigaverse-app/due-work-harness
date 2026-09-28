@@ -3,15 +3,15 @@ The RQ integration's worker contract, run against RQ itself on the reference job
 
 What RQ does not hold is declared as gaps, each a strict xfail: a fix in RQ
 fails this suite until the declaration changes, so the integration's claims
-stay true of the RQ version the lock pins. ``test_what_each_failure_costs``
-pins each finding history by history.
+stay true of the RQ version the lock pins. ``FINDINGS`` pins each finding
+history by history, in the same run as the verdict.
 """
 
 from rq import Callback, Queue, Retry
 
 from due_work_harness import Profile, due_work_contract_suite
-from due_work_harness.crash_histories import ExternalCall, assert_pinned_outcomes
-from due_work_harness.integrations.rq import worker_contract
+from due_work_harness.crash_histories import ExternalCall, Findings
+from due_work_harness.integrations.rq import ONE_QUEUE, worker_contract
 from due_work_harness.integrations.task_queues import TaskOutcome
 from tests.rq import jobs
 from tests.rq.connection import CONNECTION
@@ -46,6 +46,33 @@ def a_failing_job() -> str:
     return Queue(QUEUE, connection=CONNECTION).enqueue(jobs.call_down_service, retry=Retry(max=2)).id
 
 
+SENT = f"sent {MESSAGE!r}"
+
+
+def _job(sent: int, *announced: str, status: str = "finished") -> TaskOutcome:
+    return TaskOutcome(status=status, effect=(sent, announced))
+
+
+# What each history leaves after RQ's recovery; every history not listed reaches normal operation.
+# Commit numbers are RQ's SimpleWorker's Redis writes for one job, as RQ 2.12.0 (the lock) makes
+# them. On RQ main the two FAILED entries do not happen and the numbers move.
+FINDINGS = Findings(
+    _job(1, SENT),
+    {
+        "worker died after commit 10": _job(1, "failed: AbandonedJobError", SENT, status="failed"),
+        "worker died after commit 11": _job(1, "failed: AbandonedJobError", SENT),
+        "worker died after commit 12": _job(1, "failed: AbandonedJobError", SENT),
+        "worker died after commit 13": _job(2, "failed: AbandonedJobError", SENT),
+        "worker died after external call 1": _job(2, "failed: AbandonedJobError", SENT),
+        "the reply to commit 10 was lost": _job(1, "failed: AbandonedJobError", SENT, status="failed"),
+        "the reply to commit 11 was lost": _job(1, "failed: ConnectionError", SENT),
+        "the reply to commit 12 was lost": _job(1, "failed: ConnectionError", SENT),
+        "the reply to commit 13 was lost": _job(2, "failed: ConnectionError", SENT),
+        "the reply to commit 14 was lost": _job(2, SENT, "failed: ConnectionError", SENT),
+        "signal receiver 1 failed": _job(2, "failed: ReceiverFailed", SENT),
+    },
+)
+
 CONTRACT = worker_contract(
     CONNECTION,
     name="rq reference jobs",
@@ -57,42 +84,12 @@ CONTRACT = worker_contract(
     max_retries=2,
     external_calls=(ExternalCall(jobs.Outbox, "send"),),
     gaps={Profile.B: {"assert_stale_token_is_rejected": "RQ settles a job without checking its execution"}},
-    handoff_gaps={"the worker runs a task": "a lost reply or a raising on_success runs a finished job again"},
+    handoff_gaps={ONE_QUEUE: "a lost reply or a raising on_success runs a finished job again"},
+    findings={ONE_QUEUE: FINDINGS},
     fixtures=("empty_redis",),
 )
 
 
 @due_work_contract_suite(CONTRACT)
 class TestRQWorkerContract:
-    """Generated from CONTRACT."""
-
-
-SENT = f"sent {MESSAGE!r}"
-
-
-def _job(sent: int, *announced: str, status: str = "finished") -> TaskOutcome:
-    return TaskOutcome(status=status, effect=(sent, announced))
-
-
-def test_what_each_failure_costs(empty_redis: None) -> None:
-    assert CONTRACT.handoff_delivery is not None
-    # Commit numbers are RQ's SimpleWorker's Redis writes for one job.
-    assert_pinned_outcomes(
-        CONTRACT.handoff_delivery,
-        CONTRACT.handoffs[0],
-        delivered=_job(1, SENT),
-        outcomes={
-            # RQ 2.12.0, as the lock pins it. On RQ main the two FAILED entries do not happen and the numbers move.
-            "worker died after commit 10": _job(1, "failed: AbandonedJobError", SENT, status="failed"),
-            "worker died after commit 11": _job(1, "failed: AbandonedJobError", SENT),
-            "worker died after commit 12": _job(1, "failed: AbandonedJobError", SENT),
-            "worker died after commit 13": _job(2, "failed: AbandonedJobError", SENT),
-            "worker died after external call 1": _job(2, "failed: AbandonedJobError", SENT),
-            "the reply to commit 10 was lost": _job(1, "failed: AbandonedJobError", SENT, status="failed"),
-            "the reply to commit 11 was lost": _job(1, "failed: ConnectionError", SENT),
-            "the reply to commit 12 was lost": _job(1, "failed: ConnectionError", SENT),
-            "the reply to commit 13 was lost": _job(2, "failed: ConnectionError", SENT),
-            "the reply to commit 14 was lost": _job(2, SENT, "failed: ConnectionError", SENT),
-            "signal receiver 1 failed": _job(2, "failed: ReceiverFailed", SENT),
-        },
-    )
+    """Generated from CONTRACT: the handoff case checks FINDINGS and the verdict in one run."""
