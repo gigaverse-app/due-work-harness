@@ -158,26 +158,29 @@ def ownership(
         workers[token] = worker_id
         return token
 
-    def due_within_skew() -> float | None:
+    def due_within_skew() -> bool:
         # procrastinate stamps a retried job's scheduled_at with the application's clock
         # (utils.utcnow) and fetches by the database's NOW(): the job is fetchable once the
-        # database's clock passes it. How long until then, if a job is due that soon.
+        # database's clock passes it. Whether a job on the queue is due within the skew,
+        # counting one that became due after the fetch that missed it.
         row = app.connector.execute_query_one(
-            "SELECT EXTRACT(EPOCH FROM MIN(scheduled_at) - NOW()) AS wait FROM procrastinate_jobs "
-            "WHERE status = 'todo' AND queue_name = %(queue)s AND scheduled_at > NOW() "
-            "AND scheduled_at <= NOW() + make_interval(secs => %(skew)s)",
+            "SELECT EXISTS (SELECT 1 FROM procrastinate_jobs WHERE status = 'todo' AND queue_name = %(queue)s "
+            "AND scheduled_at <= NOW() + make_interval(secs => %(skew)s)) AS due",
             queue=queue,
             skew=clock_skew.total_seconds(),
         )
-        return None if row is None or row["wait"] is None else float(row["wait"])
+        return row is not None and bool(row["due"])
 
     def claim() -> tuple[int, UUID] | None:
         worker_id = _run(manager.register_worker())
-        job = _run(manager.fetch_job(queues=[queue], worker_id=worker_id))
-        if job is None and (wait := due_within_skew()) is not None:
-            time.sleep(wait + 0.01)
-            job = _run(manager.fetch_job(queues=[queue], worker_id=worker_id))
-        return None if job is None else (job.id, token_for(worker_id))
+        # Poll, as procrastinate's own worker would, while a job is due within the skew:
+        # the two clocks drift, so no single computed wait is sure to be enough.
+        deadline = time.monotonic() + clock_skew.total_seconds()
+        while (job := _run(manager.fetch_job(queues=[queue], worker_id=worker_id))) is None:
+            if time.monotonic() >= deadline or not due_within_skew():
+                return None
+            time.sleep(0.05)
+        return job.id, token_for(worker_id)
 
     def finish(job_id: int, token: UUID) -> bool:
         # procrastinate's finish_job takes no owner: the token cannot reach it.
