@@ -545,7 +545,20 @@ def assert_pinned_outcomes(
     entry moved. Returns the runs for any further assertion.
     """
     runs = crash_histories(delivery, history)
-    name = f"{delivery.name}: handoff {history.name!r}"
+    assert_runs_match_table(f"{delivery.name}: handoff {history.name!r}", runs, delivered=delivered, outcomes=outcomes)
+    return runs
+
+
+def assert_runs_match_table(name: str, runs: list[HistoryRun], *, delivered: Any, outcomes: dict[str, Any]) -> None:
+    """
+    The findings-table verdict over any runs, normal operation first.
+
+    ``runs[0]`` must reach ``delivered``; each history named in ``outcomes``
+    must run and reach exactly its entry; every other history must reach
+    ``delivered``. :func:`assert_pinned_outcomes` applies it to crash
+    histories, :func:`~due_work_harness.process_histories.assert_pinned_process_outcomes`
+    to process histories.
+    """
     assert runs[0].after == delivered, f"{name}: normal operation reaches {runs[0].after!r}, not {delivered!r}"
     actual = {run.label: run.after for run in runs[1:]}
     expected = {label: outcomes.get(label, delivered) for label in actual}
@@ -555,4 +568,3 @@ def assert_pinned_outcomes(
         f"{label}: pinned {repr(outcomes[label]) if label in outcomes else f'normal operation ({delivered!r})'}, now {now!r}"
         for label, now in sorted(moved.items())
     )
-    return runs

@@ -31,13 +31,19 @@ guesses where a program can die.
 A child that exits with status 0 is taken to have run normally; any other
 status is a death. Normal operation (``None``) must exit 0, and each death
 point must not.
+
+Some faults the program survives: a hook that raises, a broker that refuses a
+publish. Name those in ``failure_points``; the child fails there and lives on,
+and ``run`` reports a non-zero status when the failure happened, so a point the
+program never reached is caught as a run that was never interrupted. Their
+histories are labelled with the point's own name, deaths with ``died at``.
 """
 
 from collections.abc import Callable
 from typing import Any
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
-from due_work_harness.crash_histories import HistoryRun, assert_histories_converge
+from due_work_harness.crash_histories import HistoryRun, assert_histories_converge, assert_runs_match_table
 from due_work_harness.models import HarnessModel
 
 
@@ -64,13 +70,22 @@ class ProcessHistory[HandleT, ObservationT](HarnessModel):
     #: The named points the child's entry point knows how to die at.
     death_points: tuple[str, ...]
 
+    #: The named faults the child survives: it fails there and lives on.
+    failure_points: tuple[str, ...] = ()
 
-def _run(history: ProcessHistory[Any, Any], death_point: str | None) -> HistoryRun:
-    handle, status = history.run(death_point)
+
+def _run(history: ProcessHistory[Any, Any], point: str | None) -> HistoryRun:
+    handle, status = history.run(point)
     midway = history.observe(handle)
     history.recover(handle)
+    if point is None:
+        label = "normal operation"
+    elif point in history.failure_points:
+        label = point
+    else:
+        label = f"died at {point}"
     return HistoryRun(
-        label="normal operation" if death_point is None else f"died at {death_point}",
+        label=label,
         before=history.initial,
         midway=midway,
         after=history.observe(handle),
@@ -79,8 +94,10 @@ def _run(history: ProcessHistory[Any, Any], death_point: str | None) -> HistoryR
 
 
 def process_histories(history: ProcessHistory[Any, Any]) -> list[HistoryRun]:
-    """Normal operation first, then one run per death point."""
-    assert history.death_points, f"{history.name}: no death points, so no history could be interrupted"
+    """Normal operation first, then one run per death point, then one per failure point."""
+    assert history.death_points or history.failure_points, (
+        f"{history.name}: no death or failure points, so no history could be interrupted"
+    )
     assert_binding_reaches_production(
         adopter=history.name,
         field="recover",
@@ -93,9 +110,27 @@ def process_histories(history: ProcessHistory[Any, Any]) -> list[HistoryRun]:
         f"{history.name}: normal operation exited abnormally, so it cannot define the outcome. Fix the child "
         f"entry point before judging its deaths"
     )
-    return [normal, *(_run(history, point) for point in history.death_points)]
+    points = (*history.death_points, *history.failure_points)
+    return [normal, *(_run(history, point) for point in points)]
 
 
 def assert_process_deaths_converge(history: ProcessHistory[Any, Any]) -> None:
     """A death at every named point, then production's own restart, reaches normal operation's outcome."""
     assert_histories_converge(history.name, process_histories(history))
+
+
+def assert_pinned_process_outcomes(
+    history: ProcessHistory[Any, Any], *, delivered: Any, outcomes: dict[str, Any]
+) -> list[HistoryRun]:
+    """
+    What each death and failure of a process history leaves, pinned: a findings table.
+
+    The same verdict as :func:`~due_work_harness.crash_histories.assert_pinned_outcomes`:
+    normal operation reaches ``delivered``, each named history reaches its
+    entry, every other history reaches ``delivered``. Returns the runs.
+    """
+    runs = process_histories(history)
+    uninterrupted = [run.label for run in runs[1:] if not run.interrupted]
+    assert not uninterrupted, f"{history.name}: these histories were never interrupted: {uninterrupted}"
+    assert_runs_match_table(history.name, runs, delivered=delivered, outcomes=outcomes)
+    return runs
