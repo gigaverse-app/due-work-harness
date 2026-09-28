@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.3.0...v0.4.0) (2026-09-28)
+
+
+### Features
+
+* **process-histories:** one child fault protocol for every process history ([5835ac1](https://github.com/gigaverse-app/due-work-harness/commit/5835ac13ded76360f8a7ba4dc24f81f72a5d2653))
+* **pytest:** --due-work-summary lists what each generated suite produced ([5835ac1](https://github.com/gigaverse-app/due-work-harness/commit/5835ac13ded76360f8a7ba4dc24f81f72a5d2653))
+
 ## [0.3.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.2.0...v0.3.0) (2026-09-28)
 
 
