@@ -84,7 +84,8 @@ jobs:
       - run: uv sync --locked --no-default-groups --extra django --extra celery
       - run: uv run --no-sync pytest tests/django --ds=tests.django.settings
 
-  rq:
+  # Redis-backed queues, and Celery's real worker as a child process on a Redis broker.
+  redis:
     runs-on: ubuntu-latest
     services:
       redis:
@@ -99,8 +100,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --locked --no-default-groups --extra rq
-      - run: uv run --no-sync pytest tests/rq -p no:django -rxX
+      - run: uv sync --locked --no-default-groups --extra rq --extra celery
+      - run: uv run --no-sync pytest tests/rq tests/celery_worker -p no:django -rxX
 
   demos:
     runs-on: ubuntu-latest

@@ -61,6 +61,9 @@ their projects ship them, pinned to a commit:
 | **RQ** itself | A worker whose lease expired still settles the job after another worker took it: it marks it finished, or sends it back to be retried, while the new worker runs it | — |
 | **RQ** itself | The reply to the write that records a job finished is lost, or its `on_success` callback raises: RQ fails the finished job and **runs it again** | — |
 | **RQ** itself | A worker listening on two queues dies, or loses a reply, between popping a job and marking it started: **the job is gone**, queued in no queue and no registry | — |
+| **Celery** itself | A worker's pool child dies after the task's SUCCESS is stored: the task stays SUCCESS and **its error callback fires beside its link** | — |
+| **Celery** itself | A task's `on_success` hook raises after SUCCESS is stored: the same, both callbacks fire | — |
+| **Celery** itself | The broker refuses the task's link after the body ran: the task is recorded FAILURE and acknowledged, so **the link is never sent** | — |
 
 Demos are teaching code, and good at what they teach. The point is what the
 harness finds when code like this is copied into production, and the one change
@@ -216,7 +219,7 @@ configure(django_host(production_packages={"myapp"}))
 | Extra | Supplies |
 | --- | --- |
 | `[django]` | `django_host()`: pytest-django marks, the transaction probe, a commit counter that kills the worker after any commit (including writes made through `SELECT fn()`), PostgreSQL plan inspection, lifecycle-state proofs |
-| `[celery]` | beat-schedule evidence, a publication recorder that holds messages instead of sending them, a publication breaker that refuses one publish as a broker that is down would |
+| `[celery]` | beat-schedule evidence, a publication recorder that holds messages instead of sending them, a publication breaker that refuses one publish as a broker that is down would; and `celery_worker`: the application's real worker as a child process, failing at Celery's own stages (the pool child lost at `task_prerun`, `mark_as_done` and `task_postrun`, a raising `on_success` hook, a refused link), with `worker_contract()` for any adopter's task |
 | `[procrastinate]` | its worker as recovery, "worker died holding this job" arrangement, the documented stalled-job recipe, periodic-task evidence |
 | `[dbos]` | restarting an app through its own startup for process-level crash histories |
 | `[redis]` | `redis_host()`: a commit counter for a queue kept in Redis (each pipeline or write command a commit, judged by the server's own command flags), and a reply breaker that lets a write land and loses its answer |
