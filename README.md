@@ -48,6 +48,8 @@ their projects ship them, pinned to a commit:
 
 | Where | What one badly timed failure does | What fixes it |
 | --- | --- | --- |
+| **django-tasks-db** (Django's task framework, database backend) | A `task_finished` receiver that raises rewrites a task that already ran as FAILED; a task whose worker died stays RUNNING forever | — |
+| **Wagtail** on django-tasks-db | Deleting an image or document can leave its file in storage for good; publishing can leave the CDN serving the old page | — |
 | **Saleor** checkout, Payments API | A worker death between capturing the payment and creating the order **charges the customer and never creates the order**. After 90 days the payment belongs to nothing | Saleor's Transactions API with automatic completion of paid checkouts: the same deaths always end with an order |
 | **Saleor** checkout | A death after the order commits leaves it unconfirmed, its history empty or half-written | — |
 | **Saleor** checkout | No death at all: a failing `order_created` callback, or the broker refusing any one of the order's webhooks, and Django skips the confirmation | — |

@@ -17,6 +17,8 @@ UPSTREAMS = {
     ),
     "dbos-demo-apps": ("https://github.com/dbos-inc/dbos-demo-apps.git", "45a68c2ce39838cf6853db4dd71c5a40dac70051"),
     "saleor": ("https://github.com/saleor/saleor.git", "5ff56489737c78a9a5631d528f699303c953696a"),
+    # Wagtail 8.0, the release the demo installs from PyPI; its source is what the coverage scan reads.
+    "wagtail": ("https://github.com/wagtail/wagtail.git", "24e624cc63b5d17a1ff1c1cd0d0e0817524cbd8d"),
 }
 
 ROOT = Path(__file__).resolve().parent / ".upstream"
