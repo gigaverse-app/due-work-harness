@@ -33,7 +33,7 @@ from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime
 from typing import Any
 
-from due_work_harness.host import Host
+from due_work_harness.host import Host, PublicationBreaker
 
 
 def _database_marks(transactional: bool) -> list[Any]:
@@ -71,6 +71,7 @@ def django_host(
     replica_aliases: Collection[str] | Callable[[], Collection[str]] | None = None,
     ambient_context: Callable[[], object] | None = None,
     publication_recorder: Callable[[], AbstractContextManager[list[str]]] | None = None,
+    publication_breaker: PublicationBreaker | None = None,
     lifecycle_proofs: bool = True,
 ) -> Host:
     """A host for a Django project whose own code lives in ``production_packages``."""
@@ -93,6 +94,7 @@ def django_host(
         selection_inspectors=(DjangoSelectionInspector(replica_aliases=replica_aliases),),
         ambient_context=ambient_context,
         publication_recorder=publication_recorder,
+        publication_breaker=publication_breaker,
         frozen_clock=_frozen_clock,
         sweep_proofs=sweep_proofs,
     )

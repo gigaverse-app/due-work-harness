@@ -8,7 +8,12 @@ transaction registers two ``transaction.on_commit`` callbacks: ``order_created``
 (the order's events, the customer's order count, the ORDER_CREATED webhooks),
 whose writes each commit on their own, and ``send_order_confirmation``. The
 obligation: a customer who is charged has an order, and every order is recorded
-as placed and confirmed to them.
+as placed, confirmed to them, and announced to the shop's integration.
+
+The shop has one: an app subscribed to the ORDER_CREATED, ORDER_FULLY_PAID and
+ORDER_CONFIRMED webhooks, as a shop with an ERP or a fulfilment service has.
+Its endpoint is the external seam; the webhooks reach it through Saleor's own
+webhook plugin and Celery task.
 
 Two contracts, each a declaration and one decorated class, as an adopter
 writes them. ``CHECKOUT_AS_SHIPPED`` covers the two ``on_commit`` handoffs the
@@ -71,6 +76,10 @@ from saleor.plugins.manager import PluginsManager, get_plugins_manager
 from saleor.product.models import ProductVariant
 from saleor.site.models import SiteSettings
 from saleor.warehouse.models import Stock
+from saleor.webhook.event_types import WebhookEventAsyncType
+from saleor.webhook.models import Webhook
+from saleor.webhook.transport.asynchronous import transport as webhook_transport
+from saleor.webhook.transport.utils import WebhookResponse
 
 from due_work_harness import (
     Adoption,
@@ -125,6 +134,8 @@ class Shop(BaseModel):
     assign_delivery: Callable[[Checkout], Any]
     #: Order confirmations Saleor handed to its notification plugins, by order id.
     confirmations: Counter[str]
+    #: Webhooks the shop's integration received: (event type, payload).
+    webhooks: list[tuple[str, str]]
     #: Saleor's own Transactions API fixture factories, for the paid-checkout history.
     transaction_item: Callable[..., TransactionItem]
     transaction_events: Callable[..., Any]
@@ -149,10 +160,25 @@ def saleor_shop(
     checkout_delivery,  # noqa: ANN001
     transaction_item_generator,  # noqa: ANN001
     transaction_events_generator,  # noqa: ANN001
+    webhook_app,  # noqa: ANN001
+    settings,  # noqa: ANN001
 ) -> Iterator[Shop]:
-    """Saleor's own fixtures, with the product stocked for every history's order and confirmations counted."""
+    """
+    Saleor's own fixtures, with the product stocked for every history's order and confirmations counted.
+
+    The shop has an integration subscribed to its order webhooks, as a shop with an
+    ERP or a fulfilment service does, so completing a checkout publishes them.
+    """
     channel_USD.automatically_confirm_all_new_orders = True
     channel_USD.save()
+    # The plugins Saleor's own checkout tests pair: webhooks, and its test payment gateway.
+    settings.PLUGINS = [
+        "saleor.plugins.webhook.plugin.WebhookPlugin",
+        "saleor.plugins.tests.gateways.dummy.DummyGatewayPlugin",
+    ]
+    integration = Webhook.objects.create(name="erp", app=webhook_app, target_url="https://erp.example.com/saleor")
+    for event_type in ORDER_WEBHOOKS:
+        integration.events.create(event_type=event_type)
     variant = product.variants.first()
     # ARRANGE: every history places an order, so stock the variant for all of them.
     Stock.objects.filter(product_variant=variant).update(quantity=1_000_000)
@@ -163,6 +189,7 @@ def saleor_shop(
         address=address,
         assign_delivery=checkout_delivery,
         confirmations=Counter(),
+        webhooks=[],
         transaction_item=transaction_item_generator,
         transaction_events=transaction_events_generator,
     )
@@ -176,6 +203,13 @@ def saleor_shop(
         return notify(self, event, payload_func=payload_func, channel_slug=channel_slug, **kwargs)
 
     monkeypatch.setattr(PluginsManager, "notify", recording_notify)
+
+    def integration_endpoint(target_url, domain, secret, event_type, data, custom_headers=None):  # noqa: ANN001, ANN202, ARG001
+        # EXTERNAL SEAM: the integration's HTTP endpoint, which accepts every webhook.
+        shop.webhooks.append((event_type, data if isinstance(data, str) else data.decode()))
+        return WebhookResponse(content="ok", response_status_code=200)
+
+    monkeypatch.setattr(webhook_transport, "send_webhook_using_scheme_method", integration_endpoint)
     _SHOPS.append(shop)
     yield shop
     _SHOPS.pop()
@@ -195,6 +229,13 @@ def automatic_completion(saleor_shop: Shop) -> Iterator[None]:
     COMPLETIONS.clear()
     yield
 
+
+#: The order webhooks the shop's integration subscribes to.
+ORDER_WEBHOOKS = (
+    WebhookEventAsyncType.ORDER_CREATED,
+    WebhookEventAsyncType.ORDER_FULLY_PAID,
+    WebhookEventAsyncType.ORDER_CONFIRMED,
+)
 
 type Handle = tuple[UUID, Any]
 
@@ -260,6 +301,8 @@ class Outcome(BaseModel):
     order: bool
     events: tuple[str, ...]
     confirmations: int
+    #: The order webhooks the shop's integration received.
+    webhooks: tuple[str, ...]
     charged: bool
     #: What the customer's money belongs to: "order", "checkout" or "nothing".
     money_on: str
@@ -288,6 +331,7 @@ def order_confirmation_and_money(handle: Handle) -> Outcome:
         order=order is not None,
         events=tuple(sorted(order.events.values_list("type", flat=True))) if order else (),
         confirmations=current_shop().confirmations[order_id] if order_id else 0,
+        webhooks=tuple(sorted(event for event, data in current_shop().webhooks if order_id and order_id in data)),
         charged=payment.captured_amount > 0,
         money_on=_money_on(Payment, payment.pk),
     )
@@ -414,8 +458,9 @@ CHECKOUT_AS_SHIPPED = DueWorkContract(
         "complete checkout": (
             "a death after the Payments API capture charges the customer with no order, which after 90 days "
             "belongs to nothing; a death after the order commits leaves it unconfirmed with its history empty or "
-            "half-written; and a failing order_created callback, with no death at all, makes Django skip the "
-            "confirmation. test_what_each_failure_costs_the_customer pins each history"
+            "half-written; and a failing order_created callback, or the broker refusing any one of the order's "
+            "webhooks, with no death at all, makes Django skip the confirmation. "
+            "test_what_each_failure_costs_the_customer pins each history"
         )
     },
 )
@@ -430,6 +475,7 @@ PLACED = Outcome(
     order=True,
     events=("confirmed", "order_fully_paid", "payment_captured", "placed"),
     confirmations=1,
+    webhooks=tuple(sorted(ORDER_WEBHOOKS)),
     charged=True,
     money_on="order",
 )
@@ -439,31 +485,66 @@ def _outcome(**changes: object) -> Outcome:
     return PLACED.model_copy(update=changes)
 
 
+#: The order's history as it grows, and the webhooks its integration receives.
+PLACED_ONLY = ("placed",)
+CAPTURED = ("payment_captured", "placed")
+FULLY_PAID = ("order_fully_paid", "payment_captured", "placed")
+CREATED = (WebhookEventAsyncType.ORDER_CREATED,)
+CREATED_AND_PAID = (WebhookEventAsyncType.ORDER_CREATED, WebhookEventAsyncType.ORDER_FULLY_PAID)
+
+
+def _unconfirmed(events: tuple[str, ...], webhooks: tuple[str, ...]) -> Outcome:
+    return _outcome(events=events, webhooks=webhooks, confirmations=0)
+
+
 #: What each history leaves after three months of everything Saleor schedules.
-#: Every entry but the first is a loss the customer or the shop sees.
+#: Every entry is a loss the customer, the shop or its integration sees.
 FINDINGS = {
     # Benign: nothing was charged, and the customer can try again.
-    "worker died after commit 1": _outcome(order=False, events=(), confirmations=0, charged=False, money_on="nothing"),
+    "worker died after commit 1": _outcome(
+        order=False, events=(), confirmations=0, webhooks=(), charged=False, money_on="nothing"
+    ),
     # FINDING 1: charged, and no order is ever created. The payment is captured in its
     # own transaction before the order's; 90 days later Saleor deletes the checkout,
     # and the captured payment belongs to nothing.
-    "worker died after commit 2": _outcome(order=False, events=(), confirmations=0, money_on="nothing"),
-    # FINDING 2: a paid order, never confirmed, its history half-written or empty.
-    # Everything after the order's commit runs in on_commit callbacks, one
-    # autocommit write at a time, and nothing Saleor schedules re-runs them.
-    "worker died after commit 3": _outcome(events=(), confirmations=0),
-    "worker died after commit 4": _outcome(events=(), confirmations=0),
-    "worker died after commit 5": _outcome(events=(), confirmations=0),
-    "worker died after commit 6": _outcome(events=("placed",), confirmations=0),
-    "worker died after commit 7": _outcome(events=("payment_captured", "placed"), confirmations=0),
-    "worker died after commit 8": _outcome(events=("order_fully_paid", "payment_captured", "placed"), confirmations=0),
-    "worker died after commit 9": _outcome(events=("order_fully_paid", "payment_captured", "placed"), confirmations=0),
-    "worker died after commit 10": _outcome(confirmations=0),
+    "worker died after commit 2": _outcome(order=False, events=(), confirmations=0, webhooks=(), money_on="nothing"),
+    # FINDING 2: a paid order, never confirmed, its history and its integration's webhooks
+    # cut off wherever the worker died. Everything after the order's commit runs in
+    # on_commit callbacks, one autocommit write at a time, and nothing Saleor schedules
+    # re-runs them.
+    "worker died after commit 3": _unconfirmed((), ()),
+    "worker died after commit 4": _unconfirmed((), ()),
+    "worker died after commit 5": _unconfirmed((), ()),
+    "worker died after commit 6": _unconfirmed(PLACED_ONLY, ()),
+    "worker died after commit 7": _unconfirmed(PLACED_ONLY, ()),
+    "worker died after commit 8": _unconfirmed(PLACED_ONLY, ()),
+    "worker died after commit 9": _unconfirmed(PLACED_ONLY, CREATED),
+    "worker died after commit 10": _unconfirmed(PLACED_ONLY, CREATED),
+    "worker died after commit 11": _unconfirmed(CAPTURED, CREATED),
+    "worker died after commit 12": _unconfirmed(FULLY_PAID, CREATED),
+    "worker died after commit 13": _unconfirmed(FULLY_PAID, CREATED),
+    "worker died after commit 14": _unconfirmed(FULLY_PAID, CREATED),
+    "worker died after commit 15": _unconfirmed(FULLY_PAID, CREATED),
+    "worker died after commit 16": _unconfirmed(FULLY_PAID, CREATED_AND_PAID),
+    "worker died after commit 17": _unconfirmed(FULLY_PAID, CREATED_AND_PAID),
+    "worker died after commit 18": _unconfirmed(PLACED.events, CREATED_AND_PAID),
+    "worker died after commit 19": _unconfirmed(PLACED.events, CREATED_AND_PAID),
+    "worker died after commit 20": _unconfirmed(PLACED.events, CREATED_AND_PAID),
+    "worker died after commit 21": _unconfirmed(PLACED.events, PLACED.webhooks),
+    "worker died after commit 22": _unconfirmed(PLACED.events, PLACED.webhooks),
     # FINDING 3: no death at all. When order_created raises (a webhook payload bug, a
     # plugin error, a database error), Django skips every later callback of the
     # commit, so the confirmation is lost with the order's history.
-    "after-commit callback 1 failed": _outcome(events=(), confirmations=0),
-    "after-commit callback 2 failed": _outcome(confirmations=0),
+    "after-commit callback 1 failed": _unconfirmed((), ()),
+    "after-commit callback 2 failed": _unconfirmed(PLACED.events, PLACED.webhooks),
+    # FINDING 4: no death either. When the broker refuses one publish, any of the order's
+    # three webhooks, the error escapes order_created: every webhook and history entry
+    # after it is lost, Django skips the confirmation, and completing the checkout
+    # raises for an order that is placed and paid. Even a refused ORDER_CONFIRMED, the
+    # last webhook, costs the customer the confirmation.
+    "the broker refused publication 1": _unconfirmed(PLACED_ONLY, ()),
+    "the broker refused publication 2": _unconfirmed(FULLY_PAID, CREATED),
+    "the broker refused publication 3": _unconfirmed(PLACED.events, CREATED_AND_PAID),
 }
 
 
