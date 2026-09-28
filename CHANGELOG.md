@@ -1,0 +1,25 @@
+# Changelog
+
+## 0.1.0 (2026-09-28)
+
+
+### Features
+
+* **coverage:** find Dramatiq, RQ and Django task handoffs, and Celery's on-commit sends ([f03622f](https://github.com/gigaverse-app/due-work-harness/commit/f03622fd93d1af71b78a541d47e1a18b7cd18123))
+* **coverage:** scan source roots outside the project's directory ([1c8492d](https://github.com/gigaverse-app/due-work-harness/commit/1c8492df3f8e45c7e34ca201f0a9169fe7ec1e55))
+* **crash-histories:** fail each after-commit callback in turn ([1c8492d](https://github.com/gigaverse-app/due-work-harness/commit/1c8492df3f8e45c7e34ca201f0a9169fe7ec1e55))
+* **crash-histories:** the broker refuses each publication in turn ([df8b17f](https://github.com/gigaverse-app/due-work-harness/commit/df8b17f62f44ed0db1abd2ffd862efbb19392d96))
+* **demos:** DBOS and Saleor claim what their frameworks provide ([1c8492d](https://github.com/gigaverse-app/due-work-harness/commit/1c8492df3f8e45c7e34ca201f0a9169fe7ec1e55))
+* **demos:** every demo adopts the harness through contracts ([1c8492d](https://github.com/gigaverse-app/due-work-harness/commit/1c8492df3f8e45c7e34ca201f0a9169fe7ec1e55))
+* **demos:** Saleor claims recovery, its selection observed from the tick it runs ([1c8492d](https://github.com/gigaverse-app/due-work-harness/commit/1c8492df3f8e45c7e34ca201f0a9169fe7ec1e55))
+* **demos:** Saleor's checkout, unmodified, loses charges and confirmations ([1c8492d](https://github.com/gigaverse-app/due-work-harness/commit/1c8492df3f8e45c7e34ca201f0a9169fe7ec1e55))
+* **ownership:** prove every owner write is fenced, not only the settlement ([df8b17f](https://github.com/gigaverse-app/due-work-harness/commit/df8b17f62f44ed0db1abd2ffd862efbb19392d96))
+* **procrastinate:** claim ownership, retention, replay and retry against procrastinate itself ([1c8492d](https://github.com/gigaverse-app/due-work-harness/commit/1c8492df3f8e45c7e34ca201f0a9169fe7ec1e55))
+* publish to PyPI with SemVer releases cut from Conventional Commits ([#2](https://github.com/gigaverse-app/due-work-harness/issues/2)) ([8156135](https://github.com/gigaverse-app/due-work-harness/commit/8156135a433683d34848afbca89dfcee82b4af75))
+
+
+### Bug fixes
+
+* **check-action:** keep the check's Python out of the caller's job ([1c8492d](https://github.com/gigaverse-app/due-work-harness/commit/1c8492df3f8e45c7e34ca201f0a9169fe7ec1e55))
+* **contract:** probes run with the contract's database; rewritten asserts are not inversions ([1c8492d](https://github.com/gigaverse-app/due-work-harness/commit/1c8492df3f8e45c7e34ca201f0a9169fe7ec1e55))
+* **procrastinate:** poll for a reclaimed job while it is due within the skew ([df8b17f](https://github.com/gigaverse-app/due-work-harness/commit/df8b17f62f44ed0db1abd2ffd862efbb19392d96))
