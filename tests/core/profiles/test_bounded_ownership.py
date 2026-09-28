@@ -63,6 +63,7 @@ def _binding(owner: _InMemoryOwner, *, observe: bool = True) -> FencedOwnership:
         make_claimable=owner.make_claimable,
         claim=owner.claim,
         fenced_write=owner.fenced_write,
+        other_fenced_writes={"retry": owner.fenced_retry},
         renew_lease=owner.renew_lease,
         expire_lease=owner.expire_lease,
         reclaim_stalled=owner.reclaim_stalled,
@@ -167,6 +168,16 @@ class _AcceptsStaleTokens(_InMemoryOwner):
         return True
 
 
+class _FencesOnlyTheFinish(_InMemoryOwner):
+    """Breaks invariant 3 for its second write only: a stale owner can still send the row back."""
+
+    def fenced_retry(self, row_id: int, token: UUID) -> bool:
+        row = self.rows[row_id]
+        row.state = "READY"
+        row.lease_expires_at = None
+        return True
+
+
 class _ReaperIgnoresTheLease(_InMemoryOwner):
     """Breaks invariant 4: a live owner's row is taken from under it."""
 
@@ -243,6 +254,11 @@ def test_the_conforming_owner_passes_without_observe_too() -> None:
                 assert_lease_renewal_is_fenced.__name__,
             },
             id="fence-is-decorative",
+        ),
+        pytest.param(
+            _FencesOnlyTheFinish,
+            {assert_stale_token_is_rejected.__name__},
+            id="fence-guards-only-the-finish",
         ),
         pytest.param(
             _ReaperIgnoresTheLease,
