@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.4.0...v0.5.0) (2026-09-28)
+
+
+### Features
+
+* **contract:** histories declare their findings, one run per history set ([#19](https://github.com/gigaverse-app/due-work-harness/issues/19)) ([301ada7](https://github.com/gigaverse-app/due-work-harness/commit/301ada78f358bfc0f36c320bbf95cf2d06b26348))
+
 ## [0.4.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.3.0...v0.4.0) (2026-09-28)
 
 
