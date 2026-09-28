@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.1.1...v0.2.0) (2026-09-28)
+
+
+### Features
+
+* assert_pinned_outcomes for findings tables, and due_work_database for hand-written tests ([c18e37b](https://github.com/gigaverse-app/due-work-harness/commit/c18e37bc4bc15be26c41272c02dd173a4997b30b))
+* **crash-histories:** fail each signal receiver in turn ([c18e37b](https://github.com/gigaverse-app/due-work-harness/commit/c18e37bc4bc15be26c41272c02dd173a4997b30b))
+* **demos:** Wagtail 8.0 on django-tasks-db, unmodified from PyPI ([c18e37b](https://github.com/gigaverse-app/due-work-harness/commit/c18e37bc4bc15be26c41272c02dd173a4997b30b))
+* **django-tasks:** django-tasks-db integration, its worker as recovery and its own worker contract ([c18e37b](https://github.com/gigaverse-app/due-work-harness/commit/c18e37bc4bc15be26c41272c02dd173a4997b30b))
+* **django:** serialized_rollback for projects whose migrations seed rows ([c18e37b](https://github.com/gigaverse-app/due-work-harness/commit/c18e37bc4bc15be26c41272c02dd173a4997b30b))
+
+
+### Bug fixes
+
+* **celery:** count a non-eager publication once ([c18e37b](https://github.com/gigaverse-app/due-work-harness/commit/c18e37bc4bc15be26c41272c02dd173a4997b30b))
+
+
+### Documentation
+
+* embed the explainer and findings videos in the README ([#11](https://github.com/gigaverse-app/due-work-harness/issues/11)) ([f320002](https://github.com/gigaverse-app/due-work-harness/commit/f320002c7b26471c6e23b3e0f564dc9ab975f101))
+
 ## [0.1.1](https://github.com/gigaverse-app/due-work-harness/compare/v0.1.0...v0.1.1) (2026-09-28)
 
 
