@@ -53,9 +53,14 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-django", marker = "extra == 'django'", specifier = ">=4.8" },
+    { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0" },
+    { name = "redis", marker = "extra == 'rq'", specifier = ">=5.0" },
+    { name = "rq", marker = "extra == 'rq'", specifier = ">=2.6" },
     { name = "time-machine", marker = "extra == 'django'", specifier = ">=2.10" },
+    { name = "time-machine", marker = "extra == 'redis'", specifier = ">=2.10" },
+    { name = "time-machine", marker = "extra == 'rq'", specifier = ">=2.10" },
 ]
-provides-extras = ["celery", "dbos", "django", "procrastinate"]
+provides-extras = ["celery", "dbos", "django", "procrastinate", "redis", "rq"]
 
 [package.metadata.requires-dev]
 demos = [

@@ -70,24 +70,29 @@ class TestRQWorkerContract:
 SENT = f"sent {MESSAGE!r}"
 
 
-def _job(sent: int, *announced: str) -> TaskOutcome:
-    return TaskOutcome(status="finished", effect=(sent, announced))
+def _job(sent: int, *announced: str, status: str = "finished") -> TaskOutcome:
+    return TaskOutcome(status=status, effect=(sent, announced))
 
 
 def test_what_each_failure_costs(empty_redis: None) -> None:
     assert CONTRACT.handoff_delivery is not None
-    # Commit numbers are RQ's SimpleWorker's Redis writes for one job; see the RQ adopter's own table.
+    # Commit numbers are RQ's SimpleWorker's Redis writes for one job.
     assert_pinned_outcomes(
         CONTRACT.handoff_delivery,
         CONTRACT.handoffs[0],
         delivered=_job(1, SENT),
         outcomes={
-            "worker died after commit 13": _job(1, "failed: AbandonedJobError", SENT),
-            "worker died after commit 14": _job(2, "failed: AbandonedJobError", SENT),
+            # RQ 2.12.0, as the lock pins it. On RQ main the two FAILED entries do not happen and the numbers move.
+            "worker died after commit 10": _job(1, "failed: AbandonedJobError", SENT, status="failed"),
+            "worker died after commit 11": _job(1, "failed: AbandonedJobError", SENT),
+            "worker died after commit 12": _job(1, "failed: AbandonedJobError", SENT),
+            "worker died after commit 13": _job(2, "failed: AbandonedJobError", SENT),
             "worker died after external call 1": _job(2, "failed: AbandonedJobError", SENT),
-            "the reply to commit 13 was lost": _job(1, "failed: ConnectionError", SENT),
-            "the reply to commit 14 was lost": _job(2, "failed: ConnectionError", SENT),
-            "the reply to commit 15 was lost": _job(2, SENT, "failed: ConnectionError", SENT),
+            "the reply to commit 10 was lost": _job(1, "failed: AbandonedJobError", SENT, status="failed"),
+            "the reply to commit 11 was lost": _job(1, "failed: ConnectionError", SENT),
+            "the reply to commit 12 was lost": _job(1, "failed: ConnectionError", SENT),
+            "the reply to commit 13 was lost": _job(2, "failed: ConnectionError", SENT),
+            "the reply to commit 14 was lost": _job(2, SENT, "failed: ConnectionError", SENT),
             "signal receiver 1 failed": _job(2, "failed: ReceiverFailed", SENT),
         },
     )

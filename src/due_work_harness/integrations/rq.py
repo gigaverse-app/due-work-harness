@@ -181,6 +181,19 @@ def _executions(connection: Any, queue: Any, job_id: str) -> dict[str, float]:
     return {member: score for member, score in entries.items() if member.split(":", 1)[0] == job_id}
 
 
+def _for_execution(method: Callable[..., Any], execution: Any) -> dict[str, Any]:
+    """
+    ``execution=`` for a worker method that takes it, else nothing.
+
+    RQ 2.12 gives each worker one current execution and its settlements read it;
+    later versions run several per worker and take the execution explicitly. A
+    claim here owns its worker, so both mean the same execution.
+    """
+    import inspect
+
+    return {"execution": execution} if "execution" in inspect.signature(method).parameters else {}
+
+
 def ownership(connection: Any, *, enqueue: Callable[[], str], queue: str) -> FencedOwnership:
     """
     Profile B bound to RQ's own ownership: a worker's execution, its heartbeat, and ``StartedJobRegistry.cleanup``.
@@ -221,7 +234,10 @@ def ownership(connection: Any, *, enqueue: Callable[[], str], queue: str) -> Fen
         worker, job, execution = claims[token]
         worker.handle_execution_ended(job, rq_queue, job.success_callback_timeout)
         worker.handle_job_success(
-            job=job, queue=rq_queue, started_job_registry=rq_queue.started_job_registry, execution=execution
+            job=job,
+            queue=rq_queue,
+            started_job_registry=rq_queue.started_job_registry,
+            **_for_execution(worker.handle_job_success, execution),
         )
         return True
 
@@ -234,7 +250,7 @@ def ownership(connection: Any, *, enqueue: Callable[[], str], queue: str) -> Fen
             rq_queue,
             started_job_registry=rq_queue.started_job_registry,
             exc_string="the attempt failed",
-            execution=execution,
+            **_for_execution(worker.handle_job_failure, execution),
         )
         return True
 
@@ -242,7 +258,7 @@ def ownership(connection: Any, *, enqueue: Callable[[], str], queue: str) -> Fen
         # A heartbeat extends only an execution still in the registry (RQ adds with xx=True): report
         # whether this one's lease was the one renewed.
         worker, job, execution = claims[token]
-        worker.maintain_heartbeats(job, execution)
+        worker.maintain_heartbeats(job, **_for_execution(worker.maintain_heartbeats, execution))
         return f"{job_id}:{execution.id}" in _executions(connection, rq_queue, job_id)
 
     def expire(job_id: str) -> None:
