@@ -47,7 +47,12 @@ due_work_harness = "due_work_harness.pytest_plugin"
 lint = ["ruff>=0.8", "pyrefly>=1.0,<2", "django-stubs>=5.1", "celery-types>=0.22"]
 # The demo applications' own runtimes; procrastinate is installed from the pinned
 # demo checkout (its demos ship only in the source tree) by the demos CI job.
-demos = ["dbos==3.1.0", "fastapi[standard]>=0.115.0"]
+demos = [
+    "dbos==3.1.0",
+    "django-tasks-db==0.13.0",
+    "fastapi[standard]>=0.115.0",
+    "wagtail==8.0",
+]
 # Adopters split sessions across workers; the verify option must hold there too.
 xdist = ["pytest-xdist>=3.6"]
 dev = [{ include-group = "lint" }, { include-group = "xdist" }]

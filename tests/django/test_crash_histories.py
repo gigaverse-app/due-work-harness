@@ -11,7 +11,8 @@ external call find a notification that recovery repeats, and converge once the
 recipient honours an idempotency key. Failing each after-commit callback finds
 a handoff that a failing *earlier* callback skips, and shows what ``robust=True``
 does and does not fix. Refusing each Celery publication, as a broker that is down
-would, finds a handoff behind an earlier publish. Agreement alone is not a pass: a recovery that recovers
+would, finds a handoff behind an earlier publish; failing each receiver of a signal finds one
+behind an earlier receiver. Agreement alone is not a pass: a recovery that recovers
 nothing fails.
 """
 
@@ -209,6 +210,23 @@ def test_a_refused_publication_skips_the_handoff_after_it() -> None:
     with pytest.raises(AssertionError) as divergence:
         _converges(ref.RETRY_DELIVERY, _history(ref.fail_attempt_publishing_after_a_notification))
     assert "'the broker refused publication 1': ('retryable_failed', ())" in str(divergence.value)
+
+
+def test_a_handoff_committed_with_its_state_survives_every_failing_receiver() -> None:
+    history = _history(ref.fail_attempt_atomically_then_announcing_it)
+    runs = crash_histories(ref.RETRY_DELIVERY, history)
+    assert [run.label for run in runs if run.label.startswith("signal")] == [
+        "signal receiver 1 failed",
+        "signal receiver 2 failed",
+    ]
+    _converges(ref.RETRY_DELIVERY, history)
+
+
+def test_a_failing_receiver_skips_the_handoff_the_next_one_makes() -> None:
+    with pytest.raises(AssertionError) as divergence:
+        _converges(ref.RETRY_DELIVERY, _history(ref.fail_attempt_announcing_it))
+    assert "'signal receiver 1 failed': ('retryable_failed', ())" in str(divergence.value)
+    assert "'signal receiver 2 failed': ('retryable_failed', ())" in str(divergence.value)
 
 
 def test_robust_callbacks_protect_later_callbacks_but_not_their_own_handoff() -> None:

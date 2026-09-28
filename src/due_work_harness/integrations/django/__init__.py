@@ -28,17 +28,20 @@ What the host supplies:
   every ``Lifecycle`` must say why its worker publishes nothing.
 """
 
+import functools
 from collections.abc import Callable, Collection, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime
 from typing import Any
 
-from due_work_harness.host import Host, PublicationBreaker
+from due_work_harness.host import Host, PublicationBreaker, ReceiverBreaker
 
 
-def _database_marks(transactional: bool) -> list[Any]:
+def _database_marks(transactional: bool, *, serialized_rollback: bool = False) -> list[Any]:
     import pytest
 
+    if transactional and serialized_rollback:
+        return [pytest.mark.django_db(transaction=True, serialized_rollback=True)]
     return [pytest.mark.django_db(transaction=transactional)]
 
 
@@ -72,9 +75,19 @@ def django_host(
     ambient_context: Callable[[], object] | None = None,
     publication_recorder: Callable[[], AbstractContextManager[list[str]]] | None = None,
     publication_breaker: PublicationBreaker | None = None,
+    receiver_breaker: ReceiverBreaker | None = None,
     lifecycle_proofs: bool = True,
+    serialized_rollback: bool = False,
 ) -> Host:
-    """A host for a Django project whose own code lives in ``production_packages``."""
+    """
+    A host for a Django project whose own code lives in ``production_packages``.
+
+    ``serialized_rollback`` is for a project whose migrations seed rows its code
+    needs, as a CMS's root page, default site or root collection: every case that
+    commits for real flushes the database afterwards, and the flush would delete
+    them. With it, pytest-django restores the database's migrated contents after
+    each such case (it needs the test database created in the session, not reused).
+    """
     from due_work_harness.integrations.django.callbacks import django_callback_breaker
     from due_work_harness.integrations.django.commits import django_worker_killer
     from due_work_harness.integrations.django.selection import DjangoSelectionInspector
@@ -86,7 +99,7 @@ def django_host(
         sweep_proofs = TERMINAL_OBLIGATION_PROOFS
     return Host(
         production_packages=frozenset(production_packages),
-        database_marks=_database_marks,
+        database_marks=functools.partial(_database_marks, serialized_rollback=serialized_rollback),
         in_transaction=_in_transaction,
         worker_killer=django_worker_killer,
         callback_breaker=django_callback_breaker,
@@ -95,6 +108,7 @@ def django_host(
         ambient_context=ambient_context,
         publication_recorder=publication_recorder,
         publication_breaker=publication_breaker,
+        receiver_breaker=receiver_breaker,
         frozen_clock=_frozen_clock,
         sweep_proofs=sweep_proofs,
     )

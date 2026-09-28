@@ -11,7 +11,7 @@ twice.
 
 The reference outcome is **normal operation**: the real transition runs with
 its notifications delivered, then the bounded recovery production performs.
-Five families of histories must reach that same outcome:
+Six families of histories must reach that same outcome:
 
 * **Notifications lost** — the same transition, every message it published
   dropped, then recovery. This finds work that exists only as a message.
@@ -40,6 +40,12 @@ Five families of histories must reach that same outcome:
   failed publish takes down with it: work handed off only to that message, and
   everything the code would have done after the publish — the rest of the
   callback, the callbacks after it, the caller's response.
+* **Each signal receiver failing** — when the host has a ``receiver_breaker``
+  for the signals an adopter names, for each receiver i those signals run, the
+  transition reruns and receiver i raises instead of running. This finds what a
+  framework does with a failing hook: a worker that records a finished task's
+  outcome and then lets a ``task_finished`` receiver's error rewrite it, or a
+  handoff made by a receiver that an earlier one's failure skips.
 
 The verdict is differential: the adopter supplies how to arrange the state, the
 real transition and an observation, never the expected value. Positive
@@ -208,17 +214,22 @@ class HistoryRun(HarnessModel):
     calls: int = 0
     callbacks: int = 0
     publications: int = 0
-    #: Whether the run was interrupted: a death, a failed callback, a refused publication, or its messages lost.
+    receivers: int = 0
+    #: Whether the run was interrupted: a death, a failed callback or receiver, a refused publication,
+    #: or its messages lost.
     interrupted: bool = False
 
 
 class _Worker:
     """A transition's worker as the history sees it: commits from the host, calls from the seams."""
 
-    def __init__(self, database: Any, callbacks: Any, publications: Any, crash_after_call: int | None) -> None:
+    def __init__(
+        self, database: Any, callbacks: Any, publications: Any, receivers: Any, crash_after_call: int | None
+    ) -> None:
         self._database = database
         self._callbacks = callbacks
         self._publications = publications
+        self._receivers = receivers
         self.calls = 0
         self._crash_after_call = crash_after_call
         self._died_after_call = False
@@ -242,6 +253,19 @@ class _Worker:
     @property
     def refusal(self) -> BaseException | None:
         return self._publications.refusal if self._publications is not None else None
+
+    @property
+    def receivers(self) -> int:
+        return self._receivers.receivers if self._receivers is not None else 0
+
+    @property
+    def receiver_failure(self) -> BaseException | None:
+        return self._receivers.failure if self._receivers is not None else None
+
+    @property
+    def injected_failures(self) -> tuple[BaseException, ...]:
+        """The ordinary exceptions this run injected, which may reach the caller as the application lets them."""
+        return tuple(failure for failure in (self.refusal, self.receiver_failure) if failure is not None)
 
     @property
     def dead(self) -> bool:
@@ -268,6 +292,7 @@ def _worker(
     crash_after_call: int | None,
     fail_callback: int | None,
     refuse_publication: int | None,
+    fail_receiver: int | None,
 ) -> Iterator[_Worker]:
     host = current_host()
     with ExitStack() as stack:
@@ -276,8 +301,10 @@ def _worker(
         callbacks = stack.enter_context(breaker(fail_callback)) if breaker is not None else None
         refuser = host.publication_breaker
         publications = stack.enter_context(refuser(refuse_publication)) if refuser is not None else None
+        hooks = host.receiver_breaker
+        receivers = stack.enter_context(hooks(fail_receiver)) if hooks is not None else None
         patch = stack.enter_context(pytest.MonkeyPatch.context())
-        worker = _Worker(database, callbacks, publications, crash_after_call)
+        worker = _Worker(database, callbacks, publications, receivers, crash_after_call)
 
         def seam(call: ExternalCall, original: Callable[..., Any]) -> Callable[..., Any]:
             def dying_after(*args: Any, **kwargs: Any) -> Any:
@@ -303,11 +330,14 @@ def _run(
     crash_after_call: int | None = None,
     fail_callback: int | None = None,
     refuse_publication: int | None = None,
+    fail_receiver: int | None = None,
 ) -> HistoryRun:
     handle = history.arrange()
     before = history.observe(handle)
     with delivery.session() as session:
-        with _worker(history, crash_after, crash_after_call, fail_callback, refuse_publication) as worker:
+        with _worker(
+            history, crash_after, crash_after_call, fail_callback, refuse_publication, fail_receiver
+        ) as worker:
             try:
                 history.transition(handle)
             except WorkerDied:
@@ -316,8 +346,9 @@ def _run(
                 # The failure reached the caller, as the framework re-raised it: a real request errors here.
                 assert worker.callback_failed, "CallbackFailed escaped from something other than the failed callback"
             except Exception as error:
-                # The refused publish reached the caller, as the application let it: a real request errors here.
-                if worker.refusal is None or not _caused_by(error, worker.refusal):
+                # A refused publish or a failed receiver reached the caller, as the application let it:
+                # a real request errors here.
+                if not any(_caused_by(error, failure) for failure in worker.injected_failures):
                     raise
             else:
                 assert not worker.dead, (
@@ -325,13 +356,14 @@ def _run(
                     f"(a BaseException) and carried on. A dead process runs nothing further, so a handoff made "
                     f"after the catch would converge falsely; let it propagate"
                 )
-            commits, calls, callbacks, publications = (
+            commits, calls, callbacks, publications, receivers = (
                 worker.commits,
                 worker.calls,
                 worker.callbacks,
                 worker.publications,
+                worker.receivers,
             )
-            interrupted = worker.dead or worker.callback_failed or worker.refusal is not None
+            interrupted = worker.dead or worker.callback_failed or bool(worker.injected_failures)
         if lose:
             session.lose()
             midway = history.observe(handle)
@@ -348,6 +380,7 @@ def _run(
         calls=calls,
         callbacks=callbacks,
         publications=publications,
+        receivers=receivers,
         interrupted=interrupted or lose,
     )
 
@@ -437,6 +470,14 @@ def crash_histories(delivery: Delivery, history: HandoffHistory[Any, Any]) -> li
             f"not reproducible"
         )
         runs.append(refused)
+    for i in range(1, counted.receivers + 1):
+        failed = _run(delivery, history, label=f"signal receiver {i} failed", fail_receiver=i)
+        assert failed.interrupted, (
+            f"{delivery.name}: handoff {history.name!r} ran {counted.receivers} signal receiver(s), but the rerun "
+            f"never reached receiver {i}. The transition sends signals nondeterministically, so its histories are "
+            f"not reproducible"
+        )
+        runs.append(failed)
     return runs
 
 

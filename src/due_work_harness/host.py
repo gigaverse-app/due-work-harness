@@ -70,6 +70,21 @@ class CallbackBreaker(Protocol):
     def __call__(self, fail_at: int | None) -> AbstractContextManager[Any]: ...
 
 
+class ReceiverBreaker(Protocol):
+    """
+    Counts the signal (or hook) receivers a worker runs, and makes the chosen one fail.
+
+    ``fail_at`` is the 1-based receiver to fail, or ``None`` to only count. The
+    context yields an object whose ``receivers`` attribute is the count so far
+    and whose ``failure`` attribute is the exception the failed receiver raised,
+    or ``None``. The chosen receiver raises
+    :class:`~due_work_harness.worker_death.ReceiverFailed` instead of running;
+    everything after that is the framework's own dispatch.
+    """
+
+    def __call__(self, fail_at: int | None) -> AbstractContextManager[Any]: ...
+
+
 class PublicationBreaker(Protocol):
     """
     Counts the messages a worker publishes to its broker, and makes the chosen publish fail.
@@ -150,6 +165,11 @@ class Host(HarnessModel):
     #: broker that is down would; crash histories refuse each publication in
     #: turn. Optional: without it, that family of histories does not run.
     publication_breaker: SkipValidation[PublicationBreaker | None] = None
+
+    #: Counts the receivers of the signals an adopter names and fails the chosen
+    #: one; crash histories fail each receiver in turn. Optional: without it,
+    #: that family of histories does not run.
+    receiver_breaker: SkipValidation[ReceiverBreaker | None] = None
 
     #: The connection lifecycle of a thread a proof starts, for example to race
     #: two claims on two real connections.
