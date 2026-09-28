@@ -170,6 +170,17 @@ every proof measure the copy, and it stays green forever. So the harness:
 
 The full catalogue of lies it refuses: [false greens](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/false-greens.md).
 
+A contract class is empty in the source, so `pytest --due-work-summary` lists
+what each one generated after the run: every case with its outcome, and each
+declared gap's reason beside its strict xfail.
+
+```text
+test_wagtail_tasks.py::TestDjangoTasksDb: 7 passed, 5 xfailed
+  XFAIL   A-known_gap  (the worker selects only READY tasks, so a task left RUNNING by a worker that died is…)
+  PASSED  D-assert_retention_preserves_non_terminal_work
+  ...
+```
+
 ## No handoff left behind: the coverage scan
 
 A crash history proves one handoff; the coverage check makes sure none are
