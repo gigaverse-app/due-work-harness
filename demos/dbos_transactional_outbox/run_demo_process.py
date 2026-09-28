@@ -4,12 +4,13 @@ FAULT INJECTION: one run of the unmodified demo in its own process, dying where 
 The child starts the application through the demo's own ``main()`` and places
 one order through its ``create_order`` endpoint. ``uvicorn.run`` is the only
 replacement: instead of serving HTTP it places the order and waits.
-``DIE_AT`` chooses the death:
+The parent chooses the death through due-work-harness's child protocol
+(``process_histories.fault_environment``), and the child dies with ``die_here``:
 
-* unset          - wait until the notification is marked sent, then exit 0;
-* ``after_order`` - ``os._exit`` right after the order and its workflow committed;
-* ``before_send`` - ``os._exit`` when the notification step starts, before sending;
-* ``after_send``  - ``os._exit`` right after the send returns, before DBOS records the step.
+* no fault        - wait until the notification is marked sent, then exit 0;
+* ``after_order`` - right after the order and its workflow committed;
+* ``before_send`` - when the notification step starts, before sending;
+* ``after_send``  - right after the send returns, before DBOS records the step.
 
 Each send appends a line to ``SENDS_FILE``: that file is the customer's inbox.
 """
@@ -20,20 +21,18 @@ import time
 from types import SimpleNamespace
 from unittest import mock
 
+from due_work_harness.process_histories import die_here
+
 sys.path.insert(0, os.environ["DEMO_DIR"])
 import transactional_enqueue as demo  # noqa: E402
-
-die_at = os.environ.get("DIE_AT", "")
 
 
 def send(_seconds: float) -> None:
     # EXTERNAL SEAM: the demo's time.sleep(3) simulates the network call that sends the notification.
-    if die_at == "before_send":
-        os._exit(1)
+    die_here("before_send")
     with open(os.environ["SENDS_FILE"], "a") as inbox:
         inbox.write(f"{os.environ['CUSTOMER']}\n")
-    if die_at == "after_send":
-        os._exit(1)
+    die_here("after_send")
 
 
 def serve(_app: object, **_kwargs: object) -> None:
@@ -41,8 +40,7 @@ def serve(_app: object, **_kwargs: object) -> None:
         "order_id"
     ]
     print(f"ORDER {order_id}", flush=True)
-    if die_at == "after_order":
-        os._exit(1)
+    die_here("after_order")
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if next(o for o in demo.list_orders() if o["order_id"] == order_id)["notification_status"] == "SENT":

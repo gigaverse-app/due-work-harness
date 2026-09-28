@@ -6,12 +6,20 @@ leaving the reference ledger exactly as a process that died at each point
 would, which is all the verdict can see anyway.
 """
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from due_work_harness.process_histories import (
     ProcessHistory,
     assert_pinned_process_outcomes,
     assert_process_deaths_converge,
+    fault_environment,
+    fault_fires,
+    fault_happened,
 )
 from due_work_harness.references import in_memory_handoffs as ref
 
@@ -90,3 +98,31 @@ def test_a_failure_that_never_happened_is_not_a_history(ledger_host: object) -> 
     )
     with pytest.raises(AssertionError, match="never interrupted"):
         assert_pinned_process_outcomes(history, delivered=("complete", 1), outcomes={})
+
+
+def test_a_fault_fires_only_where_the_parent_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "environ", {**os.environ, **fault_environment("after_send")})
+    assert not fault_fires("before_send")
+    assert fault_fires("after_send")
+    # With no marker there is no once-guard: the child asked is the child that fails.
+    assert fault_fires("after_send")
+
+
+def test_a_marker_makes_a_fault_fire_once_across_processes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    marker = tmp_path / "fault"
+    monkeypatch.setattr(os, "environ", {**os.environ, **fault_environment("after_send", marker)})
+    assert not fault_happened(marker)
+    assert fault_fires("after_send")
+    assert not fault_fires("after_send")
+    assert fault_happened(marker)
+
+
+CHILD = "from due_work_harness.process_histories import die_here\ndie_here('after_send')\nprint('lived')\n"
+
+
+@pytest.mark.parametrize(("point", "status", "output"), [("after_send", 1, ""), (None, 0, "lived\n")])
+def test_a_child_dies_where_it_is_told(point: str | None, status: int, output: str) -> None:
+    child = subprocess.run(
+        [sys.executable, "-c", CHILD], env={**os.environ, **fault_environment(point)}, capture_output=True, text=True
+    )
+    assert (child.returncode, child.stdout) == (status, output)

@@ -61,14 +61,22 @@ from due_work_harness.integrations.task_queues import (
     settled_by_one_worker,
     the_obligation_is_the,
 )
-from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
+from due_work_harness.process_histories import (
+    FAULT_VARIABLE,
+    ProcessHistory,
+    assert_process_deaths_converge,
+    fault_environment,
+    fault_fires,
+    fault_happened,
+)
 
 #: Where the pool child dies.
 DEATH_POINTS = ("task_prerun", "mark_as_done", "task_postrun")
 #: What fails while the worker lives on.
 FAILURE_POINTS = ("the task's on_success hook raised", "the broker refused the task's link")
 
-_FAULT, _TASK, _MARKER = "DUE_WORK_CELERY_FAULT", "DUE_WORK_CELERY_TASK", "DUE_WORK_CELERY_MARKER"
+#: Which task the child fails; the fault itself travels in process_histories' protocol.
+_TASK = "DUE_WORK_CELERY_TASK"
 
 
 @contextmanager
@@ -90,13 +98,7 @@ def running_worker(
     and ``marker`` is created. On exit the worker gets a warm shutdown, as a
     deploy would, and is killed if it does not stop.
     """
-    environ = {
-        **os.environ,
-        **(env or {}),
-        _FAULT: fault or "",
-        _TASK: task or "",
-        _MARKER: str(marker or ""),
-    }
+    environ = {**os.environ, **(env or {}), **fault_environment(fault, marker), _TASK: task or ""}
     output = open(log, "ab") if log is not None else subprocess.DEVNULL  # noqa: SIM115 - closed below
     command = [sys.executable, "-m", "due_work_harness.integrations.celery_worker", app, *worker_args]
     process = subprocess.Popen(command, env=environ, stdout=output, stderr=subprocess.STDOUT)
@@ -150,7 +152,7 @@ def worker_history[HandleT, ObservationT](
                 handle = send()
                 wait_until(lambda: settled(handle), timeout=timeout, what=f"{name}: the task did not settle")
                 time.sleep(quiet)
-            happened = marker.exists()
+            happened = fault_happened(marker)
         return handle, 0 if fault is None else int(happened)
 
     def recover(handle: HandleT) -> None:
@@ -230,16 +232,7 @@ def worker_contract(
     )
 
 
-def _fire_once(marker: str) -> bool:
-    """Whether this is the fault's one occurrence, across the worker's processes."""
-    try:
-        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-    except FileExistsError:
-        return False
-    return True
-
-
-def _install(app: Any, fault: str, task: str, marker: str) -> None:
+def _install(app: Any, fault: str, task: str) -> None:
     """FAULT INJECTION, in the worker process before it forks its pool."""
     from celery import signals
     from celery.canvas import Signature
@@ -248,7 +241,7 @@ def _install(app: Any, fault: str, task: str, marker: str) -> None:
     from due_work_harness.worker_death import ReceiverFailed
 
     def ours(name: str | None) -> bool:
-        return name == task and _fire_once(marker)
+        return name == task and fault_fires(fault)
 
     if fault == "task_prerun":
 
@@ -280,7 +273,7 @@ def _install(app: Any, fault: str, task: str, marker: str) -> None:
         target = app.tasks[task]
 
         def on_success(*_args: Any, **_kwargs: Any) -> None:
-            if _fire_once(marker):
+            if fault_fires(fault):
                 raise ReceiverFailed(f"the on_success hook of {task} failed")
 
         type(target).on_success = on_success
@@ -288,7 +281,7 @@ def _install(app: Any, fault: str, task: str, marker: str) -> None:
         publish = Signature.apply_async
 
         def refusing(self: Any, *args: Any, **kwargs: Any) -> Any:
-            if self.task != task and _fire_once(marker):
+            if self.task != task and fault_fires(fault):
                 raise OperationalError(f"the broker refused {self.task}: [Errno 111] Connection refused")
             return publish(self, *args, **kwargs)
 
@@ -301,9 +294,9 @@ def main(argv: Sequence[str]) -> None:
     """The child: import the application, install its one fault, run its worker."""
     module, _, attribute = argv[0].partition(":")
     app = getattr(importlib.import_module(module), attribute or "app")
-    fault = os.environ.get(_FAULT, "")
+    fault = os.environ.get(FAULT_VARIABLE, "")
     if fault:
-        _install(app, fault, os.environ[_TASK], os.environ[_MARKER])
+        _install(app, fault, os.environ[_TASK])
     app.worker_main(
         [
             "worker",

@@ -52,7 +52,7 @@ from due_work_harness import (
 )
 from due_work_harness.integrations.dbos import OUTSTANDING, launched, restart_until, wait_until, workflow_status
 from due_work_harness.integrations.dbos import retention as dbos_retention
-from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
+from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge, fault_environment
 
 HERE = Path(__file__).resolve().parent
 DEMO_DIR = HERE.parent / ".upstream" / "dbos-demo-apps" / "python" / "transactional-outbox"
@@ -90,9 +90,13 @@ def observe(order_id: int) -> tuple[str | None, int]:
 def place_order_in_a_child_process(death_point: str | None) -> tuple[int, int]:
     """FAULT INJECTION: the demo places one order in its own process, dying at ``death_point``."""
     customer = f"customer-{uuid4().hex[:8]}"
-    env = {**os.environ, "DEMO_DIR": str(DEMO_DIR), "SENDS_FILE": str(INBOX), "CUSTOMER": customer}
-    if death_point is not None:
-        env["DIE_AT"] = death_point
+    env = {
+        **os.environ,
+        "DEMO_DIR": str(DEMO_DIR),
+        "SENDS_FILE": str(INBOX),
+        "CUSTOMER": customer,
+        **fault_environment(death_point),
+    }
     child = subprocess.run(
         [sys.executable, str(HERE / "run_demo_process.py")], env=env, capture_output=True, text=True, timeout=120
     )
