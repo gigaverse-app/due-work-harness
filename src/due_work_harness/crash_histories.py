@@ -11,7 +11,7 @@ twice.
 
 The reference outcome is **normal operation**: the real transition runs with
 its notifications delivered, then the bounded recovery production performs.
-Six families of histories must reach that same outcome:
+Seven families of histories must reach that same outcome:
 
 * **Notifications lost** — the same transition, every message it published
   dropped, then recovery. This finds work that exists only as a message.
@@ -46,6 +46,13 @@ Six families of histories must reach that same outcome:
   framework does with a failing hook: a worker that records a finished task's
   outcome and then lets a ``task_finished`` receiver's error rewrite it, or a
   handoff made by a receiver that an earlier one's failure skips.
+* **The reply to each commit lost** — when the host has a ``reply_breaker``,
+  for each commit k the transition reruns, commit k lands, and the client then
+  raises its connection error, as a connection dropped between the server
+  applying a write and the worker reading the answer would. The process lives
+  on and believes the write may have failed. This finds error handling that
+  treats a committed outcome as a failure: a task recorded as finished and then
+  rewritten as failed, or retried and run a second time.
 
 The verdict is differential: the adopter supplies how to arrange the state, the
 real transition and an observation, never the expected value. Positive
@@ -215,8 +222,9 @@ class HistoryRun(HarnessModel):
     callbacks: int = 0
     publications: int = 0
     receivers: int = 0
+    replies: int = 0
     #: Whether the run was interrupted: a death, a failed callback or receiver, a refused publication,
-    #: or its messages lost.
+    #: a lost reply, or its messages lost.
     interrupted: bool = False
 
 
@@ -255,6 +263,14 @@ _FAULT_FAMILIES = (
         made="published {n} message(s)",
         occurrence="publication",
         varies="publishes",
+    ),
+    _FaultFamily(
+        breaker="reply_breaker",
+        counted="replies",
+        label="the reply to commit {i} was lost",
+        made="made {n} commit(s)",
+        occurrence="commit",
+        varies="commits",
     ),
     _FaultFamily(
         breaker="receiver_breaker",
@@ -520,22 +536,23 @@ def assert_pinned_outcomes(
     """
     What every history of a handoff leaves, pinned: an adopter's findings table.
 
-    Normal operation must reach ``delivered``, and each interrupted history
-    must reach exactly its entry in ``outcomes``, keyed by label. A legacy gap
-    declared as one strict xfail says the handoff diverges; this says precisely
-    how, history by history, so a change upstream or in the harness shows which
+    Normal operation must reach ``delivered``. Each history named in
+    ``outcomes`` must reach exactly its entry, keyed by label, and must run;
+    every other history must reach ``delivered``, so a table lists only the
+    findings however many commits the transition makes. A legacy gap declared
+    as one strict xfail says the handoff diverges; this says precisely how,
+    history by history, so a change upstream or in the harness shows which
     entry moved. Returns the runs for any further assertion.
     """
     runs = crash_histories(delivery, history)
     name = f"{delivery.name}: handoff {history.name!r}"
     assert runs[0].after == delivered, f"{name}: normal operation reaches {runs[0].after!r}, not {delivered!r}"
     actual = {run.label: run.after for run in runs[1:]}
-    moved = {
-        label: actual.get(label, "<not run>")
-        for label in actual.keys() | outcomes.keys()
-        if actual.get(label) != outcomes.get(label)
-    }
+    expected = {label: outcomes.get(label, delivered) for label in actual}
+    moved = {label: actual[label] for label in actual if actual[label] != expected[label]}
+    moved |= {label: "<not run>" for label in outcomes.keys() - actual.keys()}
     assert not moved, f"{name}: these histories no longer leave what the table pins: " + "; ".join(
-        f"{label}: pinned {outcomes.get(label, '<not pinned>')!r}, now {now!r}" for label, now in sorted(moved.items())
+        f"{label}: pinned {repr(outcomes[label]) if label in outcomes else f'normal operation ({delivered!r})'}, now {now!r}"
+        for label, now in sorted(moved.items())
     )
     return runs

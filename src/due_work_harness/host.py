@@ -111,6 +111,21 @@ class PublicationBreaker(Protocol):
     def __call__(self, refuse_at: int | None) -> AbstractContextManager[Any]: ...
 
 
+class ReplyBreaker(Protocol):
+    """
+    Counts the commits a worker makes, and loses the reply to the chosen one.
+
+    ``lose_at`` is the 1-based commit whose reply is lost, or ``None`` to only
+    count. The commit lands; then the client raises its own connection error,
+    as it does when the connection drops between the server applying a write
+    and the worker reading the answer, while the process lives on. The context
+    yields :class:`CountedFaults`. Everything after that is the application's
+    own error handling, which believes the write may not have happened.
+    """
+
+    def __call__(self, lose_at: int | None) -> AbstractContextManager[Any]: ...
+
+
 class SelectionInspector(Protocol):
     """
     Facts about a selection that only the database can answer.
@@ -180,6 +195,11 @@ class Host(HarnessModel):
     #: one; crash histories fail each receiver in turn. Optional: without it,
     #: that family of histories does not run.
     receiver_breaker: SkipValidation[ReceiverBreaker | None] = None
+
+    #: Counts the worker's commits and loses the reply to the chosen one: the
+    #: write lands and the worker sees a connection error. Crash histories lose
+    #: each reply in turn. Optional: without it, that family does not run.
+    reply_breaker: SkipValidation[ReplyBreaker | None] = None
 
     #: The connection lifecycle of a thread a proof starts, for example to race
     #: two claims on two real connections.

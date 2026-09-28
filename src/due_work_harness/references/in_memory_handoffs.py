@@ -7,7 +7,10 @@ after-commit callbacks, and an outbox of published messages. :func:`ledger_kille
 is its :class:`~due_work_harness.host.WorkerKiller`: it counts the ledger's
 commits and kills the worker right after the chosen one — dropping pending
 after-commit callbacks and refusing every later write, as a dead process's
-connection would.
+connection would. :func:`ledger_reply_breaker` is its
+:class:`~due_work_harness.host.ReplyBreaker`: the chosen commit lands, then
+:class:`LedgerConnectionError` reaches the caller, as a dropped connection's
+would.
 
 The attempt lifecycle below reduces a retrying pipeline to its handoff shapes:
 a failure and the successor it owes committed together, split across two
@@ -38,6 +41,25 @@ class _Death(MutableHarnessModel):
         raise WorkerDied(reason)
 
 
+class LedgerConnectionError(Exception):
+    """The ledger's connection dropped after a write landed, before its answer arrived."""
+
+
+class _LostReplies:
+    """The ledger's commits as a reply breaker counts them (a ``CountedFaults``)."""
+
+    def __init__(self, lose_at: int | None) -> None:
+        self._lose_at = lose_at
+        self.count = 0
+        self.failure: LedgerConnectionError | None = None
+
+    def committed(self) -> None:
+        self.count += 1
+        if self.count == self._lose_at:
+            self.failure = LedgerConnectionError(f"the reply to commit {self.count} was lost; the write landed")
+            raise self.failure
+
+
 class Ledger(MutableHarnessModel):
     rows: dict[int, dict[str, Any]] = pydantic.Field(default_factory=dict)
     outbox: list[tuple[str, int]] = pydantic.Field(default_factory=list)
@@ -45,6 +67,7 @@ class Ledger(MutableHarnessModel):
     _pending: list[tuple[int, dict[str, Any]]] | None = pydantic.PrivateAttr(default=None)
     _after_commit: list[Callable[[], None]] = pydantic.PrivateAttr(default_factory=list)
     _worker: _Death | None = pydantic.PrivateAttr(default=None)
+    _replies: _LostReplies | None = pydantic.PrivateAttr(default=None)
 
     def insert(self, **values: Any) -> int:
         row_id = self._next_id
@@ -101,12 +124,13 @@ class Ledger(MutableHarnessModel):
 
     def _committed(self) -> None:
         worker = self._worker
-        if worker is None:
-            return
-        worker.commits += 1
-        if worker.commits == worker.kill_after:
-            self._after_commit.clear()
-            worker.kill_now(f"worker died right after commit {worker.commits}")
+        if worker is not None:
+            worker.commits += 1
+            if worker.commits == worker.kill_after:
+                self._after_commit.clear()
+                worker.kill_now(f"worker died right after commit {worker.commits}")
+        if self._replies is not None:
+            self._replies.committed()
 
     def _refuse_if_dead(self) -> None:
         if self._worker is not None and self._worker.dead:
@@ -126,6 +150,17 @@ def ledger_killer(kill_after: int | None) -> Iterator[_Death]:
     finally:
         LEDGER._worker = None
         LEDGER._pending, LEDGER._after_commit = None, []
+
+
+@contextmanager
+def ledger_reply_breaker(lose_at: int | None) -> Iterator[_LostReplies]:
+    """The ledger's ReplyBreaker: count commits, lose the reply to commit ``lose_at``."""
+    replies = _LostReplies(lose_at)
+    LEDGER._replies = replies
+    try:
+        yield replies
+    finally:
+        LEDGER._replies = None
 
 
 # --- The reference attempt lifecycle -------------------------------------------------------
@@ -275,6 +310,42 @@ def recover_running_notifying_once() -> None:
 
 NOTIFYING_DELIVERY = CallableDelivery(name="notifications", recover=recover_running_notifying)
 NOTIFYING_ONCE_DELIVERY = CallableDelivery(name="keyed notifications", recover=recover_running_notifying_once)
+
+
+# --- Completion under a lost reply: what the worker does when a write's answer never arrives -------
+
+FAILED = "failed"
+
+
+def complete_failing_on_error(attempt: int) -> None:
+    """Records its progress, then completion, and treats an error from that write as a failed attempt."""
+    LEDGER.update(attempt, progress="done")
+    try:
+        LEDGER.update(attempt, status=COMPLETE)
+    except LedgerConnectionError:
+        LEDGER.update(attempt, status=FAILED)
+
+
+def complete_checking_on_error(attempt: int) -> None:
+    """The conforming shape: after an error, it reads back what landed before deciding."""
+    LEDGER.update(attempt, progress="done")
+    try:
+        LEDGER.update(attempt, status=COMPLETE)
+    except LedgerConnectionError:
+        if LEDGER.get(attempt)["status"] != COMPLETE:
+            LEDGER.update(attempt, status=FAILED)
+
+
+def attempt_status(attempt: int) -> str:
+    return LEDGER.get(attempt)["status"]
+
+
+def recover_running_completions() -> None:
+    for attempt in LEDGER.select(status=RUNNING):
+        complete_checking_on_error(attempt)
+
+
+COMPLETION_DELIVERY = CallableDelivery(name="completions", recover=recover_running_completions)
 
 
 def reset() -> None:

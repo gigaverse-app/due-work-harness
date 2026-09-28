@@ -8,7 +8,7 @@ a commit hook, a repeated notification. Agreement alone is not a pass: an inert
 recovery fails the positive control.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -18,6 +18,7 @@ from due_work_harness.crash_histories import (
     ExternalCall,
     HandoffHistory,
     assert_crash_at_every_commit_converges,
+    assert_pinned_outcomes,
 )
 from due_work_harness.host import Host, hosted
 from due_work_harness.references import in_memory_handoffs as ref
@@ -119,3 +120,48 @@ def test_a_test_authored_recovery_is_refused(ledger_host: Host) -> None:
 def test_crash_histories_need_a_worker_killer() -> None:
     with hosted(Host()), pytest.raises(AssertionError, match="worker_killer"):
         assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, _retry(ref.fail_with_atomic_handoff))
+
+
+def _completion(transition: Callable[[int], Any]) -> HandoffHistory[int, Any]:
+    return HandoffHistory(
+        name="completion", arrange=ref.running_attempt, transition=transition, observe=ref.attempt_status
+    )
+
+
+@pytest.fixture
+def replying_ledger_host() -> Iterator[Host]:
+    """The ledger host, also losing the reply to each commit in turn."""
+    ref.reset()
+    with hosted(Host(worker_killer=ref.ledger_killer, reply_breaker=ref.ledger_reply_breaker)) as host:
+        yield host
+    ref.reset()
+
+
+def test_reading_back_after_a_lost_reply_converges(replying_ledger_host: Host) -> None:
+    assert_crash_at_every_commit_converges(ref.COMPLETION_DELIVERY, _completion(ref.complete_checking_on_error))
+
+
+def test_treating_a_lost_reply_as_a_failure_diverges(replying_ledger_host: Host) -> None:
+    # The completion landed; the worker never saw the answer and recorded a failure over it.
+    with pytest.raises(AssertionError, match=r"'the reply to commit 2 was lost': 'failed'"):
+        assert_crash_at_every_commit_converges(ref.COMPLETION_DELIVERY, _completion(ref.complete_failing_on_error))
+
+
+def test_a_findings_table_lists_only_the_findings(replying_ledger_host: Host) -> None:
+    history = _completion(ref.complete_failing_on_error)
+    assert_pinned_outcomes(
+        ref.COMPLETION_DELIVERY,
+        history,
+        delivered=ref.COMPLETE,
+        outcomes={"the reply to commit 2 was lost": ref.FAILED},
+    )
+    # A finding that no longer happens is reported, and so is one pinned for a history that never ran.
+    with pytest.raises(AssertionError, match=r"the reply to commit 2 was lost: pinned normal operation"):
+        assert_pinned_outcomes(ref.COMPLETION_DELIVERY, history, delivered=ref.COMPLETE, outcomes={})
+    with pytest.raises(AssertionError, match=r"worker died after commit 7: pinned 'failed', now '<not run>'"):
+        assert_pinned_outcomes(
+            ref.COMPLETION_DELIVERY,
+            history,
+            delivered=ref.COMPLETE,
+            outcomes={"the reply to commit 2 was lost": ref.FAILED, "worker died after commit 7": ref.FAILED},
+        )
