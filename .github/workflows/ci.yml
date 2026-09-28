@@ -171,10 +171,13 @@ jobs:
           -c "ALTER SYSTEM SET synchronous_commit = off"
           -c "ALTER SYSTEM SET full_page_writes = off"
           -c "SELECT pg_reload_conf()"
-      # One xdist worker per runner CPU, each with its own test database; the durations
-      # are the evidence for the next change to this job's speed.
+      # One xdist worker per runner CPU. Four workers each migrating their own database took
+      # 193 s apiece; migrating once and cloning a copy per worker costs one migration.
+      - name: Saleor's test databases, migrated once
+        run: demos/saleor_checkout/run.sh --prepare-db 4
+      # The durations are the evidence for the next change to this job's speed.
       - name: Saleor checkout
-        run: demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --durations=15
+        run: demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --reuse-db --durations=15
 
   build:
     # The published wheel alone: it installs without any framework, imports, and ships py.typed.

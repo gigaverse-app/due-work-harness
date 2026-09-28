@@ -102,6 +102,15 @@ demos/saleor_checkout/run.sh --typecheck
 due-work-harness check --root demos/saleor_checkout
 ```
 
+Creating Saleor's test database runs all of its migrations, about a minute and a
+half. To run on several xdist workers, migrate once and give each worker a copy,
+as CI does:
+
+```bash
+demos/saleor_checkout/run.sh --prepare-db 4
+demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --reuse-db
+```
+
 ## What each adapter binds
 
 - **procrastinate:** the transition is the demo's `CreateBookView` through
