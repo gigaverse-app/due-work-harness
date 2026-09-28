@@ -12,7 +12,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 authors = [{ name = "Gigaverse" }]
-keywords = ["background jobs", "task queue", "durable execution", "testing", "pytest", "crash testing", "outbox"]
+keywords = ["background jobs", "task queue", "durable execution", "testing", "pytest", "crash testing", "outbox", "rq", "redis"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: Pytest",
@@ -32,6 +32,8 @@ django = ["django>=4.2", "pytest-django>=4.8", "psycopg[binary]>=3.1", "time-mac
 celery = ["celery>=5.3"]
 procrastinate = ["procrastinate>=3.0"]
 dbos = ["dbos>=2.0"]
+redis = ["redis>=5.0", "time-machine>=2.10"]
+rq = ["rq>=2.6", "redis>=5.0", "time-machine>=2.10"]
 
 [project.urls]
 Homepage = "https://github.com/gigaverse-app/due-work-harness"

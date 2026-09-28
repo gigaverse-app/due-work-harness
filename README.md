@@ -58,6 +58,9 @@ their projects ship them, pinned to a commit:
 | **procrastinate** `demo_django` | A death between committing the book and deferring its job: **the book is never indexed**, and nothing finds it again | `ATOMIC_REQUESTS = True`: the same proof passes |
 | **procrastinate** `demo_django` | A job whose worker died is never picked up again | procrastinate's documented `retry_stalled_jobs` task: the same proof passes |
 | **procrastinate** itself | `finish_job` doesn't check the worker: a worker presumed dead finishes a job another worker has since fetched | — (a fencing token on finish) |
+| **RQ** itself | A worker whose lease expired still settles the job after another worker took it: it marks it finished, or sends it back to be retried, while the new worker runs it | — |
+| **RQ** itself | The reply to the write that records a job finished is lost, or its `on_success` callback raises: RQ fails the finished job and **runs it again** | — |
+| **RQ** itself | A worker listening on two queues dies, or loses a reply, between popping a job and marking it started: **the job is gone**, queued in no queue and no registry | — |
 
 Demos are teaching code, and good at what they teach. The point is what the
 harness finds when code like this is copied into production, and the one change
@@ -78,7 +81,7 @@ pip install "due-work-harness[django]"  # plus the Django/PostgreSQL integration
 ```
 
 Or `uv add --dev due-work-harness`. The extras are `[django]`, `[celery]`,
-`[procrastinate]` and `[dbos]`; combine as needed. Python 3.12+.
+`[procrastinate]`, `[dbos]`, `[redis]` and `[rq]`; combine as needed. Python 3.12+.
 
 ## Kill it on purpose: crash histories
 
@@ -88,9 +91,12 @@ to learn the outcome, then replays the same transition:
 - with **every message it published lost**;
 - with the worker **killed right after each commit** it makes;
 - with the worker **killed right after each external call** returns;
-- with **each after-commit callback failing**, and **the broker refusing each
-  publication**, where your host supports them (the Django host breaks
-  callbacks; add the Celery integration's breaker to refuse publishes).
+- with **each after-commit callback failing**, **each signal receiver or job
+  callback failing**, **the broker refusing each publication**, and **the reply
+  to each commit lost** (the write lands, the worker sees a connection error and
+  carries on), where your host supports them (the Django host breaks callbacks;
+  the Redis host loses replies; add the Celery integration's breaker to refuse
+  publishes).
 
 Every history must reach the outcome normal operation reached. The harness finds
 the commit boundaries itself; you don't name them.
@@ -213,6 +219,8 @@ configure(django_host(production_packages={"myapp"}))
 | `[celery]` | beat-schedule evidence, a publication recorder that holds messages instead of sending them, a publication breaker that refuses one publish as a broker that is down would |
 | `[procrastinate]` | its worker as recovery, "worker died holding this job" arrangement, the documented stalled-job recipe, periodic-task evidence |
 | `[dbos]` | restarting an app through its own startup for process-level crash histories |
+| `[redis]` | `redis_host()`: a commit counter for a queue kept in Redis (each pipeline or write command a commit, judged by the server's own command flags), and a reply breaker that lets a write land and loses its answer |
+| `[rq]` | RQ's worker as the transition and as recovery (later workers' maintenance, with the clock moved on), its ownership bound to profile B, a breaker for job callbacks, and `worker_contract()`: RQ's whole contract for any adopter's jobs |
 
 ## Status
 

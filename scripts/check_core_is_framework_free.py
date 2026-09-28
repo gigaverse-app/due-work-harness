@@ -15,6 +15,8 @@ FRAMEWORKS = (
     "psycopg",
     "time_machine",
     "asgiref",
+    "redis",
+    "rq",
 )
 core = [
     m.name
