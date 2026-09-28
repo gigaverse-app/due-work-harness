@@ -100,6 +100,15 @@ configure(
 
 On django-tasks-db, recovery is its worker:
 `integrations.django_tasks.db_worker_once()` runs `manage.py db_worker --batch`.
+`integrations.django_tasks.worker_contract(name=..., enqueue=..., effect=...)`
+is django-tasks-db's own contract with that worker, bound to one of your tasks:
+you enqueue it and say how to see its effect, and the framework's dispositions,
+retention proof and known gaps come with it.
+
+To pin what every crash history of a handoff leaves — a findings table that
+names exactly which history moved when something changes — use
+`assert_pinned_outcomes(delivery, history, delivered=..., outcomes=...)`, and give
+the test the host's database marks with `@due_work_database()`.
 
 ## 5. Give each site a disposition
 

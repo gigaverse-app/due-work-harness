@@ -1,5 +1,5 @@
 """
-django-tasks integration: the database backend's worker as recovery.
+django-tasks integration: the database backend's worker, as recovery and as the transition under test.
 
 django-tasks-db stores each enqueued task as a row, so a task enqueued inside
 the product transaction commits or rolls back with it: there is no message
@@ -13,12 +13,37 @@ application using it still owes itself:
 * **recovering a task whose worker died** — the worker selects only READY
   rows, so a task left RUNNING by a dead worker is never run again.
 
-Helpers here import Django lazily, so importing this module never requires it.
+:func:`worker_contract` is django-tasks-db's own contract with its worker, for
+any adopter: the adopter enqueues one of its tasks and says how to see the
+task's effect; the dispositions, the known gaps and the proofs are the
+framework's. Its crash histories fail each ``task_started`` and
+``task_finished`` receiver when the host's ``receiver_breaker`` names those
+signals.
+
+Helpers here import Django and django-tasks-db lazily, so importing this module
+never requires them.
 """
 
 import signal
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from datetime import timedelta
 from typing import Any
+
+from due_work_harness.contract import (
+    Adoption,
+    Claim,
+    DueWorkContract,
+    ExtraProof,
+    KnownGap,
+    NotApplicable,
+    Profile,
+    SafetyContract,
+    SafetyProfile,
+)
+from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, HandoffHistory
+from due_work_harness.gap_probes import MissingReclaim
+from due_work_harness.models import HarnessModel
+from due_work_harness.profiles.durable_retention import Retention
 
 #: The signals db_worker installs its own handlers for.
 _WORKER_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGQUIT") if hasattr(signal, name))
@@ -57,7 +82,7 @@ def db_worker_once(*, queues: str = "*", backend: str = "default") -> Callable[.
     return run
 
 
-def strand_as_running(task_id: str, *, worker_id: str = "a-worker-that-died") -> str:
+def strand_with_dead_worker(task_id: str, *, worker_id: str = "a-worker-that-died") -> str:
     """FAULT INJECTION: make ``task_id`` look claimed by a worker that then died — RUNNING, started, owned by it."""
     from django.utils import timezone
     from django_tasks_db.models import DBTaskResult
@@ -81,3 +106,170 @@ def tasks_run_by(tick: Callable[[], object]) -> list[str]:
     finally:
         task_started.disconnect(record)
     return started
+
+
+class TaskOutcome(HarnessModel):
+    """What django-tasks-db recorded for a task, and what its effect was."""
+
+    status: str
+    effect: Any
+
+
+def worker_history(
+    *,
+    enqueue: Callable[[], str],
+    effect: Callable[[str], Any],
+    external_calls: Sequence[ExternalCall] = (),
+    name: str = "the worker runs a task",
+) -> HandoffHistory[str, TaskOutcome]:
+    """
+    The worker itself as the transition: db_worker runs one task the adopter enqueued.
+
+    ``enqueue`` enqueues one of the adopter's tasks and returns its id;
+    ``effect`` observes what the task did (for example, how many times a CDN was
+    asked to purge its URL). The observation is the task's recorded status with
+    that effect, so a history in which the effect happened but the record says
+    otherwise diverges.
+    """
+
+    def observe(task_id: str) -> TaskOutcome:
+        from django_tasks_db.models import DBTaskResult
+
+        return TaskOutcome(status=DBTaskResult.objects.get(id=task_id).status, effect=effect(task_id))
+
+    return HandoffHistory(
+        name=name,
+        arrange=enqueue,
+        transition=db_worker_once(),
+        observe=observe,
+        external_calls=tuple(external_calls),
+    )
+
+
+def dead_worker_reclaim(*, enqueue: Callable[[], str]) -> MissingReclaim:
+    """The gap probe: a task stranded RUNNING by a dead worker is run again by the next db_worker pass."""
+    return MissingReclaim(
+        make_stranded=lambda: strand_with_dead_worker(enqueue()),
+        dispatched_by_one_tick=lambda: tasks_run_by(db_worker_once()),
+    )
+
+
+def retention(*, enqueue: Callable[[], str], min_age_days: int = 14) -> Retention:
+    """
+    Profile D bound to django-tasks-db's ``prune_db_task_results`` command.
+
+    The owed row is a task enqueued and never run; the prunable one is a task
+    ``db_worker`` ran to completion. Both are aged past ``min_age_days`` by
+    moving their timestamps back: the owed one must survive the pass anyway.
+    """
+    old = timedelta(days=min_age_days + 1)
+
+    def owed() -> str:
+        from django.utils import timezone
+        from django_tasks_db.models import DBTaskResult
+
+        task_id = enqueue()
+        DBTaskResult.objects.filter(id=task_id).update(enqueued_at=timezone.now() - old)
+        return task_id
+
+    def finished() -> str:
+        from django.utils import timezone
+        from django_tasks_db.models import DBTaskResult
+
+        task_id = enqueue()
+        db_worker_once()()
+        DBTaskResult.objects.filter(id=task_id).update(finished_at=timezone.now() - old)
+        return task_id
+
+    def prune() -> None:
+        from django.core.management import call_command
+
+        call_command("prune_db_task_results", "--queue-name", "*", "--min-age-days", str(min_age_days), verbosity=0)
+
+    def still_exists(task_id: str) -> bool:
+        from django_tasks_db.models import DBTaskResult
+
+        return DBTaskResult.objects.filter(id=task_id).exists()
+
+    return Retention(
+        name="django-tasks-db prune_db_task_results",
+        make_non_terminal=owed,
+        make_prunable=finished,
+        run_retention=prune,
+        still_exists=still_exists,
+    )
+
+
+#: What django-tasks-db 0.13's worker lacks, for any adopter's contract.
+NO_RECLAIM = (
+    "the worker selects only READY tasks, so a task left RUNNING by a worker that died is never run again "
+    "(django-tasks-db#5)"
+)
+NO_LEASE = "a claim holds no lease and no heartbeat: nothing can tell a live worker's task from a dead one's"
+NO_ATTEMPT_RECORD = (
+    "a task is marked RUNNING before its effect and SUCCESSFUL after it, with nothing in between: after a death "
+    "the row cannot tell whether the effect happened"
+)
+#: Django's task framework has no retries: a task that fails stays failed.
+RUNS_ONCE = "Django's task framework runs a task once: it is never retried"
+WORKER_HISTORY_GAP = (
+    "a worker that dies after claiming the task, or after its external call, leaves it RUNNING forever; a "
+    "task_started receiver that raises marks the task FAILED before it runs, and nothing retries it; and a "
+    "task_finished receiver that raises after the task ran rewrites its SUCCESSFUL record as FAILED, because "
+    "run_task sends task_finished inside the try that records a failure (django-tasks-db#62)"
+)
+
+
+def worker_contract(
+    *,
+    name: str,
+    enqueue: Callable[[], str],
+    effect: Callable[[str], Any],
+    external_calls: Sequence[ExternalCall] = (),
+    delivery: Delivery | None = None,
+    min_age_days: int = 14,
+) -> DueWorkContract:
+    """
+    django-tasks-db's contract with its worker, bound to one of the adopter's tasks.
+
+    Retention is claimed and proven against ``prune_db_task_results``; the
+    worker's missing reclaim, lease and attempt record are declared known gaps,
+    each a strict xfail that a fix upstream flips; and the worker's own crash
+    histories — deaths after each commit and after the task's external calls,
+    and each worker signal receiver failing — are a legacy handoff gap. The
+    contract is transactional: the worker commits for real.
+    """
+    history = worker_history(enqueue=enqueue, effect=effect, external_calls=external_calls)
+    return DueWorkContract(
+        name=name,
+        adoption=Adoption.LEGACY,
+        transactional=True,
+        profiles={
+            Profile.A: KnownGap(NO_RECLAIM),
+            Profile.B: KnownGap(NO_LEASE),
+            Profile.C: KnownGap(NO_ATTEMPT_RECORD),
+            Profile.D: Claim(),
+            Profile.E: NotApplicable("one worker settles each task, under its claim"),
+            Profile.F: NotApplicable("the obligation is the task row itself, not a fact derived from product state"),
+        },
+        safety=SafetyContract(
+            name=name,
+            adoption=Adoption.LEGACY,
+            profiles={
+                SafetyProfile.REPLAY_SAFE_EXECUTION: NotApplicable("django-tasks-db never replays a task"),
+                SafetyProfile.BOUNDED_RETRY: NotApplicable(RUNS_ONCE),
+            },
+        ),
+        retention=lambda: retention(enqueue=enqueue, min_age_days=min_age_days),
+        handoffs=(history,),
+        handoff_delivery=delivery or CallableDelivery(name=f"{name}: db_worker", recover=db_worker_once()),
+        handoff_gaps={history.name: WORKER_HISTORY_GAP},
+        extras=(
+            ExtraProof(
+                name="a task whose worker died is run again by what django-tasks-db runs",
+                run=dead_worker_reclaim(enqueue=enqueue),
+                transactional=True,
+                gap=NO_RECLAIM,
+            ),
+        ),
+    )

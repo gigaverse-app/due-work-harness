@@ -24,7 +24,6 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from django.core.management import call_command
 from django.db import connection, connections
 from django.test import Client
 from procrastinate.contrib.django import app
@@ -186,13 +185,9 @@ def _failing_indexing() -> int:
     return defer_indexing()
 
 
-def _run_the_worker(_job_id: int) -> None:
-    call_command("procrastinate", "worker", "--queues", QUEUE, "--one-shot", "--no-listen-notify")
-
-
 def indexing_retry() -> BoundedRetry:
     # ARRANGE: a job whose slow external dependency is down (_failing_indexing).
-    # REAL PRODUCTION: `manage.py procrastinate worker`, as the demo runs it (_run_the_worker).
+    # REAL PRODUCTION: `manage.py procrastinate worker`, as the demo runs it (run_worker).
     # EXTERNAL SEAM: the slow call, which fails and is counted (SLOW_CALLS).
     # OBSERVE: the job's status and attempts, as procrastinate records them.
     return BoundedRetry(
@@ -201,7 +196,7 @@ def indexing_retry() -> BoundedRetry:
         max_executions=1,
         make_failing=_failing_indexing,
         due_work=_todo_jobs,
-        run_once=_run_the_worker,
+        run_once=run_worker,
         advance_to_due=lambda _job_id: None,
         is_terminal=lambda job_id: _job(job_id)[0] == "failed",
         failure_attempt_count=lambda _job_id: SLOW_CALLS["slow call"],

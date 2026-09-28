@@ -30,6 +30,7 @@ from due_work_harness.crash_histories import (
     ExternalCall,
     HandoffHistory,
     assert_crash_at_every_commit_converges,
+    assert_pinned_outcomes,
     crash_histories,
 )
 from due_work_harness.integrations.django import lifecycle_references as ref
@@ -234,3 +235,16 @@ def test_robust_callbacks_protect_later_callbacks_but_not_their_own_handoff() ->
         _converges(ref.RETRY_DELIVERY, _history(ref.fail_attempt_publishing_after_a_robust_audit))
     assert "'after-commit callback 1 failed'" not in str(divergence.value)
     assert "'after-commit callback 2 failed': ('retryable_failed', ())" in str(divergence.value)
+
+
+def test_a_findings_table_pins_what_each_history_leaves() -> None:
+    history = _history(ref.fail_attempt_publishing_after_an_audit)
+    runs = crash_histories(ref.RETRY_DELIVERY, history)
+    table = {run.label: run.after for run in runs[1:]}
+    assert_pinned_outcomes(ref.RETRY_DELIVERY, history, delivered=runs[0].after, outcomes=table)
+
+    moved = {**table, "after-commit callback 2 failed": ("retryable_failed", ("running",))}
+    with pytest.raises(
+        AssertionError, match=r"after-commit callback 2 failed: pinned .*, now \('retryable_failed', \(\)\)"
+    ):
+        assert_pinned_outcomes(ref.RETRY_DELIVERY, history, delivered=runs[0].after, outcomes=moved)

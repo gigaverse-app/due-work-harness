@@ -95,9 +95,11 @@ from due_work_harness import (
     Retention,
     SafetyContract,
     SafetyProfile,
+    assert_pinned_outcomes,
     due_work_contract_suite,
+    due_work_database,
 )
-from due_work_harness.crash_histories import assert_histories_converge, crash_histories
+from due_work_harness.crash_histories import assert_histories_converge
 from due_work_harness.integrations.celery import celery_beat_evidence, held_publications
 from due_work_harness.integrations.django.selection import selection_built_by
 from due_work_harness.profiles.automatic_recovery import DueWorkSweep, InFlightExecution
@@ -548,11 +550,9 @@ FINDINGS = {
 }
 
 
-@pytest.mark.django_db(transaction=True)
+@due_work_database()
 def test_what_each_failure_costs_the_customer(saleor_shop: Shop) -> None:  # noqa: ARG001
-    runs = crash_histories(SALEOR, COMPLETE_CHECKOUT)
-    assert runs[0].after == PLACED, "normal operation places, records and confirms the order"
-    assert {run.label: run.after for run in runs[1:]} == FINDINGS
+    runs = assert_pinned_outcomes(SALEOR, COMPLETE_CHECKOUT, delivered=PLACED, outcomes=FINDINGS)
     with pytest.raises(AssertionError, match="Work was lost or repeated"):
         assert_histories_converge(SALEOR.name, runs)
 

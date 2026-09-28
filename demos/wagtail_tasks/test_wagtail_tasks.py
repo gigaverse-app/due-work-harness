@@ -30,10 +30,7 @@ from typing import Any
 
 import pytest
 from django.core.files.base import ContentFile
-from django.core.management import call_command
 from django.test import Client
-from django.utils import timezone
-from django_tasks_db.models import DBTaskResult
 from pydantic import BaseModel, ConfigDict
 from wagtail.contrib.frontend_cache.tasks import purge_urls_from_cache_task
 from wagtail.contrib.frontend_cache.utils import purge_urls_from_cache
@@ -49,23 +46,21 @@ from wagtail.test.testapp.models import SimplePage
 from due_work_harness import (
     Adoption,
     CallableDelivery,
-    Claim,
     Decline,
     DueWorkContract,
     DueWorkSource,
-    ExtraProof,
     HandoffHistory,
     KnownGap,
-    MissingReclaim,
     NotApplicable,
     Profile,
-    Retention,
     SafetyContract,
     SafetyProfile,
+    assert_pinned_outcomes,
     due_work_contract_suite,
+    due_work_database,
 )
-from due_work_harness.crash_histories import ExternalCall, crash_histories
-from due_work_harness.integrations.django_tasks import db_worker_once, strand_as_running, tasks_run_by
+from due_work_harness.crash_histories import ExternalCall
+from due_work_harness.integrations.django_tasks import RUNS_ONCE, TaskOutcome, db_worker_once, worker_contract
 
 from . import cdn
 
@@ -140,7 +135,7 @@ WHY_NO_SWEEP = (
     "nothing Wagtail runs looks for a file whose image or document row is gone: a file whose deletion task was "
     "never enqueued, or failed, stays in storage forever"
 )
-WHY_NO_RETRY = "django-tasks runs a task once: a storage error fails the deletion for good"
+WHY_NO_RETRY = f"{RUNS_ONCE}, so a storage error fails the deletion for good"
 
 WAGTAIL_MEDIA = DueWorkContract(
     name="wagtail: deleting an image or a document",
@@ -250,7 +245,7 @@ WAGTAIL_PUBLISHING = DueWorkContract(
         adoption=Adoption.LEGACY,
         profiles={
             SafetyProfile.REPLAY_SAFE_EXECUTION: NotApplicable("a repeated purge purges nothing new"),
-            SafetyProfile.BOUNDED_RETRY: NotApplicable("django-tasks runs a task once: a CDN error fails the purge"),
+            SafetyProfile.BOUNDED_RETRY: NotApplicable(f"{RUNS_ONCE}, so a CDN error fails the purge"),
         },
     ),
     handoffs=(PUBLISH_PAGE,),
@@ -274,131 +269,28 @@ class TestWagtailPublishing:
 URL = "http://localhost/opening-hours/"
 
 
-class TaskRun(BaseModel):
-    """What django-tasks-db recorded for a task, and whether its effect happened."""
-
-    model_config = ConfigDict(frozen=True)
-
-    status: str
-    purges: int
-
-
 def a_purge_owed() -> str:
     # ARRANGE: a frontend cache purge enqueued by Wagtail's own task, ready for a worker.
     cdn.PURGED.clear()
     return str(purge_urls_from_cache_task.enqueue([URL]).id)
 
 
-def task_and_effect(handle: str) -> TaskRun:
-    # OBSERVE: the task's recorded status, and how many times the CDN purged its URL.
-    return TaskRun(status=DBTaskResult.objects.get(id=handle).status, purges=cdn.PURGED[URL])
+def purges(_task_id: str) -> int:
+    # OBSERVE: how many times the CDN purged the task's URL.
+    return cdn.PURGED[URL]
 
 
-# REAL PRODUCTION: django-tasks-db's db_worker claims the task, runs it and records how it ended.
-WORKER_RUNS_A_PURGE = HandoffHistory(
-    name="worker runs a purge",
-    arrange=a_purge_owed,
-    transition=db_worker_once(),
-    observe=task_and_effect,
+# django-tasks-db's own contract with its worker, bound to Wagtail's purge task: the framework's
+# dispositions, retention and gap probes come from the integration.
+DJANGO_TASKS_DB = worker_contract(
+    name="django-tasks-db: the worker running Wagtail's tasks",
+    enqueue=a_purge_owed,
+    effect=purges,
     # EXTERNAL SEAM: the CDN's purge API.
     external_calls=(ExternalCall(owner=cdn.RecordingCDN, attribute="purge"),),
+    delivery=WORKER,
 )
-
-
-def a_task_whose_worker_died() -> str:
-    # ARRANGE: Wagtail's purge, claimed by a worker that then died.
-    return strand_as_running(a_purge_owed())
-
-
-A_DEAD_WORKERS_TASK_IS_RUN_AGAIN = MissingReclaim(
-    make_stranded=a_task_whose_worker_died, dispatched_by_one_tick=lambda: tasks_run_by(db_worker_once())
-)
-
-
-def retention() -> Retention:
-    # ARRANGE: a task still owed and one that finished, both older than the retention window.
-    # REAL PRODUCTION: django-tasks-db's prune_db_task_results command.
-    # EXTERNAL SEAM: none.
-    # OBSERVE: whether each task's row still exists.
-    return Retention(
-        name="django-tasks-db prune_db_task_results",
-        make_non_terminal=_an_old_owed_task,
-        make_prunable=_an_old_finished_task,
-        run_retention=_prune,
-        still_exists=lambda task_id: DBTaskResult.objects.filter(id=task_id).exists(),
-    )
-
-
-def _an_old_owed_task() -> str:
-    task_id = a_purge_owed()
-    DBTaskResult.objects.filter(id=task_id).update(enqueued_at=timezone.now() - timezone.timedelta(days=30))
-    return task_id
-
-
-def _an_old_finished_task() -> str:
-    task_id = a_purge_owed()
-    DBTaskResult.objects.filter(id=task_id).update(
-        status="SUCCESSFUL", finished_at=timezone.now() - timezone.timedelta(days=30)
-    )
-    return task_id
-
-
-def _prune() -> None:
-    call_command("prune_db_task_results", "--queue-name", "*", verbosity=0)
-
-
-DJANGO_TASKS_DB = DueWorkContract(
-    name="django-tasks-db: the worker running Wagtail's tasks",
-    adoption=Adoption.LEGACY,
-    transactional=True,
-    profiles={
-        Profile.A: KnownGap(
-            "the worker selects only READY tasks, so a task left RUNNING by a worker that died is never run "
-            "again; the extra proof below shows it"
-        ),
-        Profile.B: KnownGap(
-            "a claim holds no lease and no heartbeat: nothing can tell a live worker's task from a dead one's"
-        ),
-        Profile.C: KnownGap(
-            "a task is marked RUNNING before its effect and SUCCESSFUL after it, with nothing in between: after "
-            "a death the row cannot tell whether the effect happened"
-        ),
-        Profile.D: Claim(),
-        Profile.E: NotApplicable("one worker settles each task, under its claim"),
-        Profile.F: NotApplicable("the obligation is the task row itself, not a fact derived from product state"),
-    },
-    safety=SafetyContract(
-        name="django-tasks-db: the worker running Wagtail's tasks",
-        adoption=Adoption.LEGACY,
-        profiles={
-            SafetyProfile.REPLAY_SAFE_EXECUTION: NotApplicable("django-tasks-db never replays a task"),
-            SafetyProfile.BOUNDED_RETRY: NotApplicable("django-tasks-db never retries a task"),
-        },
-    ),
-    retention=retention,
-    handoffs=(WORKER_RUNS_A_PURGE,),
-    handoff_delivery=WORKER,
-    handoff_gaps={
-        "worker runs a purge": (
-            "a worker that dies after claiming the task, or after the CDN call, leaves it RUNNING forever; a "
-            "task_started receiver that raises marks the task FAILED before it runs, and nothing retries it; and "
-            "a task_finished receiver that raises after the task ran rewrites its SUCCESSFUL record as FAILED, "
-            "because run_task sends task_finished inside the try that records a failure. "
-            "test_what_each_failure_costs pins each history"
-        )
-    },
-    extras=(
-        ExtraProof(
-            name="a task whose worker died is run again by what django-tasks-db runs",
-            run=A_DEAD_WORKERS_TASK_IS_RUN_AGAIN,
-            transactional=True,
-            gap=(
-                "db_worker selects only READY tasks and nothing reclaims a RUNNING one, so a task whose worker "
-                "died is never run again"
-            ),
-        ),
-    ),
-)
+WORKER_RUNS_A_PURGE = DJANGO_TASKS_DB.handoffs[0]
 
 
 @due_work_contract_suite(DJANGO_TASKS_DB)
@@ -437,31 +329,34 @@ PUBLISH_FINDINGS = {
     "signal receiver 1 failed": STALE,
 }
 
+
+def _task(status: str, purges: int) -> TaskOutcome:
+    return TaskOutcome(status=status, effect=purges)
+
+
 WORKER_FINDINGS = {
     # FINDING (known upstream): the claim committed, the worker died, and the task stays RUNNING forever.
-    "worker died after commit 1": TaskRun(status="RUNNING", purges=0),
-    "worker died after commit 2": TaskRun(status="SUCCESSFUL", purges=1),
-    "worker died after commit 3": TaskRun(status="SUCCESSFUL", purges=1),
+    "worker died after commit 1": _task("RUNNING", 0),
+    "worker died after commit 2": _task("SUCCESSFUL", 1),
+    "worker died after commit 3": _task("SUCCESSFUL", 1),
     # FINDING: the purge happened and the task stays RUNNING forever.
-    "worker died after external call 1": TaskRun(status="RUNNING", purges=1),
+    "worker died after external call 1": _task("RUNNING", 1),
     # FINDING: task_started's receiver raised, so the task is FAILED without running, and nothing retries it.
-    "signal receiver 1 failed": TaskRun(status="FAILED", purges=0),
+    "signal receiver 1 failed": _task("FAILED", 0),
     # FINDING: task_finished's receiver raised after the task ran, and its SUCCESSFUL record was rewritten as FAILED.
-    "signal receiver 2 failed": TaskRun(status="FAILED", purges=1),
+    "signal receiver 2 failed": _task("FAILED", 1),
 }
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@due_work_database()
 @pytest.mark.parametrize(
     ("history", "delivered", "findings"),
     [
         pytest.param(DELETE_IMAGE, DELETED, MEDIA_FINDINGS, id="delete image"),
         pytest.param(DELETE_DOCUMENT, DELETED, MEDIA_FINDINGS, id="delete document"),
         pytest.param(PUBLISH_PAGE, PURGED, PUBLISH_FINDINGS, id="publish page"),
-        pytest.param(WORKER_RUNS_A_PURGE, TaskRun(status="SUCCESSFUL", purges=1), WORKER_FINDINGS, id="worker"),
+        pytest.param(WORKER_RUNS_A_PURGE, _task("SUCCESSFUL", 1), WORKER_FINDINGS, id="worker"),
     ],
 )
 def test_what_each_failure_costs(history: HandoffHistory, delivered: Any, findings: dict[str, Any]) -> None:
-    runs = crash_histories(WORKER, history)
-    assert runs[0].after == delivered, "normal operation"
-    assert {run.label: run.after for run in runs[1:]} == findings
+    assert_pinned_outcomes(WORKER, history, delivered=delivered, outcomes=findings)

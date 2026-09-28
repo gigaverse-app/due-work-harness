@@ -512,3 +512,30 @@ def assert_histories_converge(name: str, runs: list[HistoryRun]) -> None:
 def assert_crash_at_every_commit_converges(delivery: Delivery, history: HandoffHistory[Any, Any]) -> None:
     """Lost messages, and a death right after any commit or named external call, reach normal operation's outcome."""
     assert_histories_converge(f"{delivery.name}: handoff {history.name!r}", crash_histories(delivery, history))
+
+
+def assert_pinned_outcomes(
+    delivery: Delivery, history: HandoffHistory[Any, Any], *, delivered: Any, outcomes: dict[str, Any]
+) -> list[HistoryRun]:
+    """
+    What every history of a handoff leaves, pinned: an adopter's findings table.
+
+    Normal operation must reach ``delivered``, and each interrupted history
+    must reach exactly its entry in ``outcomes``, keyed by label. A legacy gap
+    declared as one strict xfail says the handoff diverges; this says precisely
+    how, history by history, so a change upstream or in the harness shows which
+    entry moved. Returns the runs for any further assertion.
+    """
+    runs = crash_histories(delivery, history)
+    name = f"{delivery.name}: handoff {history.name!r}"
+    assert runs[0].after == delivered, f"{name}: normal operation reaches {runs[0].after!r}, not {delivered!r}"
+    actual = {run.label: run.after for run in runs[1:]}
+    moved = {
+        label: actual.get(label, "<not run>")
+        for label in actual.keys() | outcomes.keys()
+        if actual.get(label) != outcomes.get(label)
+    }
+    assert not moved, f"{name}: these histories no longer leave what the table pins: " + "; ".join(
+        f"{label}: pinned {outcomes.get(label, '<not pinned>')!r}, now {now!r}" for label, now in sorted(moved.items())
+    )
+    return runs

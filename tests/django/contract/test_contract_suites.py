@@ -134,3 +134,17 @@ def test_a_host_for_seeded_migrations_restores_them_after_committing_cases() -> 
     assert rolled_back.kwargs == {"transaction": False}
     (default,) = django_host(production_packages=set()).database_marks(True)
     assert default.kwargs == {"transaction": True}
+
+
+def test_a_hand_written_test_gets_the_hosts_database_marks() -> None:
+    from due_work_harness import configure, due_work_database
+    from due_work_harness.integrations.django import django_host
+
+    configure(django_host(production_packages=set(), serialized_rollback=True))
+
+    @due_work_database()
+    def findings() -> None:
+        pass
+
+    (mark,) = findings.pytestmark  # type: ignore[attr-defined]
+    assert (mark.name, mark.kwargs) == ("django_db", {"transaction": True, "serialized_rollback": True})

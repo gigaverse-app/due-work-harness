@@ -33,10 +33,15 @@ from due_work_harness.profiles.bounded_ownership import FencedOwnership
 from due_work_harness.profiles.durable_retention import Retention
 
 
-def django_worker_once(queues: Sequence[str]) -> Callable[[], None]:
-    """Recovery for a Django project: one ``manage.py procrastinate worker`` pass until the queues are idle."""
+def django_worker_once(queues: Sequence[str]) -> Callable[..., None]:
+    """
+    Recovery for a Django project: one ``manage.py procrastinate worker`` pass until the queues are idle.
 
-    def run() -> None:
+    The same pass is a transition when the worker itself is under test, such as
+    a retry proof's ``run_once`` (it ignores what it is given).
+    """
+
+    def run(*_given: object) -> None:
         from django.core.management import call_command
 
         call_command("procrastinate", "worker", "--queues", ",".join(queues), "--one-shot", "--no-listen-notify")
