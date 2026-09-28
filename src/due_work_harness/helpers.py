@@ -12,11 +12,14 @@ What lives here is what the generated suites and bespoke harness work share:
   supply, carrying the reason to whoever reaches it.
 * :func:`assert_provider_call_holds_no_transaction` — a standalone proof that
   no database transaction is open while an external provider is called.
+* :func:`wait_until` — one clock around a wait for work another process or
+  thread settles, as recovery by a real worker or a restart needs.
 
 For what a passing or failing proof does and does not tell you, see
 ``docs/what-a-green-result-means.md``.
 """
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -164,3 +167,16 @@ def assert_provider_call_holds_no_transaction(
         f"a pooled connection are held for the provider's entire latency, so one "
         f"slow provider becomes database-wide contention"
     )
+
+
+def wait_until(settled: Callable[[], bool], *, timeout: float = 60.0, what: str, poll: float = 0.2) -> None:
+    """
+    Poll ``settled`` until it holds, failing with ``what`` once ``timeout`` seconds pass.
+
+    For recovery that runs somewhere a test cannot step: a worker in a child
+    process, a workflow engine's own threads, an application restarted.
+    """
+    deadline = time.monotonic() + timeout
+    while not settled():
+        assert time.monotonic() < deadline, f"{what} within {timeout}s"
+        time.sleep(poll)

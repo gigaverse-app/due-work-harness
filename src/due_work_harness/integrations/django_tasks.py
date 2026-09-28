@@ -24,7 +24,6 @@ Helpers here import Django and django-tasks-db lazily, so importing this module
 never requires them.
 """
 
-import signal
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from typing import Any
@@ -46,9 +45,6 @@ from due_work_harness.integrations import task_queues
 from due_work_harness.integrations.task_queues import TaskOutcome
 from due_work_harness.profiles.durable_retention import Retention
 
-#: The signals db_worker installs its own handlers for.
-_WORKER_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGQUIT") if hasattr(signal, name))
-
 
 def db_worker_once(*, queues: str = "*", backend: str = "default") -> Callable[..., None]:
     """
@@ -63,8 +59,7 @@ def db_worker_once(*, queues: str = "*", backend: str = "default") -> Callable[.
     def run(*_handle: object) -> None:
         from django.core.management import call_command
 
-        handlers = {signum: signal.getsignal(signum) for signum in _WORKER_SIGNALS}
-        try:
+        with task_queues.keeping_signal_handlers():
             call_command(
                 "db_worker",
                 "--batch",
@@ -76,9 +71,6 @@ def db_worker_once(*, queues: str = "*", backend: str = "default") -> Callable[.
                 backend,
                 verbosity=0,
             )
-        finally:
-            for signum, handler in handlers.items():
-                signal.signal(signum, handler)
 
     return run
 
@@ -242,8 +234,8 @@ def worker_contract(
             Profile.B: KnownGap(NO_LEASE),
             Profile.C: KnownGap(NO_ATTEMPT_RECORD),
             Profile.D: Claim(),
-            Profile.E: NotApplicable("one worker settles each task, under its claim"),
-            Profile.F: NotApplicable("the obligation is the task row itself, not a fact derived from product state"),
+            Profile.E: task_queues.settled_by_one_worker("task"),
+            Profile.F: task_queues.the_obligation_is_the("task row"),
         },
         safety=SafetyContract(
             name=name,

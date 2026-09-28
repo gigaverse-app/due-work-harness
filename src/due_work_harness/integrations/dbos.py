@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
+from due_work_harness.helpers import wait_until
 from due_work_harness.profiles.durable_retention import Retention
 
 #: Workflow statuses DBOS will still run: the work they owe is outstanding.
@@ -54,13 +55,6 @@ def restart_until(
     """Run the application's startup (see :func:`launched`), then wait until ``settled``."""
     with launched(launch, shutdown_timeout=shutdown_timeout):
         wait_until(settled, timeout=timeout, poll=poll, what="work was not settled")
-
-
-def wait_until(settled: Callable[[], bool], *, timeout: float = 60.0, poll: float = 0.2, what: str) -> None:
-    deadline = time.monotonic() + timeout
-    while not settled():
-        assert time.monotonic() < deadline, f"{what} within {timeout}s"
-        time.sleep(poll)
 
 
 def workflow_status(workflow_id: str) -> str | None:

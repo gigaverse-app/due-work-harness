@@ -55,6 +55,12 @@ from due_work_harness.contract import (
     SafetyContract,
     SafetyProfile,
 )
+from due_work_harness.helpers import wait_until
+from due_work_harness.integrations.task_queues import (
+    replay_safety_is_the_functions,
+    settled_by_one_worker,
+    the_obligation_is_the,
+)
 from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
 
 #: Where the pool child dies.
@@ -105,13 +111,6 @@ def running_worker(
             process.wait()
         if log is not None and not isinstance(output, int):
             output.close()
-
-
-def wait_until(settled: Callable[[], bool], *, timeout: float, what: str, poll: float = 0.1) -> None:
-    deadline = time.monotonic() + timeout
-    while not settled():
-        assert time.monotonic() < deadline, f"{what} within {timeout}s"
-        time.sleep(poll)
 
 
 def worker_history[HandleT, ObservationT](
@@ -205,13 +204,15 @@ def worker_contract(
             Profile.B: Decline(BROKER_OWNS_LEASES),
             Profile.C: Decline(AT_LEAST_ONCE),
             Profile.D: NotApplicable(RESULTS_ARE_NOT_OWED),
-            Profile.E: NotApplicable("one worker settles each delivery"),
-            Profile.F: NotApplicable("the obligation is the message itself, not a fact derived from product state"),
+            Profile.E: settled_by_one_worker("delivery"),
+            Profile.F: the_obligation_is_the("message"),
         },
         safety=SafetyContract(
             name=name,
             profiles={
-                SafetyProfile.REPLAY_SAFE_EXECUTION: Decline(AT_LEAST_ONCE),
+                SafetyProfile.REPLAY_SAFE_EXECUTION: replay_safety_is_the_functions(
+                    "task", "Celery", runs_again="with task_acks_late, a redelivery after its worker was lost"
+                ),
                 SafetyProfile.BOUNDED_RETRY: Decline(
                     "a task's retries are its own (self.retry, autoretry_for); a redelivery after a lost worker is "
                     "not counted as one"
