@@ -138,7 +138,10 @@ moves fails as itself:
 
 ```python
 HandoffHistory(
-    name="place order", arrange=new_cart, transition=place_order, observe=...,
+    name="place order",
+    arrange=new_cart,
+    transition=place_order,
+    observe=...,
     findings=Findings(("SENT", 1), {"worker died after external call 1": ("SENT", 2)}),
 )
 ```
