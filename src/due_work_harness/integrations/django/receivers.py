@@ -28,15 +28,15 @@ class DjangoReceivers:
 
     def __init__(self, fail_at: int | None) -> None:
         self._fail_at = fail_at
-        self.receivers = 0
+        self.count = 0
         self.failure: ReceiverFailed | None = None
 
     def counted(self, receiver: Callable[..., Any]) -> Callable[..., Any]:
         def run(*args: Any, **kwargs: Any) -> Any:
-            self.receivers += 1
-            if self.receivers == self._fail_at:
+            self.count += 1
+            if self.count == self._fail_at:
                 name = getattr(receiver, "__qualname__", repr(receiver))
-                self.failure = ReceiverFailed(f"signal receiver {self.receivers} ({name}) failed")
+                self.failure = ReceiverFailed(f"signal receiver {self.count} ({name}) failed")
                 raise self.failure
             return receiver(*args, **kwargs)
 
