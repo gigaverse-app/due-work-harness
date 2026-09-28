@@ -13,12 +13,13 @@ next one.
 """
 
 from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any
 from unittest import mock
 
 from django.dispatch import Signal
 
+from due_work_harness.host import ReceiverBreaker
 from due_work_harness.worker_death import ReceiverFailed
 
 
@@ -42,7 +43,7 @@ class DjangoReceivers:
         return run
 
 
-def django_receiver_breaker(*signals: Signal) -> Callable[[int | None], AbstractContextManager[DjangoReceivers]]:
+def django_receiver_breaker(*signals: Signal) -> ReceiverBreaker:
     """A ``receiver_breaker`` for ``django_host``: count the receivers of ``signals`` and fail receiver ``fail_at``."""
     assert signals, "name the signals whose receivers crash histories should fail"
 
