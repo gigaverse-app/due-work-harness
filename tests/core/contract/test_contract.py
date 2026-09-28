@@ -1189,3 +1189,9 @@ def test_process_and_in_process_handoff_names_share_one_namespace() -> None:
             handoff_delivery=_DELIVERY,
             process_handoffs=(_process_history(),),
         )
+
+
+def test_a_history_without_findings_still_diverges_with_a_plain_assertion(ledger_host: Host) -> None:
+    with pytest.raises(AssertionError) as raised:
+        _split_case(None).values[0].run()
+    assert type(raised.value) is AssertionError

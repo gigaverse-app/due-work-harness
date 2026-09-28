@@ -58,6 +58,7 @@ from due_work_harness.crash_histories import (
     assert_findings_hold,
     assert_histories_converge,
     assert_runs_match_table,
+    divergence_for,
 )
 from due_work_harness.models import HarnessModel
 
@@ -181,7 +182,7 @@ def assert_process_deaths_converge(history: ProcessHistory[Any, Any]) -> None:
     """
     runs = process_histories(history)
     assert_findings_hold(history.name, runs, history.findings)
-    assert_histories_converge(history.name, runs)
+    assert_histories_converge(history.name, runs, divergence=divergence_for(history.findings))
 
 
 def assert_pinned_process_outcomes(
