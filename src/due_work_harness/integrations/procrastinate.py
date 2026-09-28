@@ -135,10 +135,10 @@ def ownership(
     returns its id. A claim registers a worker and fetches a job exactly as
     procrastinate's worker does (``JobManager.register_worker`` then
     ``fetch_job``); the token is that worker's id, the only owner identity
-    procrastinate records. The fenced write is ``finish_job``; renewing the
-    lease is the worker's heartbeat; reclaiming a stalled job is procrastinate's
-    documented recipe (``get_stalled_jobs`` then ``retry_job``), applied to that
-    one job. The app's connector must run synchronously in the calling thread,
+    procrastinate records. The fenced writes are the worker's two settlements,
+    ``finish_job`` and ``retry_job``; renewing the lease is the worker's
+    heartbeat; reclaiming a stalled job is procrastinate's documented recipe
+    (``get_stalled_jobs`` then ``retry_job``), applied to that one job. The app's connector must run synchronously in the calling thread,
     as the Django connector does.
 
     A retried job is stamped with the application's clock and fetched by the
@@ -148,7 +148,7 @@ def ownership(
     """
     from uuid import NAMESPACE_URL, UUID, uuid5
 
-    from procrastinate import jobs
+    from procrastinate import jobs, utils
 
     manager = app.job_manager
     workers: dict[UUID, int] = {}
@@ -158,32 +158,45 @@ def ownership(
         workers[token] = worker_id
         return token
 
-    def due_within_skew() -> float | None:
+    def due_within_skew() -> bool:
         # procrastinate stamps a retried job's scheduled_at with the application's clock
         # (utils.utcnow) and fetches by the database's NOW(): the job is fetchable once the
-        # database's clock passes it. How long until then, if a job is due that soon.
+        # database's clock passes it. Whether a job on the queue is due within the skew,
+        # counting one that became due after the fetch that missed it.
         row = app.connector.execute_query_one(
-            "SELECT EXTRACT(EPOCH FROM MIN(scheduled_at) - NOW()) AS wait FROM procrastinate_jobs "
-            "WHERE status = 'todo' AND queue_name = %(queue)s AND scheduled_at > NOW() "
-            "AND scheduled_at <= NOW() + make_interval(secs => %(skew)s)",
+            "SELECT EXISTS (SELECT 1 FROM procrastinate_jobs WHERE status = 'todo' AND queue_name = %(queue)s "
+            "AND scheduled_at <= NOW() + make_interval(secs => %(skew)s)) AS due",
             queue=queue,
             skew=clock_skew.total_seconds(),
         )
-        return None if row is None or row["wait"] is None else float(row["wait"])
+        return row is not None and bool(row["due"])
 
     def claim() -> tuple[int, UUID] | None:
         worker_id = _run(manager.register_worker())
-        job = _run(manager.fetch_job(queues=[queue], worker_id=worker_id))
-        if job is None and (wait := due_within_skew()) is not None:
-            time.sleep(wait + 0.01)
-            job = _run(manager.fetch_job(queues=[queue], worker_id=worker_id))
-        return None if job is None else (job.id, token_for(worker_id))
+        # Poll, as procrastinate's own worker would, while a job is due within the skew:
+        # the two clocks drift, so no single computed wait is sure to be enough.
+        deadline = time.monotonic() + clock_skew.total_seconds()
+        while (job := _run(manager.fetch_job(queues=[queue], worker_id=worker_id))) is None:
+            if time.monotonic() >= deadline or not due_within_skew():
+                return None
+            time.sleep(0.05)
+        return job.id, token_for(worker_id)
 
     def finish(job_id: int, token: UUID) -> bool:
         # procrastinate's finish_job takes no owner: the token cannot reach it.
         del token
         try:
             _run(manager.finish_job_by_id_async(job_id=job_id, status=jobs.Status.SUCCEEDED, delete_job=False))
+        except Exception:
+            return False
+        return True
+
+    def retry(job_id: int, token: UUID) -> bool:
+        # The worker's other settlement, what it writes when an attempt fails with retries
+        # left: retry_job takes no owner either.
+        del token
+        try:
+            _run(manager.retry_job_by_id_async(job_id=job_id, retry_at=utils.utcnow()))
         except Exception:
             return False
         return True
@@ -228,6 +241,7 @@ def ownership(
         make_claimable=defer,
         claim=claim,
         fenced_write=finish,
+        other_fenced_writes={"retry": retry},
         renew_lease=heartbeat,
         expire_lease=expire,
         reclaim_stalled=reclaim,

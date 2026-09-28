@@ -16,9 +16,11 @@ is only ever observed (by a publication recorder), never delivered.
 Never import this module in an adopter: binding it measures the reference.
 """
 
+import functools
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import timedelta
+from typing import Any
 
 from django.db import connection, models, transaction
 from django.db.models import QuerySet
@@ -246,6 +248,44 @@ def fail_attempt_publishing_after_an_audit(pk: int) -> None:
     """The retry exists only as a message published by the second of two plain after-commit callbacks."""
     LifecycleAttempt.objects.filter(pk=pk).update(status=Status.RETRYABLE_FAILED)
     transaction.on_commit(lambda: record_audit(pk))
+    transaction.on_commit(lambda: publish("reconcile", pk))
+
+
+#: Attempts the reference notification task was run for.
+NOTIFIED: list[int] = []
+
+
+@functools.cache
+def _notification_task() -> Any:
+    """A real Celery task, run eagerly, standing for a webhook or email published after the commit."""
+    from celery import Celery
+
+    app = Celery("due-work-harness references", set_as_current=False)
+    app.conf.task_always_eager = True
+
+    @app.task(name="due-work-harness.references.notify")
+    def notify(pk: int) -> None:
+        NOTIFIED.append(pk)
+
+    return notify
+
+
+def notify_through_celery(pk: int) -> None:
+    """Publish the attempt's notification through Celery."""
+    _notification_task().delay(pk)
+
+
+def fail_attempt_atomically_then_notifying(pk: int) -> None:
+    """Conforming: the failure and its successor commit together; a notification is published after the commit."""
+    classify_retryable_failure_atomically(pk)
+    transaction.on_commit(lambda: notify_through_celery(pk))
+
+
+@transaction.atomic
+def fail_attempt_publishing_after_a_notification(pk: int) -> None:
+    """The retry is handed off by the second callback, behind a first that publishes through Celery."""
+    LifecycleAttempt.objects.filter(pk=pk).update(status=Status.RETRYABLE_FAILED)
+    transaction.on_commit(lambda: notify_through_celery(pk))
     transaction.on_commit(lambda: publish("reconcile", pk))
 
 

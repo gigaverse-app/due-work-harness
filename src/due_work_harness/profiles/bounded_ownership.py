@@ -24,6 +24,9 @@ it mean something:
    through.
 3. **Stale-token rejection** — a write carrying a superseded token is refused.
    This is what makes a slow, resurrected worker harmless instead of corrupting.
+   3 and 3a hold for every owner write, not only the settlement: a stale owner
+   that cannot finish a job but can still send it back to be retried puts it in
+   front of a second worker while its new owner runs it.
 6a. **Current-token renewal is accepted** — the heartbeat works for the owner
    holding the lease.
 4. **Live lease protects the owner** — the reaper cannot take a row whose lease
@@ -105,6 +108,15 @@ class FencedOwnership(HarnessModel):
     #: different code paths.
     fenced_write: Callable[[Any, UUID], bool]
 
+    #: Every other owner write, by name: the alternatives to ``fenced_write`` that
+    #: the owner can make, such as retry, fail or abort. Each is proven as
+    #: ``fenced_write`` is, accepted under the current token and refused under a
+    #: superseded one. Fencing only the success path is a real shape, and so is
+    #: fencing neither: procrastinate checks no owner in ``finish_job`` or
+    #: ``retry_job``, and a stale worker's ``retry_job`` sends a job back to
+    #: ``todo`` while its new owner is running it, so it runs twice at once.
+    other_fenced_writes: dict[str, Callable[[Any, UUID], bool]] = {}
+
     #: Extend the lease under a token. False (or raise) on a stale token.
     renew_lease: Callable[[Any, UUID], bool]
 
@@ -157,7 +169,7 @@ def assert_ownership_transitions_are_production_bound(ownership: FencedOwnership
     """INVARIANT 0: ownership callbacks invoke production transitions."""
     bindings = (
         ("claim", ownership.claim, "the production claim transition"),
-        ("fenced_write", ownership.fenced_write, "the production fenced write"),
+        *((field, write, "the production fenced write") for field, write in _fenced_writes(ownership)),
         ("renew_lease", ownership.renew_lease, "the production lease renewal"),
         ("reclaim_stalled", ownership.reclaim_stalled, "the production stalled-work recovery transition"),
     )
@@ -195,6 +207,14 @@ def _assert_untouched(ownership: FencedOwnership, row_id: Any, before: Any, what
         f"{ownership.name}: {what} was correctly refused, but the observed state "
         f"moved from {before!r} to {after!r}. A guard that reports failure after "
         f"the write has already landed refuses nothing"
+    )
+
+
+def _fenced_writes(ownership: FencedOwnership) -> tuple[tuple[str, Callable[[Any, UUID], bool]], ...]:
+    """Every owner write, named as its binding: ``fenced_write`` first, then each other one."""
+    return (
+        ("fenced_write", ownership.fenced_write),
+        *((f"other_fenced_writes[{name!r}]", write) for name, write in ownership.other_fenced_writes.items()),
     )
 
 
@@ -261,6 +281,13 @@ def assert_ownership_bindings_are_production_bound(ownership: FencedOwnership) -
             field=field_name,
             binding=binding,
             production_shape=f"the production {field_name.replace('_', ' ')} operation",
+        )
+    for field_name, write in _fenced_writes(ownership)[1:]:
+        assert_test_binding_delegates_to_production(
+            adopter=ownership.name,
+            field=field_name,
+            binding=write,
+            production_shape="the production fenced write",
         )
 
 
@@ -354,26 +381,27 @@ def assert_current_token_write_is_accepted(ownership: FencedOwnership) -> None:
     observed state. An adopter that owns its row shape — a shared work-table library especially —
     gets that for one lambda.
     """
-    row_id, token = _claim_one(ownership)
-    before = _observed(ownership, row_id)
+    for field, write in _fenced_writes(ownership):
+        row_id, token = _claim_one(ownership)
+        before = _observed(ownership, row_id)
 
-    result = ownership.fenced_write(row_id, token)
-    assert not _is_refused(result), (
-        f"{ownership.name}: a write carrying the row's CURRENT token was "
-        f"refused (returned {result!r}). Invariants 3 and 6 only prove a stale "
-        f"token is rejected, so an implementation that refuses everything — or "
-        f"does nothing — satisfies them both. The fence has to let the rightful "
-        f"owner through"
-    )
-    if ownership.observe is None:
-        return
-    after = ownership.observe(row_id)
-    assert after != before, (
-        f"{ownership.name}: the write reported success under the current token "
-        f"but left the observed state at {before!r}. Reporting an effect that did "
-        f"not happen is worse than refusing it: the caller proceeds as though the "
-        f"row moved on"
-    )
+        result = write(row_id, token)
+        assert not _is_refused(result), (
+            f"{ownership.name}: {field} carrying the row's CURRENT token was "
+            f"refused (returned {result!r}). Invariants 3 and 6 only prove a stale "
+            f"token is rejected, so an implementation that refuses everything — or "
+            f"does nothing — satisfies them both. The fence has to let the rightful "
+            f"owner through"
+        )
+        if ownership.observe is None:
+            continue
+        after = ownership.observe(row_id)
+        assert after != before, (
+            f"{ownership.name}: {field} reported success under the current token "
+            f"but left the observed state at {before!r}. Reporting an effect that did "
+            f"not happen is worse than refusing it: the caller proceeds as though the "
+            f"row moved on"
+        )
 
 
 def assert_current_token_renewal_is_accepted(ownership: FencedOwnership) -> None:
@@ -422,23 +450,30 @@ def assert_stale_token_is_rejected(ownership: FencedOwnership) -> None:
     update, or one that checks the fence on the wrong side of the write — and a
     return value alone cannot see it.
     """
-    row_id, stale_token = _claim_one(ownership)
-    ownership.expire_lease(row_id)
-    ownership.reclaim_stalled(row_id)
-    assert ownership.claim() is not None, f"{ownership.name}: re-claim failed"
-    before = _observed(ownership, row_id)
+    accepted: list[str] = []
+    for field, write in _fenced_writes(ownership):
+        # Each write gets its own superseded owner: an accepted one has already
+        # moved the row, which would decide the next write's verdict for it.
+        row_id, stale_token = _claim_one(ownership)
+        ownership.expire_lease(row_id)
+        ownership.reclaim_stalled(row_id)
+        assert ownership.claim() is not None, f"{ownership.name}: re-claim failed"
+        before = _observed(ownership, row_id)
 
-    try:
-        result: object = ownership.fenced_write(row_id, stale_token)
-    except Exception:
-        _assert_untouched(ownership, row_id, before, "the refused write")
-        return  # raising is a legitimate refusal
-    assert _is_refused(result), (
-        f"{ownership.name}: a write carrying the superseded token "
-        f"{stale_token!r} was accepted. A slow worker that wakes up after its "
-        f"claim was reaped would corrupt the new owner's state"
+        try:
+            result: object = write(row_id, stale_token)
+        except Exception:
+            _assert_untouched(ownership, row_id, before, f"the refused {field}")
+            continue  # raising is a legitimate refusal
+        if not _is_refused(result):
+            accepted.append(field)
+            continue
+        _assert_untouched(ownership, row_id, before, f"the refused {field}")
+    assert not accepted, (
+        f"{ownership.name}: {', '.join(accepted)} carrying a superseded token was "
+        f"accepted. A slow worker that wakes up after its claim was reaped would "
+        f"corrupt the new owner's state"
     )
-    _assert_untouched(ownership, row_id, before, "the refused write")
 
 
 def assert_live_lease_blocks_reclaim(ownership: FencedOwnership) -> None:

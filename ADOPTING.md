@@ -70,6 +70,15 @@ configure(django_host(production_packages={"myapp"}))
 The host tells the framework-free proofs what only your framework knows: how
 to reach the database, count commits and freeze time.
 
+If your code publishes through Celery, let crash histories refuse each publish
+as a broker that is down would:
+
+```python
+from due_work_harness.integrations.celery import celery_publication_breaker
+
+configure(django_host(production_packages={"myapp"}, publication_breaker=celery_publication_breaker))
+```
+
 ## 5. Give each site a disposition
 
 **Cover it with a contract**: the proofs that it survives lost messages and

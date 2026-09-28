@@ -123,7 +123,7 @@ configure(django_host(production_packages={"myapp"}))
 | Extra | Supplies |
 | --- | --- |
 | `[django]` | `django_host()`: pytest-django marks, the transaction probe, a commit counter that kills the worker after any commit (including writes made through `SELECT fn()`), PostgreSQL plan inspection, lifecycle-state proofs |
-| `[celery]` | beat-schedule evidence, a publication recorder that holds messages instead of sending them |
+| `[celery]` | beat-schedule evidence, a publication recorder that holds messages instead of sending them, a publication breaker that refuses one publish as a broker that is down would |
 | `[procrastinate]` | its worker as recovery, "worker died holding this job" arrangement, the documented stalled-job recipe, periodic-task evidence |
 | `[dbos]` | restarting an app through its own startup for process-level crash histories |
 
@@ -149,6 +149,7 @@ commit:
 | Saleor checkout | With the Payments API, a death between capturing the payment and creating the order charges the customer with no order; after 90 days the payment belongs to nothing | Saleor's Transactions API with automatic completion of paid checkouts |
 | | A death after the order commits leaves it unconfirmed, its history empty or half-written | — |
 | | A failing `order_created` callback, no death at all, makes Django skip the confirmation | — |
+| | The broker refusing any one of the order's webhooks, no death at all, loses the webhooks after it and the confirmation, and fails the checkout of a paid order | — |
 | | Automatic completion dispatches a paid checkout again while its completion is still in flight, and reports no backlog | — |
 
 The coverage scan finds the same handoffs statically: the create view's `.defer` and `index_book`'s in the
