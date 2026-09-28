@@ -22,6 +22,10 @@ SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DUE_WORK_HARNESS="${SETUPTOOLS_SCM_PRETEND_VE
   uv pip install --quiet --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps -e "$repo"
 
 cd "$here"
+if [[ "${1:-}" == "--prepare-db" ]]; then
+  # Migrate once and clone a database per xdist worker; then run the tests with -n N --reuse-db.
+  exec "$UV_PROJECT_ENVIRONMENT/bin/python" "$here/prepare_db.py" "${2:?the number of xdist workers}"
+fi
 if [[ "${1:-}" == "--typecheck" ]]; then
   # The harness's own pinned Pyrefly, against Saleor's interpreter and packages.
   pyrefly_version="$(cd "$repo" && uv export --frozen --only-group lint --no-hashes | sed -n 's/^pyrefly==//p')"
