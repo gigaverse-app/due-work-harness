@@ -8,6 +8,7 @@ that actually ran and how many rows it affected, whatever the text looked
 like. Harness observers that must not miss a write classify it here.
 """
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -17,6 +18,10 @@ from due_work_harness.models import HarnessModel
 #: inserts rows, and ``COPY TO`` never reaches an execute wrapper as a write.
 _ROW_WRITES = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE", "COPY"})
 _CREATES_ROWS = frozenset({"INSERT", "MERGE", "COPY"})
+#: Statements that can write without their own status saying so: a function called from a
+#: ``SELECT``, or a trigger or a predicate function called from a DML statement that then
+#: affects zero rows. Everything else reports honestly, or refuses a transaction block.
+_TRANSACTIONAL_STATEMENTS = frozenset({"SELECT", "WITH", "VALUES", "INSERT", "UPDATE", "DELETE", "MERGE"})
 
 
 class RowWrite(HarnessModel):
@@ -49,37 +54,62 @@ def leading_keyword(sql: str) -> str:
     """The first SQL keyword after comments, whitespace and opening parentheses."""
     text = sql.lstrip()
     while True:
-        if text.startswith("/*") and "*/" in text:
-            text = text[text.index("*/") + 2 :].lstrip()
+        if text.startswith("/*"):
+            # PostgreSQL permits nested block comments; the first closing
+            # delimiter need not finish the leading comment.
+            depth = 1
+            for delimiter in re.finditer(r"/\*|\*/", text[2:]):
+                depth += 1 if delimiter.group() == "/*" else -1
+                if depth == 0:
+                    text = text[delimiter.end() + 2 :].lstrip()
+                    break
+            else:
+                return ""
         elif text.startswith("--"):
             text = text.partition("\n")[2].lstrip()
         elif text.startswith("("):
             text = text[1:].lstrip()
         else:
             break
-    return text.split(None, 1)[0].upper() if text else ""
+    keyword = re.match(r"[a-zA-Z]+", text)
+    return keyword.group().upper() if keyword else ""
 
 
 def execute_reporting_autocommit_write(
     execute: Callable[..., Any], sql: str, params: Any, many: bool, context: dict[str, Any]
 ) -> tuple[Any, bool]:
     """
-    Run one autocommit statement and report whether it committed a write.
+    Run one statement without taking over its transaction, and report whether it committed a write.
 
     A write made inside a function reports the command status of the ``SELECT``
     that called it (``SELECT procrastinate_defer_jobs_v1(...)`` reads as
-    ``SELECT 1``), so :func:`row_write` cannot see it. For statements that can
-    only write that way the statement runs in an explicit single-statement
-    transaction, and PostgreSQL's transaction-id assignment decides: an xid is
-    assigned exactly when the transaction wrote. That is autocommit's own
-    semantics made observable. Other statements report through their command
-    status, which also keeps utility statements that refuse a transaction block
-    out of one.
+    ``SELECT 1``), so :func:`row_write` cannot see it. A trigger or a predicate
+    can also write while the outer ``UPDATE`` or ``DELETE`` affects zero rows.
+    In autocommit, statements that can write either way therefore run in an
+    explicit single-statement transaction, and PostgreSQL's transaction-id
+    assignment decides: an xid is assigned exactly when the transaction wrote
+    (a row lock or an explicit allocation assigns one too, so this can only
+    over-count a boundary, never miss one). That is autocommit's own semantics
+    made observable. Other statements report through their command status,
+    which also keeps utility statements that refuse a transaction block out of one.
+
+    A transaction someone else owns is never begun or ended here. The server's
+    own transaction status is consulted as well as Django's autocommit flag,
+    because a raw ``BEGIN`` does not update the flag. Inside such a transaction
+    the statement runs as written, and only a SQL ``COMMIT`` (or ``END``) counts,
+    at the boundary where it happens.
     """
-    if leading_keyword(sql) not in {"SELECT", "WITH", "VALUES"}:
+    connection = context["connection"]
+    database = connection.connection
+    assert database is not None, "an executing Django statement must have an open PostgreSQL connection"
+    # psycopg 2 reports an int and psycopg 3 an IntEnum; IDLE is 0 in both.
+    in_transaction = int(database.info.transaction_status) != 0
+    if in_transaction or not connection.get_autocommit():
+        result = execute(sql, params, many, context)
+        return result, in_transaction and context["cursor"].statusmessage == "COMMIT"
+    if leading_keyword(sql) not in _TRANSACTIONAL_STATEMENTS:
         result = execute(sql, params, many, context)
         return result, row_write(sql, context["cursor"]) is not None
-    database = context["connection"].connection
     _run(database, "BEGIN")
     try:
         result = execute(sql, params, many, context)

@@ -3,11 +3,13 @@ Count a worker's commits on Django's default connection, and kill it inside one.
 
 This is the Django host's :class:`~due_work_harness.host.WorkerKiller`. Inside
 the context every commit on the calling thread's default connection is
-counted: an outermost ``COMMIT``, and every autocommit statement that wrote —
-including a ``SELECT`` that writes through a function, which
+counted: an outermost ``COMMIT``, a ``COMMIT`` a statement issues itself, and
+every autocommit statement that wrote — including a ``SELECT`` that writes
+through a function, or a zero-row ``UPDATE`` whose predicate does, which
 :func:`~due_work_harness.integrations.django.writes.execute_reporting_autocommit_write`
 detects from PostgreSQL's transaction-id assignment rather than the statement's
-text. Right after the chosen commit the worker dies: callbacks registered with
+text. Observing never takes over a transaction someone else owns. Right after
+the chosen commit the worker dies: callbacks registered with
 ``transaction.on_commit`` are dropped (Django would run them only later), and
 every further statement raises :class:`~due_work_harness.worker_death.WorkerDied`,
 so ``finally`` blocks cannot write what a dead process never would. Rollbacks
@@ -73,18 +75,20 @@ def django_worker_killer(kill_after: int | None) -> Iterator[DjangoWorker]:
             # Unwinding savepoints after a death mid-transaction: the server would roll back anyway.
             return execute(sql, params, many, context)
         worker.refuse_if_dead()
-        if target.in_atomic_block:
-            return execute(sql, params, many, context)
-        # Outside a transaction a write commits by itself.
-        result, wrote = execute_reporting_autocommit_write(execute, sql, params, many, context)
-        if wrote:
+        # Outside a transaction a write commits by itself; inside one, only a SQL COMMIT is a boundary,
+        # and the transaction stays its owner's (a rollback must still roll back).
+        result, committed = execute_reporting_autocommit_write(execute, sql, params, many, context)
+        if committed:
             worker.committed()
         return result
 
-    with pytest.MonkeyPatch.context() as patch, target.execute_wrapper(statement):
-        patch.setattr(type(target), "commit", commit)
-        yield worker
-    if worker.dead:
-        # A dead process's session ends with it: advisory locks, session
-        # settings and temporary tables must not survive into recovery.
-        target.close()
+    try:
+        with pytest.MonkeyPatch.context() as patch, target.execute_wrapper(statement):
+            patch.setattr(type(target), "commit", commit)
+            yield worker
+    finally:
+        if worker.dead:
+            # A dead process's session ends with it: advisory locks, session
+            # settings and temporary tables must not survive into recovery, nor
+            # into the next test when a history is rejected while its worker is dead.
+            target.close()
