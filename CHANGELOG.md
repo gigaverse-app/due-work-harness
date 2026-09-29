@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/gigaverse-app/due-work-harness/compare/v0.5.0...v0.5.1) (2026-09-29)
+
+
+### Bug fixes
+
+* **django:** run the autocommit-write probe through a DB-API cursor, so psycopg2 works ([#22](https://github.com/gigaverse-app/due-work-harness/issues/22)) ([d383885](https://github.com/gigaverse-app/due-work-harness/commit/d383885e2e367c42a53eb227be945aaca98df13f))
+
 ## [0.5.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.4.0...v0.5.0) (2026-09-28)
 
 
