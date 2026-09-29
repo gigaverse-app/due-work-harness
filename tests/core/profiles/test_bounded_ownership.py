@@ -27,6 +27,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from due_work_harness.host import race_timeout
+from due_work_harness.models import DueWorkContractDesignError
 from due_work_harness.profiles.bounded_ownership import (
     FENCED_OWNERSHIP_PROOFS,
     FencedOwnership,
@@ -535,3 +536,30 @@ def test_each_racer_knows_the_race_deadline_so_the_host_can_bound_its_waits() ->
     assert_claim_is_exclusive_across_connections(_binding(_Recording()), timeout=3)
     assert seen == [3, 3]
     assert race_timeout() is None, "outside the race the calling thread is no racer"
+
+
+def test_the_race_deadline_is_the_ownerships_own_setting() -> None:
+    # The generated case calls the proof with no timeout: the deadline an adopter can raise is on the binding.
+    seen: list[float | None] = []
+
+    class _Recording(_LockedClaims):
+        def claim(self) -> tuple[int, UUID] | None:
+            seen.append(race_timeout())
+            return super().claim()
+
+    assert_claim_is_exclusive_across_connections(_binding(_Recording()).model_copy(update={"race_timeout": 4.0}))
+    assert seen == [4.0, 4.0]
+
+
+def test_a_racer_that_raises_is_told_which_setting_to_raise() -> None:
+    class _Raises(_LockedClaims):
+        def claim(self) -> tuple[int, UUID] | None:
+            raise RuntimeError("canceling statement due to lock timeout")
+
+    with pytest.raises(AssertionError, match=r"(?s)bounded at 1s, half the race's 2s.*FencedOwnership\.race_timeout"):
+        assert_claim_is_exclusive_across_connections(_binding(_Raises()).model_copy(update={"race_timeout": 2.0}))
+
+
+def test_a_race_timeout_that_is_not_positive_is_refused() -> None:
+    with pytest.raises(DueWorkContractDesignError, match="race_timeout"):
+        _binding(_LockedClaims()).model_copy(update={"race_timeout": 0.0})

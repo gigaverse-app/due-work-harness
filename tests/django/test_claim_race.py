@@ -123,7 +123,9 @@ def test_a_blocking_claim_that_holds_its_lock_inside_the_bound_wins_once() -> No
 
 
 def test_a_blocking_claim_that_holds_its_lock_past_the_bound_is_told_to_raise_the_timeout() -> None:
-    with pytest.raises(AssertionError, match=r"(?s)lock timeout.*bounded at 1s, half the race's 2s.*larger timeout"):
+    with pytest.raises(
+        AssertionError, match=r"(?s)lock timeout.*bounded at 1s, half the race's 2s.*FencedOwnership\.race_timeout"
+    ):
         assert_claim_is_exclusive_across_connections(_owner(_claim_holding_its_lock(1.5)), timeout=2)
 
 

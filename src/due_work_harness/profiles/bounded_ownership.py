@@ -83,7 +83,7 @@ from due_work_harness.binding import (
     assert_test_binding_forwards,
 )
 from due_work_harness.host import current_host, racing
-from due_work_harness.models import HarnessModel
+from due_work_harness.models import DueWorkContractDesignError, HarnessModel
 
 
 class FencedOwnership(HarnessModel):
@@ -164,6 +164,16 @@ class FencedOwnership(HarnessModel):
     #: work-table library, which owns the row shape, generally does — and gets
     #: the stronger contract for one lambda.
     observe: Callable[[Any], Any] | None = None
+
+    #: The deadline, in seconds, of the two-connection claim race
+    #: (:func:`assert_claim_is_exclusive_across_connections`). The host bounds each
+    #: racer's lock waits at half of it, so a correct claim that holds its lock
+    #: longer than that needs a larger value here.
+    race_timeout: float = 10.0
+
+    def model_post_init(self, _context: Any) -> None:
+        if self.race_timeout <= 0:
+            raise DueWorkContractDesignError("FencedOwnership race_timeout must be a positive number of seconds")
 
 
 def assert_ownership_transitions_are_production_bound(ownership: FencedOwnership) -> None:
@@ -560,7 +570,7 @@ def assert_the_lease_outlives_the_work(
     )
 
 
-def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, timeout: float = 10.0) -> None:
+def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, timeout: float | None = None) -> None:
     """
     INVARIANT 1, proven properly: two real connections, one winner.
 
@@ -585,18 +595,21 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
     test process alive; the host's ``connection_scope()`` is what bounds and
     closes its connection.
 
-    ``timeout`` is the race's one deadline, in seconds, from the moment the
+    ``timeout`` (by default :attr:`FencedOwnership.race_timeout`, which a
+    generated case uses) is the race's one deadline, in seconds, from the moment the
     racers start: the barrier and the joins both wait only for what is left of
     it. Each racer enters :func:`~due_work_harness.host.racing` with it, so the
     host's scope bounds the racer's lock waits at half of it (the Django host's
     ``lock_timeout``): a claim blocked on a lock fails with the database's own
     error, deterministically, rather than as a racer that never returned. A
-    correct claim that holds its lock longer than that needs a larger ``timeout``.
+    correct claim that holds its lock longer than that needs a larger ``race_timeout``.
 
     The test must run with real commits — see the host's
     ``database_marks(True)``; inside a test-wrapping transaction the racer
     threads cannot see the row.
     """
+    if timeout is None:
+        timeout = ownership.race_timeout
     ownership.make_claimable()
 
     barrier = threading.Barrier(2)
@@ -636,7 +649,7 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
         f"{errors!r}. Losing a claim race is an ordinary outcome and must "
         f"return None, not error. Where the host bounds lock waits, each racer's are bounded at "
         f"{timeout / 2:g}s, half the race's {timeout:g}s: a claim that correctly holds its lock longer "
-        f"than that needs a larger timeout"
+        f"than that needs a larger FencedOwnership.race_timeout"
     )
     winners = [claim for claim in claims if claim is not None]
     assert len(winners) == 1, (

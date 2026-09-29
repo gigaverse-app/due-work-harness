@@ -57,7 +57,7 @@ def _in_transaction() -> bool:
 
 
 #: The race deadline a racing thread's database waits are bounded from when the proof
-#: that started it gives none, in seconds (the race proof's default).
+#: that started it gives none, in seconds (FencedOwnership.race_timeout's default).
 DEFAULT_RACE_TIMEOUT = 10.0
 
 
