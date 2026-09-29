@@ -21,7 +21,7 @@ them, in both directions. Never bind these in an adopter.
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -289,7 +289,7 @@ class Recipient:
         """The keyed call on an async client."""
         self.notify_once(attempt)
 
-    def deferred_notify(self, attempt: int) -> Awaitable[None]:
+    def deferred_notify(self, attempt: int) -> Coroutine[Any, Any, None]:
         """An SDK-style sync method that returns deferred work rather than its result."""
         return self.notify_async(attempt)
 

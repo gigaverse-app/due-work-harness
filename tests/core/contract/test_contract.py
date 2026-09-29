@@ -54,11 +54,13 @@ from due_work_harness.gap_probes import (
 from due_work_harness.host import Host
 from due_work_harness.process_histories import ProcessHistory
 from due_work_harness.profiles.automatic_recovery import assert_in_flight_work_is_not_redispatched
+from due_work_harness.profiles.execution_eligibility import ELIGIBILITY_PROOFS
 from due_work_harness.profiles.fact_derived_obligations import (
     StateDerived,
     assert_unrecorded_obligation_is_discovered,
 )
 from due_work_harness.references import in_memory_handoffs
+from due_work_harness.references.eligibility import GateReference, reference_gate
 from due_work_harness.references.in_memory import (
     EdgeTriggeredDeriver,
     MaterialisingDeriver,
@@ -1195,3 +1197,96 @@ def test_a_history_without_findings_still_diverges_with_a_plain_assertion(ledger
     with pytest.raises(AssertionError) as raised:
         _split_case(None).values[0].run()
     assert type(raised.value) is AssertionError
+
+
+# Execution eligibility.
+
+
+def test_a_contract_generates_and_reports_eligibility_without_work_tables() -> None:
+    contract = _contract(
+        profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=reference_gate, derivation=None
+    )
+    cases = [param.values[0] for param in contract_cases(contract) if param.id.startswith("eligibility-")]
+    assert {case.id for case in cases} == {f"eligibility-{proof.__name__}" for proof in ELIGIBILITY_PROOFS}
+    assert "Eligibility: claimed" in contract_report(contract)
+    for case in cases:
+        case.run()
+
+
+def test_a_generated_eligibility_case_fails_a_scheduler_that_breaks_its_proof() -> None:
+    def hot_looping_gate() -> Any:
+        # ARRANGE — an independent scheduler whose periodic inspection never advances its next time.
+        # REAL PRODUCTION — none; the harness-owned reference scheduler stands in.
+        # EXTERNAL SEAM — none; the scheduler has no provider.
+        # OBSERVE — the gate's own observations.
+        return GateReference(fault="hot_loop").binding()
+
+    contract = _contract(
+        profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=hot_looping_gate, derivation=None
+    )
+    cases = _params_by_id(contract_cases(contract))
+    with pytest.raises(AssertionError, match="hot-loops"):
+        cases["eligibility-assert_periodic_inspection_is_bounded"].values[0].run()
+    cases["eligibility-assert_blocked_gate_preserves_intent"].values[0].run()
+
+
+def test_eligibility_cannot_claim_recovery_without_a_sweep() -> None:
+    with pytest.raises(DueWorkContractDesignError, match="eligibility requires claimed automatic recovery"):
+        _contract(eligibility=reference_gate)
+
+
+@pytest.mark.parametrize("named", [False, True], ids=["single-gate", "named-gates"])
+def test_every_eligibility_variant_is_generated_and_reported(named: bool) -> None:
+    variants = {"active_owner": reference_gate, "unsettled_dependency": reference_gate}
+    contract = _contract(
+        profiles=dispositions(A=Claim()),
+        sweep=annotated_never_built,
+        eligibility=variants if named else reference_gate,
+        derivation=None,
+    )
+    cases = [param.values[0] for param in contract_cases(contract) if param.id.startswith("eligibility-")]
+    prefixes = [f"eligibility-{name}" for name in variants] if named else ["eligibility"]
+    assert {case.id for case in cases} == {
+        f"{prefix}-{proof.__name__}" for prefix in prefixes for proof in ELIGIBILITY_PROOFS
+    }
+    report = contract_report(contract)
+    if named:
+        assert all(name in report for name in variants)
+    for case in cases:
+        case.run()
+
+
+@pytest.mark.parametrize(
+    "variants", [{}, {"": reference_gate}, {"  ": reference_gate}], ids=["empty", "no-name", "blank"]
+)
+def test_eligibility_variant_names_cannot_silently_drop_coverage(variants: dict[str, Any]) -> None:
+    with pytest.raises(DueWorkContractDesignError, match="eligibility.*(empty|name)"):
+        _contract(profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=variants, derivation=None)
+
+
+def test_an_eligibility_binding_without_adopter_annotations_is_refused() -> None:
+    def unannotated_gate() -> Any:
+        return GateReference().binding()
+
+    with pytest.raises(
+        DueWorkContractDesignError, match="eligibility  binding is missing adopter evidence annotations"
+    ):
+        _contract(
+            profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=unannotated_gate, derivation=None
+        )
+
+
+def test_eligibility_cases_carry_the_hosts_database_marks(marking_host: Host) -> None:
+    contract = _contract(
+        profiles=dispositions(A=Claim()),
+        sweep=annotated_never_built,
+        eligibility=reference_gate,
+        derivation=None,
+        transactional=True,
+    )
+    marks = [
+        {mark.name: mark for mark in param.marks}
+        for param in contract_cases(contract)
+        if param.id.startswith("eligibility-")
+    ]
+    assert marks and all(found["database"].kwargs == {"transaction": True} for found in marks)

@@ -167,7 +167,11 @@ decline with a reason, not applicable, or known gap) for each of six profiles:
 | **F** fact-derived obligations | Can product state imply work nothing recorded, and is it still found? |
 
 Every contract also disposes of two execution-safety profiles: replay safety and
-bounded retry. Read [what a green result means](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/what-a-green-result-means.md)
+bounded retry. Work that is owed but blocked by a product decision (a dependency
+that has not settled, an owner still active) can declare an `ExecutionGate`
+as `eligibility=`: blocked work must stay owed and untouched, and once eligible
+it must complete by recovery alone, even with the readiness notification lost.
+Read [what a green result means](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/what-a-green-result-means.md)
 before you treat a pass as a guarantee.
 
 ## Green you can trust

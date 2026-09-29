@@ -111,7 +111,9 @@ due_work_harness/
     durable_retention.py    profile D
     eventual_convergence.py profile E
     fact_derived_obligations.py profile F
+    execution_eligibility.py  ExecutionGate: blocked work stays owed, is not run early, and recovery releases it
   references/in_memory.py   conforming in-memory implementations for self-tests
+  references/eligibility.py an independent scheduler with ten injectable faults, for ExecutionGate's proofs
   integrations/
     django/    django_host(), worker killer, write classification,
                QuerySet SelectionInspector, lifecycle-state proofs (2b/2c)

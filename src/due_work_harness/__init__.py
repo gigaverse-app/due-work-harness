@@ -120,6 +120,10 @@ from due_work_harness.profiles.eventual_convergence import (
     assert_superseded_snapshot_contract,
     assert_superseded_snapshot_does_not_write,
 )
+from due_work_harness.profiles.execution_eligibility import (
+    ELIGIBILITY_PROOFS,
+    ExecutionGate,
+)
 from due_work_harness.profiles.fact_derived_obligations import (
     STATE_DERIVED_PROOFS,
     StateDerived,
@@ -217,6 +221,9 @@ __all__ = [
     "assert_convergent_write_contract",
     "assert_superseded_snapshot_contract",
     "assert_superseded_snapshot_does_not_write",
+    # Execution eligibility: blocked work stays owed and is neither run early nor forgotten.
+    "ELIGIBILITY_PROOFS",
+    "ExecutionGate",
     # Profile F: fact-derived obligations.
     "STATE_DERIVED_PROOFS",
     "StateDerived",

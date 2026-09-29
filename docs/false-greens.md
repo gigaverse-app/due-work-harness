@@ -52,6 +52,17 @@ proof green, the proof was about to tell you something.
 | **The hook that rewrites the record** | a worker runs the task, records it SUCCESSFUL, then sends `task_finished`; every death converges, but a receiver that raises lands in the worker's own failure path, which records the task FAILED after its effect happened | `receiver_breaker`: each receiver of the worker's signals failing in turn must converge too |
 | **The handoff behind a publish** | a callback publishes a webhook or a task, then the handoff runs; with the broker up every history converges, but a refused publish raises out of the callback and takes everything after it down | `publication_breaker`: the broker refusing each publication in turn must converge too |
 
+## Blocked work
+
+| The lie | What it looks like | Refused by |
+| --- | --- | --- |
+| **The blocker that drops the work** | a blocked obligation deleted or rewritten by a sweep that cannot run it yet, so readiness later releases nothing | every route and recovery is run while blocked; the obligation must stay owed and its reserved state (revision, retry budget, not-before) unchanged |
+| **The hidden write** | a blocked attempt restores the same state after touching it, so any before/after comparison of state passes | an independent durable-mutation count must not move while blocked |
+| **The early run** | a blocked obligation executes, or calls the provider, on a sweep before it is eligible | executions and provider calls must not move while blocked; the example must not already be complete |
+| **The release that admits new work** | becoming eligible bumps the revision, resets the retry budget or moves the not-before time forward | the reserved state must be identical before and after readiness |
+| **The lost notification nobody re-checks** | readiness is signalled once; the signal is lost and no sweep ever looks again, or completion is faked without reaching the provider | recovery alone must reach the declared outcome, and the provider must be reached |
+| **The fallback on the wrong side of its boundary** | the periodic inspection fires a second early, never fires, or fires on every run because inspecting does not move its next inspection | `recheck_after` is probed one microsecond before and at the boundary by moving a clock; a second run without time passing must not execute again |
+
 ## What only a reviewer can refuse
 
 - **A production reference that is not load-bearing.** The delegation tripwire

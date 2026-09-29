@@ -7,6 +7,9 @@ harness so that a proof is never validated against the adopter it judges.
 
 * ``in_memory`` — in-memory reference machines for profiles B–F and the
   safety profiles. Framework-free, like the rest of the core.
+* ``in_memory_handoffs`` — a ledger with interruptible commits, for crash histories.
+* ``eligibility`` — an independent scheduler with ten injectable faults, for the
+  execution-eligibility proofs.
 
 References that need a real database live with their integration, for example
 :mod:`due_work_harness.integrations.django.references`.
