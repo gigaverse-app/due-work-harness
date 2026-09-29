@@ -8,6 +8,7 @@ against real tables, and on the statements Django's ORM actually generates.
 
 import threading
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from django.db import connection, transaction
@@ -255,8 +256,8 @@ def test_another_aliass_transaction_neither_starts_nor_ends_a_sequence(
     def enter(self: transaction.Atomic) -> None:
         return None if self.using == "other" else real_enter(self)
 
-    def exit(self: transaction.Atomic, *exc: object) -> None:
-        return None if self.using == "other" else real_exit(self, *exc)
+    def exit(self: transaction.Atomic, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+        return None if self.using == "other" else real_exit(self, exc_type, exc_value, traceback)
 
     monkeypatch.setattr(transaction.Atomic, "__enter__", enter)
     monkeypatch.setattr(transaction.Atomic, "__exit__", exit)
