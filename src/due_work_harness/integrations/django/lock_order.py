@@ -31,10 +31,15 @@ What it sees, and what it does not:
   Leading comments (sqlcommenter's, for one) are skipped as PostgreSQL skips them.
 * A transaction that locks one table records no order. Two tables are the smallest ordering.
 * Only the tables of the locking statement's own query level: a subquery's rows
-  are read, not locked. A derived table (``FROM (SELECT ...)``) is not classified.
+  are read, not locked. A data-modifying common table expression locks its own
+  target, before the statement it feeds. A derived table (``FROM (SELECT ...)``)
+  is not classified. String literals, dollar quotes and comments are skipped.
 * Exclusive row locks only. ``FOR SHARE``, ``FOR KEY SHARE`` and ``LOCK TABLE``
   are not recorded, though they can take part in a deadlock too.
 * Row locks a trigger or a function takes are invisible: they are not in the statement.
+* One process. :data:`LOCK_ORDER_LEDGER` holds what this process recorded, so under
+  ``pytest-xdist`` two tests on different workers that lock in opposite orders are
+  never compared; run the tests that share rows on one worker to compare them.
 
 PostgreSQL's ``FOR [NO KEY] UPDATE [OF ...]`` and the writes ``UPDATE`` and
 ``DELETE`` are the locking statements; ``INSERT`` takes no lock on rows it does not read.
@@ -62,11 +67,24 @@ _QUOTED = re.compile(r"\"([^\"]+)\"")
 _FROM_OR_JOIN = re.compile(r"\b(?:FROM|JOIN)\s+\"([^\"]+)\"", re.IGNORECASE)
 _UPDATE = re.compile(r"UPDATE\s+\"([^\"]+)\"", re.IGNORECASE)
 _DELETE = re.compile(r"DELETE\s+FROM\s+\"([^\"]+)\"", re.IGNORECASE)
+_WITH = re.compile(r"WITH\s+(?:RECURSIVE\s+)?", re.IGNORECASE)
+#: A common table expression up to its body's opening parenthesis:
+#: ``name [(columns)] AS [NOT] [MATERIALIZED] (``.
+_CTE_HEAD = re.compile(
+    r"\s*(?:\"[^\"]+\"|\w+)\s*(?:\([^)]*\)\s*)?AS\s+(?:NOT\s+)?(?:MATERIALIZED\s+)?\(", re.IGNORECASE
+)
+_CTE_SEPARATOR = re.compile(r"\s*,")
+_DOLLAR_TAG = re.compile(r"\$[A-Za-z_]*\$")
 
 
 def locked_tables(sql: str) -> tuple[str, ...]:
     """Tables whose rows this statement locks, in the order the statement names them."""
-    text = statement_text(sql)
+    return _locked_tables(_blank_literals_and_comments(statement_text(sql)))
+
+
+def _locked_tables(text: str) -> tuple[str, ...]:
+    if _WITH.match(text):
+        return _locked_by_ctes(text)
     if (match := _UPDATE.match(text)) or (match := _DELETE.match(text)):
         return (match.group(1),)
     top_level = _outside_parentheses(text)
@@ -74,11 +92,91 @@ def locked_tables(sql: str) -> tuple[str, ...]:
         return ()
     if scoped := _LOCK_OF.search(top_level):
         return tuple(_QUOTED.findall(scoped.group(1)))
+    return _distinct(_FROM_OR_JOIN.findall(top_level))
+
+
+def _locked_by_ctes(text: str) -> tuple[str, ...]:
+    """A ``WITH`` statement: each common table expression's locks in order, then the statement they feed."""
+    with_clause = _WITH.match(text)
+    assert with_clause is not None
+    locked: list[str] = []
+    position = with_clause.end()
+    while head := _CTE_HEAD.match(text, position):
+        end = _closing_parenthesis(text, head.end())
+        locked.extend(_locked_tables(text[head.end() : end].strip()))
+        position = end + 1
+        comma = _CTE_SEPARATOR.match(text, position)
+        if comma is None:
+            break
+        position = comma.end()
+    locked.extend(_locked_tables(text[position:].strip()))
+    return _distinct(locked)
+
+
+def _closing_parenthesis(text: str, start: int) -> int:
+    depth = 1
+    for index in range(start, len(text)):
+        if text[index] == "(":
+            depth += 1
+        elif text[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return len(text)
+
+
+def _distinct(tables: list[str]) -> tuple[str, ...]:
     seen: list[str] = []
-    for table in _FROM_OR_JOIN.findall(top_level):
+    for table in tables:
         if table not in seen:
             seen.append(table)
     return tuple(seen)
+
+
+def _blank_literals_and_comments(sql: str) -> str:
+    """
+    The statement with string literals, dollar quotes and comments blanked out, so their text opens nothing.
+
+    Quoted identifiers are kept: they are the table names. Blanking keeps every
+    other character where it was.
+    """
+    out, index = list(sql), 0
+    while index < len(sql):
+        if sql.startswith("--", index):
+            end = sql.find("\n", index)
+            end = len(sql) if end < 0 else end
+        elif sql.startswith("/*", index):
+            end, depth = index + 2, 1
+            while end < len(sql) and depth:
+                if sql.startswith("/*", end):
+                    depth, end = depth + 1, end + 2
+                elif sql.startswith("*/", end):
+                    depth, end = depth - 1, end + 2
+                else:
+                    end += 1
+        elif sql[index] == "'":
+            end = index + 1
+            while end < len(sql):
+                if sql[end] == "'" and sql.startswith("''", end):
+                    end += 2
+                elif sql[end] == "'":
+                    end += 1
+                    break
+                else:
+                    end += 1
+        elif sql[index] == '"':
+            closing = sql.find('"', index + 1)
+            index = len(sql) if closing < 0 else closing + 1
+            continue
+        elif tag := _DOLLAR_TAG.match(sql, index):
+            closing = sql.find(tag.group(), tag.end())
+            end = len(sql) if closing < 0 else closing + len(tag.group())
+        else:
+            index += 1
+            continue
+        out[index:end] = " " * (end - index)
+        index = end
+    return "".join(out)
 
 
 def _outside_parentheses(sql: str) -> str:

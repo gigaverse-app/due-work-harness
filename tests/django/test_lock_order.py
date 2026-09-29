@@ -51,6 +51,19 @@ pytestmark = pytest.mark.django_db(transaction=True)
         # sqlcommenter and friends put a comment first; PostgreSQL still runs an UPDATE.
         ('/* controller=job */ UPDATE "work" SET "s" = 1', ("work",)),
         ('/* a /* nested */ comment */ SELECT "work"."id" FROM "work" FOR UPDATE', ("work",)),
+        # A parenthesis inside a string literal or a comment opens nothing.
+        ('SELECT "work"."id" FROM "work" WHERE "work"."name" = \'(\' FOR UPDATE', ("work",)),
+        ('SELECT "work"."id" /* ( */ FROM "work" -- (\n WHERE "work"."id" = 1 FOR UPDATE', ("work",)),
+        ('SELECT "work"."id" FROM "work" WHERE "work"."body" = $body$ ) ( $body$ FOR UPDATE', ("work",)),
+        # A data-modifying CTE locks its own target, before the statement it feeds.
+        (
+            'WITH "moved" AS (UPDATE "work" SET "s" = 1 WHERE "work"."id" = 1 RETURNING "work"."owner_id") '
+            'SELECT "owner"."id" FROM "owner" WHERE "owner"."id" IN (SELECT "owner_id" FROM "moved") FOR UPDATE',
+            ("work", "owner"),
+        ),
+        ('WITH "gone" AS (DELETE FROM "a" WHERE "a"."id" = 1 RETURNING "a"."id") DELETE FROM "b"', ("a", "b")),
+        ('WITH "c" AS MATERIALIZED (SELECT "a"."id" FROM "a" FOR UPDATE) SELECT 1', ("a",)),
+        ('WITH "plain" AS (SELECT "a"."id" FROM "a") SELECT "b"."id" FROM "b" FOR UPDATE', ("b",)),
         # Share locks and table locks are not recorded (documented).
         ('SELECT "work"."id" FROM "work" WHERE "work"."id" = 1 FOR SHARE', ()),
         ('LOCK TABLE "work" IN EXCLUSIVE MODE', ()),
@@ -68,6 +81,13 @@ pytestmark = pytest.mark.django_db(transaction=True)
         "subquery-in-update",
         "comment-before-update",
         "nested-comment-before-select",
+        "paren-in-a-string",
+        "paren-in-comments",
+        "paren-in-a-dollar-quote",
+        "cte-update-then-select-for-update",
+        "cte-delete-then-delete",
+        "materialized-cte-for-update",
+        "read-only-cte",
         "for-share",
         "lock-table",
     ],
