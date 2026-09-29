@@ -17,6 +17,7 @@ The database marks a generated case carries come from the configured host; the
 are observable without a database.
 """
 
+import builtins
 import os
 import re
 import subprocess
@@ -523,7 +524,42 @@ def _catching_among_other_types_detect() -> None:
         return
 
 
-@pytest.mark.parametrize("detect", [_catching_detect, _catching_among_other_types_detect], ids=["alone", "in-a-tuple"])
+_OTHER_ERRORS = (KeyError,)
+
+
+def _catching_through_a_starred_tuple_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except (ValueError, *_OTHER_ERRORS, AssertionError):
+        return
+
+
+def _catching_through_getattr_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except getattr(builtins, "AssertionError"):  # noqa: B009 - the disguise under test
+        return
+
+
+def _catching_through_an_annotated_alias_detect() -> None:
+    caught: type[BaseException] = AssertionError
+    try:
+        assert_the_reference_capability_exists()
+    except caught:
+        return
+
+
+@pytest.mark.parametrize(
+    "detect",
+    [
+        _catching_detect,
+        _catching_among_other_types_detect,
+        _catching_through_a_starred_tuple_detect,
+        _catching_through_getattr_detect,
+        _catching_through_an_annotated_alias_detect,
+    ],
+    ids=["alone", "in-a-tuple", "in-a-starred-tuple", "through-getattr", "through-an-annotated-alias"],
+)
 def test_a_detect_that_catches_an_assertion_error_is_refused(detect: Any) -> None:
     with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*AssertionError"):
         _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=detect)))
@@ -534,6 +570,46 @@ def _arranging_detect() -> None:
     # pytest rewrites this assert to raise AssertionError: raising is not inverting.
     assert arranged, "the arrangement is in place"
     assert_the_reference_capability_exists()
+
+
+def _annotating_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except AssertionError as error:
+        error.add_note("while probing the reference capability")
+        raise
+
+
+def _re_raising_among_other_types_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except (ValueError, AssertionError):
+        raise
+
+
+@pytest.mark.parametrize(
+    "detect", [_annotating_detect, _re_raising_among_other_types_detect], ids=["add-note", "tuple"]
+)
+def test_a_detect_that_catches_and_re_raises_an_assertion_is_accepted(detect: Any) -> None:
+    # Every handler ends in a bare raise: the assertion reaches the case as itself, so nothing is inverted.
+    _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=detect)))
+
+
+def _re_raising_only_sometimes_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except AssertionError:
+        if builtins:
+            return
+        raise
+
+
+def test_a_detect_that_re_raises_only_on_some_paths_is_refused() -> None:
+    with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*AssertionError"):
+        _contract(
+            adoption=Adoption.LEGACY,
+            profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=_re_raising_only_sometimes_detect)),
+        )
 
 
 def test_a_detect_whose_own_asserts_pytest_rewrote_is_accepted() -> None:

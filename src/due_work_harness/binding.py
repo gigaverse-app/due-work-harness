@@ -28,10 +28,12 @@ simple and reviewable — extract one production callable, make runtime call it,
 and make the adapter forward to it.
 """
 
+import ast
 import dis
 import functools
 import inspect
 import sys
+import textwrap
 from collections.abc import Callable, Collection
 from pathlib import Path
 from types import CodeType, ModuleType
@@ -120,9 +122,34 @@ def _inversion_names(code: CodeType) -> set[str]:
         if isinstance(constant, CodeType):
             names |= set(constant.co_names)
     found = names & (ASSERTION_INVERSION_NAMES - {"AssertionError"})
-    if _catches_assertion_error(code):
+    if _catches_assertion_error(code) and not _every_handler_re_raises(code):
         found.add("AssertionError")
     return found
+
+
+def _every_handler_re_raises(code: CodeType) -> bool:
+    """
+    Whether every ``except`` handler in the code's source ends in a bare ``raise`` and cannot leave another way.
+
+    A handler that annotates an assertion (``add_note``) or logs it and then
+    re-raises it inverts nothing: the assertion reaches the case as itself. The
+    bytecode says an ``AssertionError`` is matched; the source says what the
+    handler does with it. Every handler is held to it, whatever it matches, so
+    an aliased ``AssertionError`` cannot slip through a handler that swallows.
+    Without source, nothing is exonerated.
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(code)))
+    except (OSError, TypeError, SyntaxError):
+        return False
+    handlers = [node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)]
+    return bool(handlers) and all(_re_raises(handler) for handler in handlers)
+
+
+def _re_raises(handler: ast.ExceptHandler) -> bool:
+    last = handler.body[-1]
+    leaves = any(isinstance(node, (ast.Return, ast.Break, ast.Continue)) for node in ast.walk(handler))
+    return isinstance(last, ast.Raise) and last.exc is None and not leaves
 
 
 def callable_code(binding: Callable[..., Any]) -> CodeType | None:
