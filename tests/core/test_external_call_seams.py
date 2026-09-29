@@ -12,6 +12,7 @@ seam declared twice, which would be wrapped twice.
 
 import asyncio
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from due_work_harness.crash_histories import (
 from due_work_harness.host import Host, hosted
 from due_work_harness.models import DueWorkContractDesignError
 from due_work_harness.references import in_memory_handoffs as ref
+from due_work_harness.references.in_memory_handoffs import Recipient
 from due_work_harness.worker_death import WorkerDied
 
 
@@ -224,3 +226,86 @@ async def _as_coroutine(consume: Callable[[Any], Any], value: Any) -> None:
 
 async def _awaited(schedule: Callable[[int], Any], value: int) -> None:
     await schedule(value)
+
+
+def test_a_seam_returning_a_thread_pool_future_is_refused() -> None:
+    # A concurrent.futures.Future is not awaitable, and its effect happens on the pool's thread, later.
+    pool = ThreadPoolExecutor(max_workers=1)
+
+    class Submitting:
+        def submit(self, value: int) -> "Future[int]":
+            return pool.submit(lambda: value)
+
+    provider = Submitting()
+    try:
+        with (
+            hosted(Host()),
+            _worker(_history(ExternalCall(provider, "submit")), None, 1, None),
+            pytest.raises(
+                DueWorkContractDesignError, match=r"Submitting\.submit returned a concurrent\.futures\.Future"
+            ),
+        ):
+            provider.submit(1)
+    finally:
+        pool.shutdown()
+
+
+def test_a_refusal_the_transition_swallows_is_still_reported(ledger_host: Host) -> None:
+    # Production's best-effort ``except Exception`` catches the refusal; the history must still report it,
+    # rather than fail later as though the seam had never been called.
+    history = _notifying(ref.complete_notifying_best_effort, "notify_in_chunks", "notify")
+    with pytest.raises(DueWorkContractDesignError, match=r"Recipient\.notify_in_chunks returned a generator"):
+        assert_crash_at_every_commit_converges(ref.NOTIFYING_DELIVERY, history)
+
+
+class _Base:
+    def send(self, value: int) -> None:
+        pass
+
+
+class _Sub(_Base):
+    pass
+
+
+class _Overriding(_Base):
+    def send(self, value: int) -> None:
+        pass
+
+
+@pytest.mark.parametrize(
+    "owners",
+    [(Recipient, "instance"), (_Base, _Sub), (_Base, "sub-instance"), ("sub-instance", _Sub)],
+    ids=["class-and-its-instance", "class-and-subclass", "class-and-a-subclass-instance", "instance-and-its-class"],
+)
+def test_one_function_declared_through_overlapping_owners_is_refused(owners: tuple[object, object]) -> None:
+    # Declared through two owners that share one function, it would be wrapped twice and counted twice.
+    instances = {"instance": ref.RECIPIENT, "sub-instance": _Sub()}
+    first, second = (instances.get(owner, owner) if isinstance(owner, str) else owner for owner in owners)
+    attribute = "notify" if first is Recipient else "send"
+    with pytest.raises(DueWorkContractDesignError, match="declares the external call .* twice"):
+        _history(ExternalCall(first, attribute), ExternalCall(second, attribute))
+
+
+@pytest.mark.parametrize(
+    "owners",
+    [("two-instances",), ("overriding-subclass",)],
+    ids=["two-instances-of-one-class", "a-subclass-that-overrides"],
+)
+def test_distinct_seams_are_not_duplicates(owners: tuple[str]) -> None:
+    if owners == ("two-instances",):
+        _history(ExternalCall(Recipient(), "notify"), ExternalCall(Recipient(), "notify"))
+    else:
+        _history(ExternalCall(_Base, "send"), ExternalCall(_Overriding, "send"))
+
+
+def test_an_instance_seam_is_removed_again_not_left_as_a_bound_method() -> None:
+    # Restored by assignment, an instance seam would leave a bound method in the instance's own namespace,
+    # where it shadows every later patch of the class: a class seam would then never see this instance.
+    recipient = Recipient()
+    with hosted(Host()), _worker(_history(ExternalCall(recipient, "notify")), None, None, None):
+        recipient.notify(1)
+    assert "notify" not in vars(recipient)
+    with hosted(Host()), _worker(_history(ExternalCall(Recipient, "notify")), None, None, None) as worker:
+        recipient.notify(2)
+    assert worker.calls == 1
+    assert "notify" in vars(Recipient) and not isinstance(vars(Recipient)["notify"], type(recipient.notify))

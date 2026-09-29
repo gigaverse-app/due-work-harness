@@ -95,6 +95,14 @@ class Ledger(MutableHarnessModel):
         self.on_commit(lambda: self.outbox.append((task, row_id)))
 
     @contextmanager
+    def session(self) -> Iterator[None]:
+        """A client session whose close fails when an error is on its way out, replacing that error."""
+        try:
+            yield
+        except BaseException as error:  # noqa: BLE001 - the flawed cleanup under test
+            raise LedgerConnectionError("the session could not be closed after an error") from error
+
+    @contextmanager
     def atomic(self) -> Iterator[None]:
         self._refuse_if_dead()
         assert self._pending is None, "the reference ledger has no nested transactions"
@@ -196,6 +204,12 @@ def fail_with_split_handoff(attempt: int) -> None:
     _create_successor(attempt)
 
 
+def fail_with_split_handoff_in_a_session(attempt: int) -> None:
+    """The split handoff inside a session whose close raises its own error after the worker dies."""
+    with LEDGER.session():
+        fail_with_split_handoff(attempt)
+
+
 def fail_with_message_handoff(attempt: int) -> None:
     """The failure commits; the retry exists only as a published message."""
     with LEDGER.atomic():
@@ -293,6 +307,11 @@ class Recipient:
         """An SDK-style sync method that returns deferred work rather than its result."""
         return self.notify_async(attempt)
 
+    def notify_in_chunks(self, attempt: int) -> Iterator[int]:
+        """A streaming client: the notification leaves as the caller iterates."""
+        self.received.append(attempt)
+        yield attempt
+
 
 RECIPIENT = Recipient()
 
@@ -325,6 +344,16 @@ def complete_notifying_once_async(attempt: int) -> None:
     LEDGER.update(attempt, status=COMPLETE)
 
 
+def complete_notifying_best_effort(attempt: int) -> None:
+    """Completion, a streamed notification whose errors are swallowed as best effort, then a plain one."""
+    LEDGER.update(attempt, status=COMPLETE)
+    try:
+        list(RECIPIENT.notify_in_chunks(attempt))
+    except Exception:  # noqa: BLE001, S110 - the production shape under test: a best-effort call
+        pass
+    RECIPIENT.notify(attempt)
+
+
 def status_and_notifications(attempt: int) -> tuple[str, int]:
     return LEDGER.get(attempt)["status"], RECIPIENT.received.count(attempt)
 
@@ -355,6 +384,15 @@ def complete_failing_on_error(attempt: int) -> None:
         LEDGER.update(attempt, status=COMPLETE)
     except LedgerConnectionError:
         LEDGER.update(attempt, status=FAILED)
+
+
+def complete_asserting_on_error(attempt: int) -> None:
+    """Records its progress, then completion, and treats an error from that write as a broken invariant."""
+    LEDGER.update(attempt, progress="done")
+    try:
+        LEDGER.update(attempt, status=COMPLETE)
+    except LedgerConnectionError as error:
+        raise AssertionError("the completion's reply must never be lost") from error
 
 
 def complete_checking_on_error(attempt: int) -> None:

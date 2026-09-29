@@ -83,12 +83,11 @@ What these histories do not claim:
   run whole processes with :mod:`due_work_harness.process_histories`.
 """
 
+import concurrent.futures
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from inspect import getattr_static, isasyncgen, isawaitable, iscoroutine, iscoroutinefunction, isgenerator
 from typing import Any, NamedTuple, Protocol
-
-import pytest
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from due_work_harness.host import CountedFaults, current_host
@@ -114,8 +113,8 @@ class ExternalCall(HarnessModel):
     result is awaited first — coroutine creation is not an effect — so an async
     client, or a sync method returning a coroutine, is killed after its effect,
     never before it. Any other deferred result (an async generator, a generator,
-    a Task or an awaitable object) is refused: declare the coroutine method
-    underneath it. On a class the seam keeps its ``staticmethod`` or
+    a Task, a ``concurrent.futures.Future`` or an awaitable object) is refused:
+    declare the coroutine method underneath it. On a class the seam keeps its ``staticmethod`` or
     ``classmethod`` binding, and is restored as it was. Declare each seam once.
     """
 
@@ -186,15 +185,44 @@ class HandoffHistory[HandleT, ObservationT](HarnessModel):
     findings: Findings | None = None
 
     def model_post_init(self, _context: Any) -> None:
-        seen: set[tuple[int, str]] = set()
-        for call in self.external_calls:
-            key = (id(call.owner), call.attribute)
-            if key in seen:
-                # Wrapped twice, every call would be counted twice and the deaths misplaced.
-                raise DueWorkContractDesignError(
-                    f"handoff {self.name!r} declares the external call {call} twice; declare each seam once"
-                )
-            seen.add(key)
+        for index, call in enumerate(self.external_calls):
+            for other in self.external_calls[:index]:
+                if _same_seam(call, other):
+                    # Wrapped twice, every call would be counted twice and the deaths misplaced.
+                    raise DueWorkContractDesignError(
+                        f"handoff {self.name!r} declares the external call {call} twice (also as {other}); "
+                        f"declare each seam once"
+                    )
+
+
+def _same_seam(first: ExternalCall, second: ExternalCall) -> bool:
+    """
+    Whether two declarations wrap the same function for the same callers.
+
+    The same function (resolved statically, through inheritance) declared on
+    owners that overlap: one owner, a class and a subclass of it, or a class and
+    an instance of it. Two instances of one class are different seams.
+    """
+    if first.attribute != second.attribute:
+        return False
+    if _resolved(first) is not _resolved(second):
+        return False
+    a, b = first.owner, second.owner
+    if a is b:
+        return True
+    if isinstance(a, type) and isinstance(b, type):
+        return issubclass(a, b) or issubclass(b, a)
+    if isinstance(a, type):
+        return isinstance(b, a)
+    if isinstance(b, type):
+        return isinstance(a, b)
+    return False
+
+
+def _resolved(call: ExternalCall) -> object:
+    """The function a seam's attribute names, without running a descriptor: a static or class method's own."""
+    found = getattr_static(call.owner, call.attribute)
+    return found.__func__ if isinstance(found, (staticmethod, classmethod)) else found
 
 
 class DeliverySession(Protocol):
@@ -353,6 +381,8 @@ class _Worker:
         self._faults = faults
         self.calls = 0
         self.seams: list[ExternalCall] = []
+        #: A seam's refusal, kept so a transition that swallows it cannot hide it.
+        self.refused: DueWorkContractDesignError | None = None
         self._crash_after_call = crash_after_call
         self._died_after_call = False
 
@@ -412,7 +442,7 @@ def _external_call_wrapper(call: ExternalCall, original: Callable[..., Any], wor
         result = original(*args, **kwargs)
         if iscoroutine(result):
             return after_await(result)
-        _refuse_a_deferred_result(call, result)
+        _refuse_a_deferred_result(call, result, worker)
         worker.called(call)
         return result
 
@@ -424,7 +454,7 @@ def _external_call_wrapper(call: ExternalCall, original: Callable[..., Any], wor
     return dying_after_await if iscoroutinefunction(original) else dying_after
 
 
-def _refuse_a_deferred_result(call: ExternalCall, result: object) -> None:
+def _refuse_a_deferred_result(call: ExternalCall, result: object, worker: _Worker) -> None:
     """
     A result whose effect happens later, when the caller consumes it, cannot be observed honestly.
 
@@ -437,16 +467,19 @@ def _refuse_a_deferred_result(call: ExternalCall, result: object) -> None:
         kind = "an async generator"
     elif isgenerator(result):
         kind = "a generator"
+    elif isinstance(result, concurrent.futures.Future):
+        kind = "a concurrent.futures.Future"
     elif isawaitable(result):
         kind = "an awaitable that is not a coroutine (a Future, a Task or an awaitable object)"
     else:
         return
-    raise DueWorkContractDesignError(
+    worker.refused = DueWorkContractDesignError(
         f"the external call {call} returned {kind}, whose effect happens only when the caller consumes it. "
         f"The harness cannot wait for that without changing what the caller receives, and not waiting would "
         f"kill the worker before the effect. Declare the coroutine method underneath it, the one that "
         f"performs the effect, as the seam"
     )
+    raise worker.refused
 
 
 def _patched_seam(call: ExternalCall, worker: _Worker) -> object:
@@ -476,12 +509,31 @@ def _worker(
             breaker = getattr(host, family.breaker)
             fail_at = inject[1] if inject is not None and inject[0] is family else None
             faults[family.counted] = stack.enter_context(breaker(fail_at)) if breaker is not None else None
-        patch = stack.enter_context(pytest.MonkeyPatch.context())
         worker = _Worker(database, faults, crash_after_call)
-
         for call in history.external_calls:
-            patch.setattr(call.owner, call.attribute, _patched_seam(call, worker))
+            stack.callback(_install(call.owner, call.attribute, _patched_seam(call, worker)))
         yield worker
+
+
+def _install(owner: object, name: str, replacement: object) -> Callable[[], None]:
+    """
+    Put ``replacement`` at ``owner.name``, and return what restores exactly what was there.
+
+    An attribute the owner defines itself is put back as it was, descriptor and
+    all. One it only inherits, or an instance reads from its class, is deleted
+    again: assigning the value read back would leave a bound method in the
+    instance's own namespace, shadowing every later patch of its class.
+    """
+    try:
+        namespace: Any = vars(owner)
+    except TypeError:  # an instance with __slots__ has no namespace of its own
+        namespace = {}
+    if name in namespace:
+        original = namespace[name]
+        setattr(owner, name, replacement)
+        return lambda: setattr(owner, name, original)
+    setattr(owner, name, replacement)
+    return lambda: delattr(owner, name)
 
 
 def _run(
@@ -503,9 +555,13 @@ def _run(
             except WorkerDied:
                 assert worker.dead, "WorkerDied escaped from something other than the simulated death"
             except Exception as error:
-                # An injected failure reached the caller, as the framework and the application let it:
-                # a real request errors here.
-                if not any(_caused_by(error, failure) for failure in worker.injected_failures):
+                # An invariant failing, in production or in a proof, is never absorbed.
+                if isinstance(error, AssertionError):
+                    raise
+                # Raised on the way out of a dead worker (a close, a finally): a dead process runs none of it.
+                # Otherwise an injected failure reached the caller, as the framework and the application let
+                # it: a real request errors here.
+                if not worker.dead and not any(_caused_by(error, failure) for failure in worker.injected_failures):
                     raise
             else:
                 assert not worker.dead, (
@@ -513,6 +569,9 @@ def _run(
                     f"(a BaseException) and carried on. A dead process runs nothing further, so a handoff made "
                     f"after the catch would converge falsely; let it propagate"
                 )
+            if worker.refused is not None:
+                # Reported even when the transition swallowed it, before anything else is judged.
+                raise worker.refused
             commits, calls = worker.commits, worker.calls
             exercised = tuple(
                 index
