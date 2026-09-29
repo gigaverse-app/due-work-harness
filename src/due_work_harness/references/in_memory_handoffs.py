@@ -20,7 +20,8 @@ idempotency key. The harness's own self-tests run every crash history against
 them, in both directions. Never bind these in an adopter.
 """
 
-from collections.abc import Callable, Iterator
+import asyncio
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -92,6 +93,14 @@ class Ledger(MutableHarnessModel):
 
     def publish(self, task: str, row_id: int) -> None:
         self.on_commit(lambda: self.outbox.append((task, row_id)))
+
+    @contextmanager
+    def session(self) -> Iterator[None]:
+        """A client session whose close fails when an error is on its way out, replacing that error."""
+        try:
+            yield
+        except BaseException as error:  # noqa: BLE001 - the flawed cleanup under test
+            raise LedgerConnectionError("the session could not be closed after an error") from error
 
     @contextmanager
     def atomic(self) -> Iterator[None]:
@@ -195,6 +204,12 @@ def fail_with_split_handoff(attempt: int) -> None:
     _create_successor(attempt)
 
 
+def fail_with_split_handoff_in_a_session(attempt: int) -> None:
+    """The split handoff inside a session whose close raises its own error after the worker dies."""
+    with LEDGER.session():
+        fail_with_split_handoff(attempt)
+
+
 def fail_with_message_handoff(attempt: int) -> None:
     """The failure commits; the retry exists only as a published message."""
     with LEDGER.atomic():
@@ -280,6 +295,23 @@ class Recipient:
         if attempt not in self.received:
             self.received.append(attempt)
 
+    async def notify_async(self, attempt: int) -> None:
+        """An async client records the effect when awaited, not when called."""
+        self.notify(attempt)
+
+    async def notify_once_async(self, attempt: int) -> None:
+        """The keyed call on an async client."""
+        self.notify_once(attempt)
+
+    def deferred_notify(self, attempt: int) -> Coroutine[Any, Any, None]:
+        """An SDK-style sync method that returns deferred work rather than its result."""
+        return self.notify_async(attempt)
+
+    def notify_in_chunks(self, attempt: int) -> Iterator[int]:
+        """A streaming client: the notification leaves as the caller iterates."""
+        self.received.append(attempt)
+        yield attempt
+
 
 RECIPIENT = Recipient()
 
@@ -292,6 +324,43 @@ def complete_notifying(attempt: int) -> None:
 def complete_notifying_once(attempt: int) -> None:
     RECIPIENT.notify_once(attempt)
     LEDGER.update(attempt, status=COMPLETE)
+
+
+def complete_notifying_async(attempt: int) -> None:
+    """Notify through an async client, then record completion."""
+    asyncio.run(RECIPIENT.notify_async(attempt))
+    LEDGER.update(attempt, status=COMPLETE)
+
+
+def complete_notifying_deferred(attempt: int) -> None:
+    """Notify through a sync method that returns the deferred effect, then record completion."""
+    asyncio.run(RECIPIENT.deferred_notify(attempt))
+    LEDGER.update(attempt, status=COMPLETE)
+
+
+def complete_notifying_once_async(attempt: int) -> None:
+    """The keyed notification on an async client."""
+    asyncio.run(RECIPIENT.notify_once_async(attempt))
+    LEDGER.update(attempt, status=COMPLETE)
+
+
+def complete_notifying_best_effort(attempt: int) -> None:
+    """Completion, a streamed notification whose errors are swallowed as best effort, then a plain one."""
+    LEDGER.update(attempt, status=COMPLETE)
+    try:
+        list(RECIPIENT.notify_in_chunks(attempt))
+    except Exception:  # noqa: BLE001, S110 - the production shape under test: a best-effort call
+        pass
+    RECIPIENT.notify(attempt)
+
+
+def complete_notifying_wrapping_errors(attempt: int) -> None:
+    """Completion, then a streamed notification whose errors are wrapped in the client's own error type."""
+    LEDGER.update(attempt, status=COMPLETE)
+    try:
+        list(RECIPIENT.notify_in_chunks(attempt))
+    except Exception as error:
+        raise LedgerConnectionError("the notification could not be sent") from error
 
 
 def status_and_notifications(attempt: int) -> tuple[str, int]:
@@ -324,6 +393,15 @@ def complete_failing_on_error(attempt: int) -> None:
         LEDGER.update(attempt, status=COMPLETE)
     except LedgerConnectionError:
         LEDGER.update(attempt, status=FAILED)
+
+
+def complete_asserting_on_error(attempt: int) -> None:
+    """Records its progress, then completion, and treats an error from that write as a broken invariant."""
+    LEDGER.update(attempt, progress="done")
+    try:
+        LEDGER.update(attempt, status=COMPLETE)
+    except LedgerConnectionError as error:
+        raise AssertionError("the completion's reply must never be lost") from error
 
 
 def complete_checking_on_error(attempt: int) -> None:

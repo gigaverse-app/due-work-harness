@@ -17,6 +17,7 @@ The database marks a generated case carries come from the configured host; the
 are observable without a database.
 """
 
+import builtins
 import os
 import re
 import subprocess
@@ -54,11 +55,13 @@ from due_work_harness.gap_probes import (
 from due_work_harness.host import Host
 from due_work_harness.process_histories import ProcessHistory
 from due_work_harness.profiles.automatic_recovery import assert_in_flight_work_is_not_redispatched
+from due_work_harness.profiles.execution_eligibility import ELIGIBILITY_PROOFS
 from due_work_harness.profiles.fact_derived_obligations import (
     StateDerived,
     assert_unrecorded_obligation_is_discovered,
 )
 from due_work_harness.references import in_memory_handoffs
+from due_work_harness.references.eligibility import SCHEDULER, GateReference, reference_gate, reference_sweep
 from due_work_harness.references.in_memory import (
     EdgeTriggeredDeriver,
     MaterialisingDeriver,
@@ -521,7 +524,42 @@ def _catching_among_other_types_detect() -> None:
         return
 
 
-@pytest.mark.parametrize("detect", [_catching_detect, _catching_among_other_types_detect], ids=["alone", "in-a-tuple"])
+_OTHER_ERRORS = (KeyError,)
+
+
+def _catching_through_a_starred_tuple_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except (ValueError, *_OTHER_ERRORS, AssertionError):
+        return
+
+
+def _catching_through_getattr_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except getattr(builtins, "AssertionError"):  # noqa: B009 - the disguise under test
+        return
+
+
+def _catching_through_an_annotated_alias_detect() -> None:
+    caught: type[BaseException] = AssertionError
+    try:
+        assert_the_reference_capability_exists()
+    except caught:
+        return
+
+
+@pytest.mark.parametrize(
+    "detect",
+    [
+        _catching_detect,
+        _catching_among_other_types_detect,
+        _catching_through_a_starred_tuple_detect,
+        _catching_through_getattr_detect,
+        _catching_through_an_annotated_alias_detect,
+    ],
+    ids=["alone", "in-a-tuple", "in-a-starred-tuple", "through-getattr", "through-an-annotated-alias"],
+)
 def test_a_detect_that_catches_an_assertion_error_is_refused(detect: Any) -> None:
     with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*AssertionError"):
         _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=detect)))
@@ -532,6 +570,107 @@ def _arranging_detect() -> None:
     # pytest rewrites this assert to raise AssertionError: raising is not inverting.
     assert arranged, "the arrangement is in place"
     assert_the_reference_capability_exists()
+
+
+def _annotating_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except AssertionError as error:
+        error.add_note("while probing the reference capability")
+        raise
+
+
+def _re_raising_among_other_types_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except (ValueError, AssertionError):
+        raise
+
+
+@pytest.mark.parametrize(
+    "detect", [_annotating_detect, _re_raising_among_other_types_detect], ids=["add-note", "tuple"]
+)
+def test_a_detect_that_catches_and_re_raises_an_assertion_is_accepted(detect: Any) -> None:
+    # Every handler ends in a bare raise: the assertion reaches the case as itself, so nothing is inverted.
+    _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=detect)))
+
+
+def _re_raising_only_sometimes_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    except AssertionError:
+        if builtins:
+            return
+        raise
+
+
+def test_a_detect_that_re_raises_only_on_some_paths_is_refused() -> None:
+    with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*AssertionError"):
+        _contract(
+            adoption=Adoption.LEGACY,
+            profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=_re_raising_only_sometimes_detect)),
+        )
+
+
+def _returning_from_finally_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    finally:
+        return  # noqa: B012 - the swallow under test
+
+
+def _re_raising_then_returning_from_finally_detect() -> None:
+    try:
+        try:
+            assert_the_reference_capability_exists()
+        except AssertionError:
+            raise
+    finally:
+        return  # noqa: B012 - swallows the re-raised assertion
+
+
+def _breaking_out_of_finally_detect() -> None:
+    for _ in range(1):
+        try:
+            assert_the_reference_capability_exists()
+        except AssertionError:
+            raise
+        finally:
+            break  # noqa: B012
+
+
+@pytest.mark.parametrize(
+    "detect",
+    [_returning_from_finally_detect, _re_raising_then_returning_from_finally_detect, _breaking_out_of_finally_detect],
+    ids=["return", "re-raise-then-return", "break"],
+)
+def test_a_detect_that_leaves_a_finally_block_early_is_refused(detect: Any) -> None:
+    # Leaving a finally by return, break or continue discards whatever exception was propagating, assertions too.
+    with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*finally"):
+        _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=detect)))
+
+
+def _cleaning_up_in_finally_detect() -> None:
+    cleaned: list[int] = []
+    try:
+        assert_the_reference_capability_exists()
+    finally:
+        for item in range(3):
+            if item:
+                break  # leaves the loop inside the finally, not the finally
+        cleaned.append(1)
+
+        def later() -> int:
+            return len(cleaned)  # a return in a nested function leaves nothing
+
+        later()
+
+
+def test_a_detect_whose_finally_only_cleans_up_is_accepted() -> None:
+    _contract(
+        adoption=Adoption.LEGACY,
+        profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=_cleaning_up_in_finally_detect)),
+    )
 
 
 def test_a_detect_whose_own_asserts_pytest_rewrote_is_accepted() -> None:
@@ -1195,3 +1334,116 @@ def test_a_history_without_findings_still_diverges_with_a_plain_assertion(ledger
     with pytest.raises(AssertionError) as raised:
         _split_case(None).values[0].run()
     assert type(raised.value) is AssertionError
+
+
+# Execution eligibility.
+
+_SWEEP_TIED = "assert_gate_is_recovered_by_the_contract_sweep"
+
+
+def _eligibility_case_ids(prefix: str) -> set[str]:
+    return {f"{prefix}-{proof.__name__}" for proof in ELIGIBILITY_PROOFS} | {f"{prefix}-{_SWEEP_TIED}"}
+
+
+def test_a_contract_generates_and_reports_eligibility_without_work_tables() -> None:
+    contract = _contract(
+        profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=reference_gate, derivation=None
+    )
+    cases = [param.values[0] for param in contract_cases(contract) if param.id.startswith("eligibility-")]
+    assert {case.id for case in cases} == _eligibility_case_ids("eligibility")
+    assert "Eligibility: claimed" in contract_report(contract)
+    for case in cases:
+        case.run()
+
+
+def test_a_generated_eligibility_case_fails_a_scheduler_that_breaks_its_proof() -> None:
+    def hot_looping_gate() -> Any:
+        # ARRANGE — an independent scheduler whose periodic inspection never advances its next time.
+        # REAL PRODUCTION — none; the harness-owned reference scheduler stands in.
+        # EXTERNAL SEAM — none; the scheduler has no provider.
+        # OBSERVE — the gate's own observations.
+        return GateReference(fault="hot_loop").binding()
+
+    contract = _contract(
+        profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=hot_looping_gate, derivation=None
+    )
+    cases = _params_by_id(contract_cases(contract))
+    with pytest.raises(AssertionError, match="hot-loops"):
+        cases["eligibility-assert_periodic_inspection_is_bounded"].values[0].run()
+    cases["eligibility-assert_blocked_gate_preserves_intent"].values[0].run()
+
+
+def test_a_generated_case_ties_the_gate_to_the_contracts_own_sweep() -> None:
+    def gate_recovered_elsewhere() -> Any:
+        # ARRANGE — the reference scheduler, its recovery bound to a direct worker call.
+        # REAL PRODUCTION — none; the harness-owned reference scheduler stands in.
+        # EXTERNAL SEAM — none; the scheduler has no provider.
+        # OBSERVE — the gate's own observations.
+        return reference_gate().model_copy(update={"recover": SCHEDULER.complete_directly})
+
+    contract = _contract(
+        profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=gate_recovered_elsewhere, derivation=None
+    )
+    case = _params_by_id(contract_cases(contract))[f"eligibility-{_SWEEP_TIED}"]
+    with pytest.raises(AssertionError, match="recover never dispatched 'obligation' through the contract sweep"):
+        case.values[0].run()
+
+
+def test_eligibility_cannot_claim_recovery_without_a_sweep() -> None:
+    with pytest.raises(DueWorkContractDesignError, match="eligibility requires claimed automatic recovery"):
+        _contract(eligibility=reference_gate)
+
+
+@pytest.mark.parametrize("named", [False, True], ids=["single-gate", "named-gates"])
+def test_every_eligibility_variant_is_generated_and_reported(named: bool) -> None:
+    variants = {"active_owner": reference_gate, "unsettled_dependency": reference_gate}
+    contract = _contract(
+        profiles=dispositions(A=Claim()),
+        sweep=reference_sweep,
+        eligibility=variants if named else reference_gate,
+        derivation=None,
+    )
+    cases = [param.values[0] for param in contract_cases(contract) if param.id.startswith("eligibility-")]
+    prefixes = [f"eligibility-{name}" for name in variants] if named else ["eligibility"]
+    assert {case.id for case in cases} == set().union(*(_eligibility_case_ids(prefix) for prefix in prefixes))
+    report = contract_report(contract)
+    if named:
+        assert all(name in report for name in variants)
+    for case in cases:
+        case.run()
+
+
+@pytest.mark.parametrize(
+    "variants", [{}, {"": reference_gate}, {"  ": reference_gate}], ids=["empty", "no-name", "blank"]
+)
+def test_eligibility_variant_names_cannot_silently_drop_coverage(variants: dict[str, Any]) -> None:
+    with pytest.raises(DueWorkContractDesignError, match="eligibility.*(empty|name)"):
+        _contract(profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=variants, derivation=None)
+
+
+def test_an_eligibility_binding_without_adopter_annotations_is_refused() -> None:
+    def unannotated_gate() -> Any:
+        return GateReference().binding()
+
+    with pytest.raises(
+        DueWorkContractDesignError, match="the eligibility binding is missing adopter evidence annotations"
+    ):
+        _contract(
+            profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=unannotated_gate, derivation=None
+        )
+
+
+def test_eligibility_cases_carry_the_hosts_database_marks(marking_host: Host) -> None:
+    contract = _contract(
+        profiles=dispositions(A=Claim()),
+        sweep=annotated_never_built,
+        eligibility=reference_gate,
+        derivation=None,
+        transactional=True,
+    )
+    marks = [
+        {mark.name: mark for mark in param.marks}
+        for param in contract_cases(contract)
+        if param.id.startswith("eligibility-")
+    ]
+    assert marks and all(found["database"].kwargs == {"transaction": True} for found in marks)

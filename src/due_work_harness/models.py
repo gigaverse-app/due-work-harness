@@ -43,6 +43,18 @@ class HarnessModel(BaseModel):
         return self.model_validate({**{name: getattr(copied, name) for name in type(self).model_fields}, **update})
 
 
+class DueWorkContractDesignError(Exception):
+    """
+    The contract's declaration is incomplete or contradictory.
+
+    Raised at construction — import/collection time — so a missing disposition
+    or an unbindable claim fails the whole module loudly before any behavioral
+    proof runs, rather than surfacing as a confusing runtime assertion. Defined
+    here, beside the models whose ``model_post_init`` raises it; an ordinary
+    ``Exception``, so Pydantic lets it reach the caller as itself.
+    """
+
+
 class _Missing:
     def __repr__(self) -> str:
         return "MISSING"

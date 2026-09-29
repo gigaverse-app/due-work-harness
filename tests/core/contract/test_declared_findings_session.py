@@ -6,28 +6,16 @@ The strict xfail of a gap on a history with findings accepts only
 own failure as a failure, and the pinned divergence as the xfail.
 """
 
-import os
-import subprocess
-import sys
 from pathlib import Path
-from textwrap import dedent
 
 import pytest
 
-from tests.core.contract.child_suites import SUITE
+from tests.core.contract.child_suites import run_child_session
 
 
-def _outcome(tmp_path: Path, pinned: str) -> str:
-    (tmp_path / "test_split.py").write_text(dedent(SUITE.format(pinned=pinned)), encoding="utf-8")
-    child = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k", "handoff", str(tmp_path)],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": ""},
-        check=False,
-    )
-    return child.stdout.strip().splitlines()[-1]
+def _outcome(directory: Path, pinned: str) -> str:
+    stdout = run_child_session(directory, pinned).stdout.strip()
+    return stdout.splitlines()[-1] if stdout else "<the child printed nothing>"
 
 
 @pytest.mark.parametrize(
@@ -37,3 +25,15 @@ def _outcome(tmp_path: Path, pinned: str) -> str:
 )
 def test_only_the_pinned_divergence_is_the_known_gap(tmp_path: Path, pinned: str, reported: str) -> None:
     assert reported in _outcome(tmp_path, pinned)
+
+
+def test_a_child_session_ignores_configuration_above_its_directory(tmp_path: Path) -> None:
+    # A configuration file in an ancestor of the child's directory makes that ancestor the child's rootdir:
+    # pytest then reads its options, loads its conftest, and scans it while collecting. On a developer
+    # machine the ancestor is the shared temporary directory, where other processes create and delete
+    # entries while the child scans it. The child must be rooted in its own directory whatever lies above.
+    (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = --an-option-the-child-must-never-see\n", "utf-8")
+    (tmp_path / "conftest.py").write_text("raise RuntimeError('an ancestor conftest was loaded')\n", "utf-8")
+    session = tmp_path / "session"
+    session.mkdir()
+    assert "1 xfailed" in _outcome(session, "worker died after commit 1")

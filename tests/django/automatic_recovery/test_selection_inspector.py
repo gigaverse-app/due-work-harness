@@ -27,13 +27,15 @@ from django.utils import timezone
 
 from due_work_harness.contract import ScheduledSelection
 from due_work_harness.helpers import undeclared
-from due_work_harness.host import hosted
+from due_work_harness.host import Host, hosted
 from due_work_harness.integrations.celery import celery_beat_evidence, celery_beat_interval, celery_publications
 from due_work_harness.integrations.django import django_host
 from due_work_harness.integrations.django import lifecycle_references as ref
+from due_work_harness.integrations.django.selection import DjangoSelectionInspector
 from due_work_harness.profiles.automatic_recovery import (
     DueWorkSweep,
     assert_idle_tick_is_cheap,
+    assert_selection_cost_does_not_grow_with_the_history,
     assert_selection_does_not_read_the_replica,
     assert_selection_is_index_served,
     assert_selection_scan_ratio_is_bounded,
@@ -259,3 +261,139 @@ def test_beat_evidence_rejects_a_task_the_django_schedule_omits(settings: Any) -
     settings.CELERY_BEAT_SCHEDULE = {}
     with pytest.raises(AssertionError, match="not in the beat schedule"):
         celery_beat_evidence(_SCHEDULED_TASK)()
+
+
+# --- The selection reads the owed rows, not the history behind them ------------------
+
+_HISTORY_ROWS = 6000
+
+
+def _history_sweep() -> DueWorkSweep:
+    return _sweep().model_copy(update={"make_terminal": lambda *, age: _make(Status.COMPLETE, age=age)})
+
+
+def _history_proof() -> None:
+    assert_selection_cost_does_not_grow_with_the_history(_history_sweep(), history_rows=_HISTORY_ROWS)
+
+
+def test_a_selection_served_by_its_partial_index_reads_only_the_owed_rows() -> None:
+    _add_due_index()
+    _history_proof()
+
+
+def test_a_selection_with_no_index_reads_the_whole_history() -> None:
+    with pytest.raises(AssertionError, match="scans its table sequentially"):
+        _history_proof()
+
+
+def test_an_index_that_reads_its_whole_range_and_filters_it_still_reads_the_history() -> None:
+    # Every settled row is old, so the selection's time bound narrows nothing: an index on it is walked end
+    # to end and the settled rows are discarded one by one. The planner would rather scan the table, so
+    # the sequential scan is taken away, as an index-served proof would.
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_updated_ix ON {_TABLE} (updated_at, id)")
+        cursor.execute("SET enable_seqscan = off")
+    try:
+        with pytest.raises(AssertionError, match=r"visited \d+ rows to find 5 owed ones"):
+            _history_proof()
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("RESET enable_seqscan")
+
+
+# --- Partial indexes the adopter vouches for -----------------------------------------
+
+
+@pytest.fixture
+def bitmap_over_a_partial_index() -> Iterator[str]:
+    """
+    A partial index that narrows a selection through its WHERE clause alone, read as a bitmap.
+
+    The index is keyed on ``id``, which no selection here constrains, so the plan's bitmap
+    index scan has no index condition: exactly what the verdict rejects for a full index.
+    """
+    active = ", ".join(f"'{status}'" for status in ref.ACTIVE_STATUSES)
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_active_ix ON {_TABLE} (id) WHERE status IN ({active})")
+        cursor.execute("SET enable_indexscan = off")
+    try:
+        yield "lifecycle_attempt_active_ix"
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("RESET enable_indexscan")
+
+
+def _index_served_with(*partial_indexes: str, due_work: Any = ref.due_for_recovery) -> None:
+    inspector = DjangoSelectionInspector(partial_indexes=partial_indexes)
+    with hosted(Host(selection_inspectors=(inspector,))):
+        assert_selection_is_index_served(_scheduled(due_work))
+
+
+def _active_attempts() -> QuerySet[ref.LifecycleAttempt]:
+    # ARRANGE: none; the partial index fixture builds the index this selection's predicate matches.
+    # REAL PRODUCTION: a real ORM queryset whose whole predicate is the partial index's WHERE.
+    # EXTERNAL SEAM: none.
+    # OBSERVE: the proof reads the real PostgreSQL plan.
+    return ref.LifecycleAttempt.objects.filter(status__in=ref.ACTIVE_STATUSES)
+
+
+def test_a_bitmap_over_a_partial_index_is_rejected_until_the_adopter_names_the_index(
+    bitmap_over_a_partial_index: str,
+) -> None:
+    with pytest.raises(AssertionError, match="builds a bitmap.*no index condition"):
+        _index_served_with(due_work=_active_attempts)
+    _index_served_with(bitmap_over_a_partial_index, due_work=_active_attempts)
+
+
+def test_a_named_partial_index_serves_a_time_bounded_selection(bitmap_over_a_partial_index: str) -> None:
+    # The reference selection also bounds updated_at, which the index's WHERE cannot hold: the heap scan
+    # filters owed rows that are not due yet. That is backlog, not history, and the index serves it.
+    _index_served_with(bitmap_over_a_partial_index)
+
+
+def test_naming_an_index_that_is_not_partial_is_refused(bitmap_over_a_partial_index: str) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_full_ix ON {_TABLE} (id)")
+    with pytest.raises(AssertionError, match=r"partial_indexes names \['lifecycle_attempt_full_ix'\]"):
+        _index_served_with(bitmap_over_a_partial_index, "lifecycle_attempt_full_ix")
+
+
+def test_naming_an_index_that_does_not_exist_is_refused() -> None:
+    with pytest.raises(AssertionError, match=r"partial_indexes names \['no_such_ix'\]"):
+        _index_served_with("no_such_ix")
+
+
+@pytest.mark.parametrize(
+    "index",
+    ["(id) WHERE status IS NOT NULL", "(updated_at) WHERE status IS NOT NULL", "(updated_at) WHERE status <> 'zzz'"],
+)
+def test_a_named_partial_index_whose_predicate_the_filter_re_tests_is_refused(index: str) -> None:
+    # Each predicate constrains status and holds for the settled history too, so the plan filters status again.
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_weak_ix ON {_TABLE} {index}")
+        cursor.execute("SET enable_indexscan = off" if index.startswith("(id)") else "SELECT 1")
+    try:
+        with pytest.raises(AssertionError, match=r"lifecycle_attempt_weak_ix.*constrains \['status'\]"):
+            _index_served_with("lifecycle_attempt_weak_ix")
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("RESET enable_indexscan")
+
+
+def test_a_time_index_whose_predicate_says_nothing_fails_the_history_proof() -> None:
+    # ``(updated_at) WHERE updated_at IS NOT NULL`` serves the plan as any index on the time bound does: an Index
+    # Cond narrows by time, which the index-served verdict accepts, named or not. Every settled row is old enough
+    # to pass that bound, so only the retained-history proof, which measures what the selection reads, refuses it.
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_time_ix ON {_TABLE} (updated_at) WHERE updated_at IS NOT NULL")
+    _index_served_with("lifecycle_attempt_time_ix")
+    with pytest.raises(AssertionError, match=r"scans its table sequentially|visited \d+ rows|buffers against"):
+        _history_proof()
+
+
+def test_a_named_partial_index_that_narrows_the_history_passes_the_history_proof(
+    bitmap_over_a_partial_index: str,
+) -> None:
+    # The conforming claim: the index's WHERE leaves the settled history out, so its bitmap reads little.
+    _index_served_with(bitmap_over_a_partial_index)
+    _history_proof()

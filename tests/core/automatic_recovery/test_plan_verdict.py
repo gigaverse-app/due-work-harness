@@ -9,10 +9,12 @@ so they can never again depend on which selection happens to be checked first.
 
 import pytest
 
+from due_work_harness.host import ReadCost
 from due_work_harness.integrations.postgres_plans import (
     assert_plan_is_index_served,
     index_served_verdict,
     iter_plan_nodes,
+    read_cost,
     scan_counts,
 )
 
@@ -219,3 +221,118 @@ def test_scan_counts_are_rows_produced_against_rows_filtered_away() -> None:
     }
     assert scan_counts(plan) == (40.0, 362.0)
     assert scan_counts({"Node Type": "Result"}) == (0.0, 0.0)
+
+
+def test_rows_a_bitmap_recheck_discards_are_counted() -> None:
+    """A bitmap that reads a whole index and rechecks it away reports no Filter at all."""
+    plan = {
+        "Node Type": "Bitmap Heap Scan",
+        "Relation Name": _TABLE,
+        "Actual Rows": 5,
+        "Rows Removed by Index Recheck": 995,
+        "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "some_index", "Actual Rows": 1000}],
+    }
+    assert scan_counts(plan) == (1000.0, 995.0)
+
+
+def test_scan_counts_multiply_the_per_loop_figures_by_the_loops() -> None:
+    plan = {
+        "Node Type": "Nested Loop",
+        "Actual Rows": 10,
+        "Plans": [
+            {"Node Type": "Seq Scan", "Relation Name": "shop_driver", "Actual Rows": 100, "Actual Loops": 1},
+            _index_scan(**{"Actual Rows": 0, "Actual Loops": 100, "Rows Removed by Filter": 3}),
+        ],
+    }
+    assert scan_counts(plan) == (100.0, 300.0)
+
+
+def test_read_cost_is_buffers_at_the_root_and_rows_visited_over_every_loop() -> None:
+    plan = {
+        "Node Type": "Nested Loop",
+        "Shared Hit Blocks": 5,
+        "Shared Read Blocks": 2,
+        "Plans": [
+            {"Node Type": "Index Scan", "Relation Name": "shop_driver", "Actual Rows": 100, "Actual Loops": 1},
+            _index_scan(**{"Actual Rows": 1, "Actual Loops": 100, "Rows Removed by Filter": 3}),
+        ],
+    }
+    # Only the selection's own table is counted: (1 produced + 3 discarded) x 100 loops.
+    assert read_cost(plan, table=_TABLE) == ReadCost(blocks=7, visited=400.0, sequential=False)
+
+
+@pytest.mark.parametrize("node_type", ["Seq Scan", "Parallel Seq Scan"])
+def test_a_sequential_scan_of_the_table_is_reported(node_type: str) -> None:
+    plan = {"Node Type": node_type, "Relation Name": _TABLE, "Actual Rows": 3, "Shared Hit Blocks": 40}
+    assert read_cost(plan, table=_TABLE) == ReadCost(blocks=40, visited=3.0, sequential=True)
+
+
+def test_a_read_that_never_scans_the_table_says_nothing_about_it() -> None:
+    with pytest.raises(AssertionError, match="never scanned 'shop_examplework'"):
+        read_cost({"Node Type": "Result"}, table=_TABLE)
+
+
+def test_a_named_partial_index_is_trusted_with_a_filter_on_other_columns() -> None:
+    """
+    A named partial index vouches for its bitmap when the Filter above it tests columns its predicate does not.
+
+    ``(id) WHERE status IN (active)`` under a time-bounded selection: the Filter on
+    ``updated_at`` removes owed rows that are not due yet, backlog the predicate
+    rightly keeps. What the plan cannot show (how much settled history the index
+    holds) the retained-history proof measures.
+    """
+    plan = {
+        "Node Type": "Bitmap Heap Scan",
+        "Relation Name": _TABLE,
+        "Recheck Cond": "(status = ANY ('{requested,running}'))",
+        "Filter": "(updated_at <= $1)",
+        "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "active_ix"}],
+    }
+    assert_plan_is_index_served(
+        name="partial bitmap", plan=plan, table=_TABLE, predicate_indexes={"active_ix": frozenset({"status"})}
+    )
+    with pytest.raises(AssertionError, match="Recheck Cond .* is not evidence"):
+        assert_plan_is_index_served(name="partial bitmap", plan=plan, table=_TABLE)
+
+
+@pytest.mark.parametrize(
+    "scan",
+    [
+        {
+            "Node Type": "Bitmap Heap Scan",
+            "Relation Name": _TABLE,
+            "Recheck Cond": "(status IS NOT NULL)",
+            "Filter": "(((status)::text = ANY ('{requested,running}'::text[])) AND (updated_at <= $1))",
+            "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "weak_ix"}],
+        },
+        {
+            "Node Type": "Index Scan",
+            "Relation Name": _TABLE,
+            "Index Name": "weak_ix",
+            "Index Cond": "(updated_at <= $1)",
+            "Filter": "((status)::text = ANY ('{requested,running}'::text[]))",
+        },
+    ],
+    ids=["bitmap", "index-scan"],
+)
+def test_a_named_partial_index_whose_filter_re_tests_its_predicate_is_refused(scan: dict[str, object]) -> None:
+    # The Filter re-tests status, which the predicate constrains: the predicate does not imply the selection's
+    # own condition there, so the index keeps rows the selection throws away (``status IS NOT NULL`` keeps the
+    # whole settled history).
+    with pytest.raises(AssertionError, match=r"weak_ix.*constrains \['status'\].*filters on them again"):
+        assert_plan_is_index_served(
+            name="weak partial", plan=scan, table=_TABLE, predicate_indexes={"weak_ix": frozenset({"status"})}
+        )
+
+
+def test_a_literal_in_the_filter_is_not_a_column() -> None:
+    plan = {
+        "Node Type": "Index Scan",
+        "Relation Name": _TABLE,
+        "Index Name": "active_ix",
+        "Index Cond": "(updated_at <= $1)",
+        "Filter": "((kind)::text = 'status')",
+    }
+    assert_plan_is_index_served(
+        name="literal", plan=plan, table=_TABLE, predicate_indexes={"active_ix": frozenset({"status"})}
+    )

@@ -81,7 +81,7 @@ def test_an_idempotent_notification_converges(ledger_host: Host) -> None:
 
 
 def test_naming_a_seam_the_transition_never_calls_is_refused(ledger_host: Host) -> None:
-    with pytest.raises(AssertionError, match="made none of them"):
+    with pytest.raises(AssertionError, match=r"never called: Recipient\.notify\."):
         assert_crash_at_every_commit_converges(
             ref.NOTIFYING_ONCE_DELIVERY, _notifying(ref.complete_notifying_once, "notify")
         )
@@ -165,3 +165,17 @@ def test_a_findings_table_lists_only_the_findings(replying_ledger_host: Host) ->
             delivered=ref.COMPLETE,
             outcomes={"the reply to commit 2 was lost": ref.FAILED, "worker died after commit 7": ref.FAILED},
         )
+
+
+def test_an_assertion_raised_after_an_injected_failure_is_never_absorbed(replying_ledger_host: Host) -> None:
+    # The lost reply is injected, and production answers it with a broken invariant: that must fail the
+    # history, not pass as the injected failure reaching the caller.
+    with pytest.raises(AssertionError, match="the completion's reply must never be lost"):
+        assert_crash_at_every_commit_converges(ref.COMPLETION_DELIVERY, _completion(ref.complete_asserting_on_error))
+
+
+def test_an_ordinary_error_raised_on_the_way_out_of_a_dead_worker_is_absorbed(ledger_host: Host) -> None:
+    # A session's close raises its own error over the death; a dead process runs no close at all, so the
+    # history goes on to its verdict instead of erroring.
+    with pytest.raises(AssertionError, match=r"'worker died after commit 1': \('retryable_failed', \(\)\)"):
+        assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, _retry(ref.fail_with_split_handoff_in_a_session))

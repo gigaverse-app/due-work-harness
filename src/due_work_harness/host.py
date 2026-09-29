@@ -29,6 +29,7 @@ or in the pytest configuration file::
 
 from collections.abc import Callable, Collection, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -126,6 +127,25 @@ class ReplyBreaker(Protocol):
     def __call__(self, lose_at: int | None) -> AbstractContextManager[Any]: ...
 
 
+class ReadCost(HarnessModel):
+    """What one read cost the database, from an ``EXPLAIN (ANALYZE, BUFFERS)`` plan."""
+
+    #: Shared buffers the whole read touched, hits and reads alike: a measure of work
+    #: that does not depend on how warm the cache was.
+    blocks: int
+    #: Rows the scans of the selection's own table produced or discarded, over every loop.
+    visited: float
+    #: Whether any scan of that table was sequential.
+    sequential: bool
+
+
+class ReadCosts(HarnessModel):
+    """A selection's read cost beside the cost of reading its whole table: the history it must not depend on."""
+
+    selection: ReadCost
+    full_table: ReadCost
+
+
 class SelectionInspector(Protocol):
     """
     Facts about a selection that only the database can answer.
@@ -156,9 +176,45 @@ class SelectionInspector(Protocol):
         """Executing the selection: ``(rows returned, rows read and discarded by filters)``."""
         ...
 
+    def read_costs(self, selection: object) -> ReadCosts:
+        """
+        Executing the selection under the database's normal planner settings: what it read.
+
+        Alongside it, what reading the selection's whole table reads, so a proof
+        can compare the two. Statistics are refreshed first, so the planner
+        chooses as it would in production.
+        """
+        ...
+
     def statements_during(self, run: Callable[[], object]) -> list[str]:
         """The database statements ``run`` executed, as SQL text, in order."""
         ...
+
+
+#: The deadline, in seconds, of the race the current thread is a racer in; ``None`` outside a race.
+_RACE_TIMEOUT: ContextVar[float | None] = ContextVar("due_work_harness_race_timeout", default=None)
+
+
+@contextmanager
+def racing(timeout: float) -> Iterator[None]:
+    """
+    Mark the calling thread as a racer whose race ends ``timeout`` seconds after it starts.
+
+    A proof that races connections enters this in each racer thread, around the
+    host's ``connection_scope()``, so the scope can bound the racer's database
+    waits from the race's own deadline (see :func:`race_timeout`) instead of a
+    fixed one of its own.
+    """
+    token = _RACE_TIMEOUT.set(timeout)
+    try:
+        yield
+    finally:
+        _RACE_TIMEOUT.reset(token)
+
+
+def race_timeout() -> float | None:
+    """The deadline of the race the calling thread is a racer in, in seconds; ``None`` outside one."""
+    return _RACE_TIMEOUT.get()
 
 
 class Host(HarnessModel):
@@ -202,7 +258,8 @@ class Host(HarnessModel):
     reply_breaker: SkipValidation[ReplyBreaker | None] = None
 
     #: The connection lifecycle of a thread a proof starts, for example to race
-    #: two claims on two real connections.
+    #: two claims on two real connections. Inside a race, :func:`race_timeout`
+    #: gives the race's deadline, from which a scope bounds the racer's waits.
     connection_scope: Callable[[], AbstractContextManager[None]] = nullcontext
 
     #: Database facts about a selection: index use, replica reads, scan ratio.

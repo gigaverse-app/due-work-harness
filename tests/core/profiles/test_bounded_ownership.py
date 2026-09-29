@@ -13,17 +13,21 @@ replaces is the adopter's `FencedOwnership` binding, not any real application mo
 It exists because the discrimination question ("does this proof catch the
 defect it hunts, and only that one?") is a property of the proofs, so it must
 be answerable without a database and without borrowing some domain's tables.
-The DB-coupled proof this file cannot exercise in the failing direction —
-`assert_claim_is_exclusive_across_connections`, whose broken direction is a
-genuine data race — is run here in the passing direction only, and gets its
-real coverage from adopters.
+The DB-coupled proof `assert_claim_is_exclusive_across_connections`, whose broken
+direction is a genuine data race, is run here against a locked claim (passes),
+a claim made non-atomic by a deterministic rendezvous, a racer that never
+returns, and a racer that raises (each fails, with its own message). Real row
+locking gets its coverage from adopters.
 """
 
+import threading
 from collections.abc import Callable
 from uuid import UUID, uuid4
 
 import pytest
 
+from due_work_harness.host import race_timeout
+from due_work_harness.models import DueWorkContractDesignError
 from due_work_harness.profiles.bounded_ownership import (
     FENCED_OWNERSHIP_PROOFS,
     FencedOwnership,
@@ -368,8 +372,6 @@ class _LockedClaims(_InMemoryOwner):
 
     def __init__(self) -> None:
         super().__init__()
-        import threading
-
         self._lock = threading.Lock()
 
     def claim(self) -> tuple[int, UUID] | None:
@@ -379,6 +381,78 @@ class _LockedClaims(_InMemoryOwner):
 
 def test_the_race_proof_passes_a_locked_claim() -> None:
     assert_claim_is_exclusive_across_connections(_binding(_LockedClaims()))
+
+
+class _RendezvousClaims(_InMemoryOwner):
+    """
+    A non-atomic claim made deterministic: both racers read READY before either writes.
+
+    The plain dict claim double-claims only when the threads happen to interleave,
+    which would make a flaky test. Here each racer waits, between its read and its
+    write, until the other has read too, so the double claim always happens.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._both_have_read = threading.Barrier(2, timeout=5)
+
+    def claim(self) -> tuple[int, UUID] | None:
+        for row_id, row in sorted(self.rows.items()):
+            if row.state == "READY":
+                self._both_have_read.wait()
+                row.state = "CLAIMED"
+                row.token = uuid4()
+                row.lease_expires_at = self.clock + _LEASE_SECONDS
+                return (row_id, row.token)
+        return None
+
+
+def test_the_race_proof_fails_a_claim_that_is_not_atomic() -> None:
+    with pytest.raises(AssertionError, match="2 of 2 concurrent claims won"):
+        assert_claim_is_exclusive_across_connections(_binding(_RendezvousClaims()))
+
+
+class _HungClaims(_LockedClaims):
+    """
+    An atomic claim whose loser never comes back: it waits for a lock nothing releases.
+
+    The winner returns, so counting only the racers that returned finds exactly one
+    winner. Blocked on the other connection's uncommitted claim, the loser is what a
+    deadlock or a stalled claim looks like.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = threading.Event()
+        self._first = threading.Lock()
+        self._entered = False
+
+    def claim(self) -> tuple[int, UUID] | None:
+        with self._first:
+            first, self._entered = not self._entered, True
+        if not first:
+            self.release.wait(timeout=30)
+        return super().claim()
+
+
+def test_the_race_proof_fails_when_a_racer_never_returns() -> None:
+    owner = _HungClaims()
+    try:
+        with pytest.raises(
+            AssertionError, match=r"claim-racer-\d had not returned 0\.3s after the race began .* blocked, not lost"
+        ):
+            assert_claim_is_exclusive_across_connections(_binding(owner), timeout=0.3)
+    finally:
+        owner.release.set()
+
+
+def test_a_racer_that_raises_fails_the_race_proof_with_its_error() -> None:
+    class _Raises(_LockedClaims):
+        def claim(self) -> tuple[int, UUID] | None:
+            raise RuntimeError("deadlock detected")
+
+    with pytest.raises(AssertionError, match="raised instead of losing cleanly.*deadlock detected"):
+        assert_claim_is_exclusive_across_connections(_binding(_Raises()))
 
 
 def test_the_binding_guard_rejects_a_test_module_owner() -> None:
@@ -449,3 +523,43 @@ def test_the_lease_duration_proof_reads_the_configuration() -> None:
             max_work_duration=timedelta(hours=1),
             renews_during_work=False,
         )
+
+
+def test_each_racer_knows_the_race_deadline_so_the_host_can_bound_its_waits() -> None:
+    seen: list[float | None] = []
+
+    class _Recording(_LockedClaims):
+        def claim(self) -> tuple[int, UUID] | None:
+            seen.append(race_timeout())
+            return super().claim()
+
+    assert_claim_is_exclusive_across_connections(_binding(_Recording()), timeout=3)
+    assert seen == [3, 3]
+    assert race_timeout() is None, "outside the race the calling thread is no racer"
+
+
+def test_the_race_deadline_is_the_ownerships_own_setting() -> None:
+    # The generated case calls the proof with no timeout: the deadline an adopter can raise is on the binding.
+    seen: list[float | None] = []
+
+    class _Recording(_LockedClaims):
+        def claim(self) -> tuple[int, UUID] | None:
+            seen.append(race_timeout())
+            return super().claim()
+
+    assert_claim_is_exclusive_across_connections(_binding(_Recording()).model_copy(update={"race_timeout": 4.0}))
+    assert seen == [4.0, 4.0]
+
+
+def test_a_racer_that_raises_is_told_which_setting_to_raise() -> None:
+    class _Raises(_LockedClaims):
+        def claim(self) -> tuple[int, UUID] | None:
+            raise RuntimeError("canceling statement due to lock timeout")
+
+    with pytest.raises(AssertionError, match=r"(?s)bounded at 1s, half the race's 2s.*FencedOwnership\.race_timeout"):
+        assert_claim_is_exclusive_across_connections(_binding(_Raises()).model_copy(update={"race_timeout": 2.0}))
+
+
+def test_a_race_timeout_that_is_not_positive_is_refused() -> None:
+    with pytest.raises(DueWorkContractDesignError, match="race_timeout"):
+        _binding(_LockedClaims()).model_copy(update={"race_timeout": 0.0})

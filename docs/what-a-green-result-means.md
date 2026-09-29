@@ -37,6 +37,48 @@ Profile E is split in two because its failure shapes live at different layers:
 a *worker* holding a stale snapshot, and a *state function* receiving stale
 evidence. Most adopters have one, not both.
 
+### Execution eligibility: owed is not the same as runnable
+
+Work can be owed and blocked at once: a dependency has not settled, an owner is
+still active, a user has not confirmed. That is an optional gate beside the
+profiles, declared as `eligibility=` (one `ExecutionGate`, or named gates for
+named blockers) on a contract that claims profile A with a sweep, because
+recovery is what must find the work once it is eligible. It is not a seventh
+disposition: a domain without a product-level blocker has no gate to describe.
+
+Each gate is one blocked, already time-due obligation with its readiness
+notification lost. Five proofs run against a fresh example each:
+
+- the bindings reach production: the routes, recovery, both selections
+  (`due_work` and `owed_work`) and the readiness transition `make_eligible`;
+- blocked work stays owed and unselected, and no route or recovery executes it,
+  inspects it early, calls the provider or writes anything (including a write
+  that restores the same state, which an independent mutation count sees);
+- once eligible, recovery alone completes it, and readiness released the
+  existing obligation without a new revision, a reset retry budget or an
+  earlier not-before time;
+- the fallback inspection (`recheck_after`) happens on its declared boundary
+  from admission, probed one `clock_resolution` before the boundary and across
+  it by moving the clock; then, from that inspection, not before the boundary
+  again, and within the recovery timeout after it (a continuation delay may push
+  it later, never earlier, and it must happen). `clock_resolution` is how early an
+  inspection may fire unseen, so it is at most one second and a tenth of
+  `recheck_after`. The inspection must not call the provider, change the product
+  state or drop the obligation, and must not repeat without time passing. It
+  counts as an execution unless the gate declares `inspections`, for a design
+  that re-checks the blocker without executing anything;
+- the gate describes the contract sweep's own recovery: the sweep's selection
+  leaves the blocked work out and takes it in once eligible, and during
+  `recover` the sweep's `dispatched_ids` (the recorder of what its dispatch
+  path sent, which the contract sweep must declare) records the gate's identity
+  once more; a readiness notification sent through the same path earlier does
+  not count against it. What is observed is the dispatch, not which code ran where, so a tick
+  reached through a service, a task queue or another thread counts alike. The
+  gate's `identity` is what the sweep's `identity_of` reports for the same row.
+
+A pass says a scheduler with blocked work neither loses it nor runs it early. It
+does not say the blocker is the right product rule.
+
 ### F asks the question underneath A
 
 Profile A asks whether recorded work survives a lost message. Profile F asks

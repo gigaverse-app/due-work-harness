@@ -31,7 +31,7 @@ from typing import Any
 import pytest
 
 from due_work_harness.helpers import contract_params, undeclared
-from due_work_harness.host import Host, current_host, hosted, packages
+from due_work_harness.host import Host, ReadCost, ReadCosts, current_host, hosted, packages
 from due_work_harness.integrations.celery import celery_beat_evidence, celery_beat_interval
 from due_work_harness.models import HarnessModel
 from due_work_harness.profiles.automatic_recovery import (
@@ -50,6 +50,7 @@ from due_work_harness.profiles.automatic_recovery import (
     assert_published_work_is_recoverable,
     assert_recovers_stranded_work,
     assert_recovery_latency_is_bounded,
+    assert_selection_cost_does_not_grow_with_the_history,
     assert_selection_does_not_read_the_replica,
     assert_selection_is_index_served,
     assert_selection_is_stable,
@@ -189,6 +190,13 @@ class _InMemorySweep:
         yield
 
 
+#: What an index serving the selection reads: a handful of buffers, against a table that spans many.
+_CHEAP_READ = ReadCosts(
+    selection=ReadCost(blocks=3, visited=5.0, sequential=False),
+    full_table=ReadCost(blocks=60, visited=25.0, sequential=True),
+)
+
+
 class _InMemoryInspector(HarnessModel):
     """
     The database facts about an in-memory selection, as a host's inspector supplies them.
@@ -201,6 +209,7 @@ class _InMemoryInspector(HarnessModel):
     served: tuple[bool, str] = (True, "an index narrows every scan")
     replica: str | None = None
     discarded_per_returned: float = 0.0
+    costs: ReadCosts = _CHEAP_READ
 
     def understands(self, selection: object) -> bool:
         return isinstance(selection, _Selection)
@@ -215,6 +224,9 @@ class _InMemoryInspector(HarnessModel):
         assert isinstance(selection, _Selection)
         returned = float(len(selection))
         return returned, returned * self.discarded_per_returned
+
+    def read_costs(self, selection: object) -> ReadCosts:
+        return self.costs
 
     def statements_during(self, run: Callable[[], object]) -> list[str]:
         start = len(self.sweep.statements)
@@ -963,6 +975,55 @@ def test_the_scan_ratio_is_the_inspectors_discarded_over_returned() -> None:
     sweep = _InMemorySweep()
     with _database(sweep, discarded_per_returned=9.0), pytest.raises(AssertionError, match=r"ratio 9\.0, limit 5\.0"):
         assert_selection_scan_ratio_is_bounded(sweep.binding(), rows=10)
+
+
+def _history_proof(sweep: _InMemorySweep) -> None:
+    assert_selection_cost_does_not_grow_with_the_history(sweep.binding(), history_rows=20, owed_rows=5)
+
+
+def test_a_selection_that_reads_only_the_owed_rows_passes_the_history_proof() -> None:
+    sweep = _InMemorySweep()
+    with _database(sweep):
+        _history_proof(sweep)
+
+
+@pytest.mark.parametrize(
+    ("costs", "message"),
+    [
+        (
+            ReadCosts(
+                selection=ReadCost(blocks=60, visited=1500.0, sequential=True), full_table=_CHEAP_READ.full_table
+            ),
+            "scans its table sequentially",
+        ),
+        (
+            ReadCosts(
+                selection=ReadCost(blocks=3, visited=1500.0, sequential=False), full_table=_CHEAP_READ.full_table
+            ),
+            "visited 1500 rows to find 5 owed ones",
+        ),
+        (
+            ReadCosts(selection=ReadCost(blocks=40, visited=5.0, sequential=False), full_table=_CHEAP_READ.full_table),
+            "touched 40 buffers against 60",
+        ),
+        (
+            ReadCosts(selection=_CHEAP_READ.selection, full_table=ReadCost(blocks=6, visited=25.0, sequential=True)),
+            "under the 32 needed",
+        ),
+    ],
+    ids=["sequential-scan", "index-walked-and-filtered", "buffers-not-separated", "history-too-small"],
+)
+def test_the_history_proof_fails_each_way_a_selection_can_read_the_history(costs: ReadCosts, message: str) -> None:
+    sweep = _InMemorySweep()
+    with _database(sweep, costs=costs), pytest.raises(AssertionError, match=message):
+        _history_proof(sweep)
+
+
+def test_a_selection_that_finds_nothing_cannot_pass_the_history_proof_by_reading_nothing() -> None:
+    sweep = _InMemorySweep()
+    binding = sweep.binding(make_owed=lambda *, age: sweep.make_terminal(age=age))
+    with _database(sweep), pytest.raises(AssertionError, match="returned 0 of the 5 owed rows made"):
+        assert_selection_cost_does_not_grow_with_the_history(binding, history_rows=20, owed_rows=5)
 
 
 def test_an_empty_selection_cannot_measure_a_scan_ratio() -> None:

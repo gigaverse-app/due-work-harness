@@ -167,7 +167,7 @@ from due_work_harness.crash_histories import (
     assert_crash_at_every_commit_converges,
 )
 from due_work_harness.host import current_host
-from due_work_harness.models import MISSING, HarnessModel, with_positional
+from due_work_harness.models import MISSING, DueWorkContractDesignError, HarnessModel, with_positional
 from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
 from due_work_harness.profiles.automatic_recovery import (
     DUE_WORK_PROOFS,
@@ -197,6 +197,11 @@ from due_work_harness.profiles.eventual_convergence import (
     ConvergentWrite,
     SupersededSnapshot,
     assert_convergence_bindings_are_production_bound,
+)
+from due_work_harness.profiles.execution_eligibility import (
+    ELIGIBILITY_PROOFS,
+    ExecutionGateBinding,
+    assert_gate_is_recovered_by_the_contract_sweep,
 )
 from due_work_harness.profiles.fact_derived_obligations import (
     STATE_DERIVED_PROOFS,
@@ -327,16 +332,6 @@ class DueWorkSource(HarnessModel):
                 "DueWorkSource.callable must expose __module__ and __qualname__ so it can be identified"
             )
         return f"{module}.{qualname}"
-
-
-class DueWorkContractDesignError(Exception):
-    """
-    The contract's declaration is incomplete or contradictory.
-
-    Raised at construction — import/collection time — so a missing disposition
-    or an unbindable claim fails the whole module loudly before any behavioral
-    proof runs, rather than surfacing as a confusing runtime assertion.
-    """
 
 
 class Claim(HarnessModel):
@@ -653,6 +648,14 @@ class DueWorkContract(HarnessModel):
     #: Profile F: the domain's derivation of obligations from product state.
     derivation: Callable[[], StateDerived | AbstractContextManager[StateDerived]] | None = None
 
+    #: Optional execution gate: work that is owed but blocked by something the
+    #: product decides (see :mod:`due_work_harness.profiles.execution_eligibility`),
+    #: independent of tables and worker framework. One factory, or named
+    #: factories for named blockers; each generated proof gets a fresh blocked
+    #: example with its readiness notification lost. Requires profile A claimed
+    #: with a sweep: recovery is what must find the work once it is eligible.
+    eligibility: ExecutionGateBinding | Mapping[str, ExecutionGateBinding] | None = None
+
     #: Domain-specific applications of the standalone proofs.
     extras: tuple[ExtraProof, ...] = ()
 
@@ -870,9 +873,37 @@ def _safety_design_errors(contract: SafetyContract) -> list[str]:
     return errors
 
 
+def eligibility_bindings(contract: DueWorkContract) -> Mapping[str, ExecutionGateBinding]:
+    """Named product blockers; the empty internal key keeps a single gate's case ids unprefixed."""
+    if contract.eligibility is None:
+        return {}
+    if isinstance(contract.eligibility, Mapping):
+        return contract.eligibility
+    return {"": contract.eligibility}
+
+
+def _eligibility_errors(contract: DueWorkContract) -> list[str]:
+    """Every way an ``eligibility=`` declaration fails to describe gates that will run."""
+    if contract.eligibility is None:
+        return []
+    errors: list[str] = []
+    if not _claims_recovery(contract):
+        errors.append("eligibility requires claimed automatic recovery with a sweep")
+    if isinstance(contract.eligibility, Mapping):
+        if not contract.eligibility:
+            errors.append("eligibility variants cannot be empty")
+        if any(not name.strip() for name in contract.eligibility):
+            errors.append("eligibility variants need nonempty names")
+    for name, binding in eligibility_bindings(contract).items():
+        defect = _adopter_annotation_defect(f"the eligibility {name + ' ' if name else ''}binding", binding)
+        if defect:
+            errors.append(defect)
+    return errors
+
+
 def _design_errors(contract: DueWorkContract) -> list[str]:
     """Every way the declaration fails to describe a complete contract."""
-    errors: list[str] = []
+    errors: list[str] = _eligibility_errors(contract)
     if not contract.name.strip():
         errors.append("the contract has no name")
     if contract.handoffs and contract.handoff_delivery is None:
@@ -1133,6 +1164,16 @@ def _proof_runner(factory: Callable[[], Any], proof: Callable[[Any], None]) -> C
     return run
 
 
+def _gate_sweep_runner(gate_factory: Callable[[], Any], sweep_factory: Callable[[], Any]) -> Callable[[], None]:
+    """The gate is entered first: it arranges the blocked example the sweep then selects, or does not."""
+
+    def run() -> None:
+        with _entered(gate_factory) as gate, _entered(sweep_factory) as sweep:
+            assert_gate_is_recovered_by_the_contract_sweep(gate, sweep)
+
+    return run
+
+
 def _coherence_runner(
     sweep_factory: Callable[[], Any],
     derivation_factory: Callable[[], Any],
@@ -1269,6 +1310,22 @@ def contract_cases(contract: DueWorkContract) -> list[Any]:
                     params.append(pytest.param(case, id=case.id, marks=marks))
         else:
             params.append(_unclaimed_case(profile.name, disposition, contract.transactional, contract.fixtures))
+    for name, binding in eligibility_bindings(contract).items():
+        prefix = f"eligibility-{name}" if name else "eligibility"
+        for proof in ELIGIBILITY_PROOFS:
+            case = ContractCase(
+                id=f"{prefix}-{proof.__name__}",
+                run=_proof_runner(binding, proof),
+                fixtures=contract.fixtures,
+            )
+            params.append(pytest.param(case, id=case.id, marks=_database_marks(contract.transactional)))
+        assert contract.sweep is not None, "DueWorkContract validation requires a sweep with eligibility"
+        case = ContractCase(
+            id=f"{prefix}-assert_gate_is_recovered_by_the_contract_sweep",
+            run=_gate_sweep_runner(binding, contract.sweep),
+            fixtures=contract.fixtures,
+        )
+        params.append(pytest.param(case, id=case.id, marks=_database_marks(contract.transactional)))
     params.extend(_coherence_cases(contract))
     params.extend(_handoff_cases(contract))
     for extra in contract.extras:
@@ -1557,6 +1614,9 @@ def contract_report(contract: DueWorkContract) -> str:
             lines.append(f"  {label}: not applicable — {disposition.because}")
         else:
             lines.append(f"  {label}: known gap — {disposition.because}")
+    for name in eligibility_bindings(contract):
+        label = f"Eligibility [{name}]" if name else "Eligibility"
+        lines.append(f"  {label}: claimed — {len(ELIGIBILITY_PROOFS) + 1} proofs, one against the contract sweep")
     for extra in contract.extras:
         note = f"known gap — {extra.gap}" if extra.gap else "applied"
         lines.append(f"  Extra {extra.name}: {note}")

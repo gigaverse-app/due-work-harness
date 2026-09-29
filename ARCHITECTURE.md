@@ -62,7 +62,7 @@ dataclasses:
 | `callback_breaker(fail_at)` | `CallbackBreaker \| None` | crash histories (each after-commit callback failing) |
 | `publication_breaker(refuse_at)` | `PublicationBreaker \| None` | crash histories (the broker refusing each publication; `celery_publication_breaker` for Celery) |
 | `receiver_breaker(fail_at)` | `ReceiverBreaker \| None` | crash histories (each receiver of the signals an adopter names failing; `django_receiver_breaker(*signals)` for Django) |
-| `connection_scope()` | `Callable[[], ContextManager]` | two-connection races (profile B) |
+| `connection_scope()` | `Callable[[], ContextManager]` | two-connection races (profile B); inside a racer, `host.race_timeout()` is the race's deadline, to bound the racer's waits from |
 | `selection_inspectors` | `tuple[SelectionInspector, ...]` | profile A database proofs: `index_served(selection)`, `replica_read(selection)`, `scan_counts(selection)`, `statements_during(run)` |
 | `ambient_context()` | `Callable[[], object] \| None` | profile A `AMBIENT_CONTEXT_PROOFS`: a tick restores ambient context (opt-in; fails when unset) |
 | `publication_recorder()` | `Callable[[], ContextManager[list[str]]] \| None` | lifecycle-state proof 2c: work handed off only as a queue message |
@@ -111,10 +111,13 @@ due_work_harness/
     durable_retention.py    profile D
     eventual_convergence.py profile E
     fact_derived_obligations.py profile F
+    execution_eligibility.py  ExecutionGate: blocked work stays owed, is not run early, and recovery releases it
   references/in_memory.py   conforming in-memory implementations for self-tests
+  references/eligibility.py an independent scheduler with sixteen injectable faults, for ExecutionGate's proofs
   integrations/
     django/    django_host(), worker killer, write classification,
-               QuerySet SelectionInspector, lifecycle-state proofs (2b/2c)
+               QuerySet SelectionInspector, lifecycle-state proofs (2b/2c),
+               lock_order (row-lock order per transaction; a cycle is a deadlock)
     celery.py  beat schedule evidence
     procrastinate.py  worker recovery, stalled-job arrangement, periodic evidence
     dbos.py    relaunch helper

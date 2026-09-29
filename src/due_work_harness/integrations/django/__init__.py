@@ -17,7 +17,8 @@ What the host supplies:
 * ``in_transaction`` — ``connection.in_atomic_block`` on the default connection;
 * ``worker_killer`` — :func:`.commits.django_worker_killer`, counting commits on
   the calling thread's default connection;
-* ``connection_scope`` — ``close_old_connections`` around a racing thread;
+* ``connection_scope`` — a racing thread's own connection, its lock waits bounded at
+  half the race's deadline on PostgreSQL, closed on every exit;
 * ``selection_inspectors`` — :class:`.selection.DjangoSelectionInspector` for
   QuerySet selections (PostgreSQL plans, replica reads, statement capture);
 * ``frozen_clock`` — :func:`~due_work_harness.integrations.clocks.time_machine_clock`;
@@ -26,6 +27,10 @@ What the host supplies:
 * ``publication_recorder`` — pass one for your queue (for example
   :func:`due_work_harness.integrations.celery.celery_publications`); without one,
   every ``Lifecycle`` must say why its worker publishes nothing.
+
+Beside the host, :mod:`~due_work_harness.integrations.django.lock_order` ships a recorder
+and a ``lock_order`` fixture that fail when two transactions lock the same tables in
+opposite orders, which deadlock only under concurrency.
 """
 
 import functools
@@ -51,15 +56,41 @@ def _in_transaction() -> bool:
     return connection.in_atomic_block
 
 
+#: The race deadline a racing thread's database waits are bounded from when the proof
+#: that started it gives none, in seconds (FencedOwnership.race_timeout's default).
+DEFAULT_RACE_TIMEOUT = 10.0
+
+
 @contextmanager
 def _connection_scope() -> Iterator[None]:
-    from django.db import close_old_connections
+    """
+    A racing thread's own connection: bounded while it runs, closed on every exit.
 
-    close_old_connections()
+    On PostgreSQL the bounds come from the race's deadline
+    (:func:`~due_work_harness.host.race_timeout`): ``lock_timeout`` is half of it,
+    so a claim blocked on the other connection's lock fails with the database's
+    error well before the race gives up on it, and ``statement_timeout`` is all of
+    it, so nothing the racer started outlives the race on the server.
+
+    ``close_old_connections`` closes only connections past their ``CONN_MAX_AGE``, so
+    a persistent one would outlive the thread that owned it; ``close_all`` always
+    closes this thread's connections.
+    """
+    from django.db import connection, connections
+
+    from due_work_harness.host import race_timeout
+
+    race = race_timeout() or DEFAULT_RACE_TIMEOUT
     try:
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT set_config('lock_timeout', %s, false), set_config('statement_timeout', %s, false)",
+                    [f"{int(race * 500)}ms", f"{int(race * 1000)}ms"],
+                )
         yield
     finally:
-        close_old_connections()
+        connections.close_all()
 
 
 def django_host(

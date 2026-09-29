@@ -28,10 +28,12 @@ simple and reviewable — extract one production callable, make runtime call it,
 and make the adapter forward to it.
 """
 
+import ast
 import dis
 import functools
 import inspect
 import sys
+import textwrap
 from collections.abc import Callable, Collection
 from pathlib import Path
 from types import CodeType, ModuleType
@@ -120,9 +122,75 @@ def _inversion_names(code: CodeType) -> set[str]:
         if isinstance(constant, CodeType):
             names |= set(constant.co_names)
     found = names & (ASSERTION_INVERSION_NAMES - {"AssertionError"})
-    if _catches_assertion_error(code):
+    tree = _source_tree(code)
+    leaves_finally = tree is not None and _leaves_a_finally_early(tree)
+    if leaves_finally:
+        found.add("finally")
+    if _catches_assertion_error(code) and (leaves_finally or tree is None or not _every_handler_re_raises(tree)):
         found.add("AssertionError")
     return found
+
+
+def _source_tree(code: CodeType) -> ast.Module | None:
+    try:
+        return ast.parse(textwrap.dedent(inspect.getsource(code)))
+    except (OSError, TypeError, SyntaxError):
+        return None
+
+
+def _every_handler_re_raises(tree: ast.Module) -> bool:
+    """
+    Whether every ``except`` handler in the source ends in a bare ``raise`` and cannot leave another way.
+
+    A handler that annotates an assertion (``add_note``) or logs it and then
+    re-raises it inverts nothing: the assertion reaches the case as itself. The
+    bytecode says an ``AssertionError`` is matched; the source says what the
+    handler does with it. Every handler is held to it, whatever it matches, so
+    an aliased ``AssertionError`` cannot slip through a handler that swallows.
+    Without source, nothing is exonerated; with a ``finally`` that leaves early
+    (see :func:`_leaves_a_finally_early`), neither is the re-raise.
+    """
+    handlers = [node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)]
+    return bool(handlers) and all(_re_raises(handler) for handler in handlers)
+
+
+def _leaves_a_finally_early(tree: ast.Module) -> bool:
+    """
+    Whether some ``finally`` block can leave by ``return``, ``break`` or ``continue``.
+
+    Leaving a ``finally`` that way discards the exception propagating through
+    it, an assertion included, whatever the handlers above it did. Counted: a
+    ``return`` anywhere in the block, and a ``break`` or ``continue`` not inside
+    a loop that is itself in the block. Nested functions, lambdas and classes
+    are their own scope and are not counted.
+    """
+    return any(
+        _escapes(statement, in_loop=False)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Try, ast.TryStar))
+        for statement in node.finalbody
+    )
+
+
+def _escapes(node: ast.AST, *, in_loop: bool) -> bool:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+        return False
+    if isinstance(node, ast.Return):
+        return True
+    if isinstance(node, (ast.Break, ast.Continue)):
+        return not in_loop
+    loop = isinstance(node, (ast.For, ast.AsyncFor, ast.While))
+    return any(
+        # A loop's else clause runs after the loop, so a break there leaves the loop's own enclosing scope.
+        _escapes(child, in_loop=in_loop or (loop and child not in node.orelse))  # type: ignore[attr-defined]
+        for child in ast.iter_child_nodes(node)
+    )
+
+
+def _re_raises(handler: ast.ExceptHandler) -> bool:
+    last = handler.body[-1]
+    leaves = any(isinstance(node, (ast.Return, ast.Break, ast.Continue)) for node in ast.walk(handler))
+    return isinstance(last, ast.Raise) and last.exc is None and not leaves
 
 
 def callable_code(binding: Callable[..., Any]) -> CodeType | None:

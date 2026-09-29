@@ -125,6 +125,17 @@ Start small: a `HandoffHistory` with `assert_crash_at_every_commit_converges` is
 often the first proof worth having. See [the README](README.md) and
 [what a green result means](docs/what-a-green-result-means.md).
 
+If the work can be owed but *blocked* by a product decision (a dependency has
+not settled, an owner is still active), add an `ExecutionGate` to a contract
+that claims profile A: `DueWorkContract(..., eligibility=order_blocked_by_payment)`,
+or a mapping of names to gates for several blockers. Its binding routes,
+recovery and selection call production; the harness proves the blocked work
+stays owed and untouched, and completes by recovery alone once eligible, with
+the readiness notification lost. The contract's sweep must declare `dispatched_ids`,
+the recorder of what its dispatch path sends: the gate's recovery is shown to be
+the sweep's by the gate's identity being dispatched there while it runs. See
+[what a green result means](docs/what-a-green-result-means.md#execution-eligibility-owed-is-not-the-same-as-runnable).
+
 **Or exempt it, with proof**, when losing the handoff genuinely costs nothing:
 
 ```python

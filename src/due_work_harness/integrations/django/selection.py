@@ -17,6 +17,9 @@ answers them for a ``due_work`` binding that returns a Django ``QuerySet``:
   against the aliases that are replicas;
 * **scan counts** — ``EXPLAIN ANALYZE (FORMAT JSON)``, read by
   :func:`due_work_harness.integrations.postgres_plans.scan_counts`;
+* **read costs** — ``EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`` of the selection
+  and of reading its whole table, after ``ANALYZE`` refreshed the statistics,
+  read by :func:`due_work_harness.integrations.postgres_plans.read_cost`;
 * **statements during a run** — Django's ``CaptureQueriesContext`` on one
   connection.
 """
@@ -31,8 +34,14 @@ from django.db import DEFAULT_DB_ALIAS, connections, transaction
 from django.db.models import Model, QuerySet
 from django.test.utils import CaptureQueriesContext
 
+from due_work_harness.host import ReadCosts
 from due_work_harness.integrations.django.writes import require_postgresql
-from due_work_harness.integrations.postgres_plans import index_served_verdict, scan_counts
+from due_work_harness.integrations.postgres_plans import (
+    index_served_verdict,
+    read_cost,
+    referenced_columns,
+    scan_counts,
+)
 from due_work_harness.models import HarnessModel
 
 
@@ -58,6 +67,36 @@ def explain_index_eligibility(queryset: QuerySet[Any]) -> dict[str, Any]:
     return plan
 
 
+def _verified_partial_indexes(alias: str, table: str, named: Collection[str]) -> dict[str, frozenset[str]]:
+    """
+    The named indexes with the columns each predicate constrains, once the catalog confirms each is a valid
+    partial index on ``table``.
+    """
+    if not named:
+        return {}
+    with connections[alias].cursor() as cursor:
+        cursor.execute(
+            "SELECT c.relname, pg_get_expr(i.indpred, i.indrelid) FROM pg_index i "
+            "JOIN pg_class c ON c.oid = i.indexrelid "
+            "WHERE i.indrelid = %s::regclass AND i.indisvalid AND i.indpred IS NOT NULL",
+            [connections[alias].ops.quote_name(table)],
+        )
+        predicates = dict(cursor.fetchall())
+        cursor.execute(
+            "SELECT attname FROM pg_attribute WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped",
+            [connections[alias].ops.quote_name(table)],
+        )
+        columns = {name for (name,) in cursor.fetchall()}
+    partial = set(predicates)
+    unverified = sorted(set(named) - partial)
+    assert not unverified, (
+        f"partial_indexes names {unverified}, which are not valid partial indexes on {table!r} "
+        f"(partial ones are {sorted(partial)}). Naming a full index would excuse the whole-index read "
+        f"the index-served proof exists to catch"
+    )
+    return {name: frozenset(referenced_columns(predicates[name], columns)) for name in named}
+
+
 def _mirrored_aliases() -> frozenset[str]:
     """Aliases Django's test settings declare as replicas (``TEST: {"MIRROR": ...}``)."""
     return frozenset(alias for alias, config in settings.DATABASES.items() if config.get("TEST", {}).get("MIRROR"))
@@ -75,10 +114,26 @@ class DjangoSelectionInspector(HarnessModel):
 
     ``using`` is the connection whose statements :meth:`statements_during`
     counts.
+
+    ``partial_indexes`` names partial indexes whose own WHERE clause narrows
+    the selection: PostgreSQL may build a bitmap from one with no index
+    condition, because the narrowing is in the index definition and EXPLAIN
+    does not show it, so the verdict would reject the best plan there is. A
+    name is only trusted after the catalog confirms it is a valid partial index
+    on the selection's table; anything else fails the proof, since vouching for
+    a full index would excuse the whole-index read the verdict exists to catch.
+    The catalog's predicate is read too: a Filter above the index that re-tests a
+    column the predicate constrains means the predicate does not imply the
+    selection's condition there, and the name is refused. A Filter on other
+    columns may remove backlog (owed rows not due yet) or settled history, which
+    the plan cannot tell apart. Back the name with
+    :func:`~due_work_harness.profiles.automatic_recovery.assert_selection_cost_does_not_grow_with_the_history`,
+    which measures what the selection reads against the history.
     """
 
     replica_aliases: Collection[str] | Callable[[], Collection[str]] | None = None
     using: str = DEFAULT_DB_ALIAS
+    partial_indexes: Collection[str] = ()
 
     def understands(self, selection: object) -> bool:
         return isinstance(selection, QuerySet)
@@ -87,7 +142,9 @@ class DjangoSelectionInspector(HarnessModel):
         queryset = self._queryset(selection)
         table = queryset.model._meta.db_table
         plan = explain_index_eligibility(queryset)
-        verdict = index_served_verdict(plan, table=table)
+        verdict = index_served_verdict(
+            plan, table=table, predicate_indexes=_verified_partial_indexes(queryset.db, table, self.partial_indexes)
+        )
         if verdict is None:
             return True, json.dumps(plan, indent=2)
         return False, verdict
@@ -106,6 +163,20 @@ class DjangoSelectionInspector(HarnessModel):
         queryset = self._queryset(selection)
         require_postgresql(queryset.db, "the scan-ratio proof", "it reads EXPLAIN plans")
         return scan_counts(_plan(queryset.explain(analyze=True, format="json")))
+
+    def read_costs(self, selection: object) -> ReadCosts:
+        queryset = self._queryset(selection)
+        require_postgresql(queryset.db, "the retained-history proof", "it reads EXPLAIN plans")
+        table = queryset.model._meta.db_table
+        with connections[queryset.db].cursor() as cursor:
+            # The planner chooses from statistics: without fresh ones a table of
+            # thousands of rows just inserted looks empty, and any plan is "cheap".
+            cursor.execute(f"ANALYZE {connections[queryset.db].ops.quote_name(table)}")
+        whole_table = queryset.model._base_manager.using(queryset.db).all()
+        return ReadCosts(
+            selection=read_cost(_plan(queryset.explain(analyze=True, buffers=True, format="json")), table=table),
+            full_table=read_cost(_plan(whole_table.explain(analyze=True, buffers=True, format="json")), table=table),
+        )
 
     def statements_during(self, run: Callable[[], object]) -> list[str]:
         with CaptureQueriesContext(connections[self.using]) as captured:
