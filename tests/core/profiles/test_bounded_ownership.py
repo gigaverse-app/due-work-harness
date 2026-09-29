@@ -436,7 +436,9 @@ class _HungClaims(_LockedClaims):
 def test_the_race_proof_fails_when_a_racer_never_returns() -> None:
     owner = _HungClaims()
     try:
-        with pytest.raises(AssertionError, match=r"claim-racer-\d had not returned .* blocked, not lost"):
+        with pytest.raises(
+            AssertionError, match=r"claim-racer-\d had not returned 0\.3s after the race began .* blocked, not lost"
+        ):
             assert_claim_is_exclusive_across_connections(_binding(owner), timeout=0.3)
     finally:
         owner.release.set()

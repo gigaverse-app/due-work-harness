@@ -58,8 +58,9 @@ def _in_transaction() -> bool:
 
 #: A racing thread's statements may take this long on PostgreSQL. A claim blocked on
 #: another connection's lock then fails with a database error, instead of holding a
-#: worker thread and its connection for as long as the server will wait.
-RACER_STATEMENT_TIMEOUT_MS = 10_000
+#: worker thread and its connection for as long as the server will wait. Half the
+#: race proof's default deadline, so that error arrives before the race gives up.
+RACER_STATEMENT_TIMEOUT_MS = 5_000
 
 
 @contextmanager

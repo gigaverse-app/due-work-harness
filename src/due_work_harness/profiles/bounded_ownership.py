@@ -560,7 +560,7 @@ def assert_the_lease_outlives_the_work(
     )
 
 
-def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, timeout: float = 5.0) -> None:
+def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, timeout: float = 10.0) -> None:
     """
     INVARIANT 1, proven properly: two real connections, one winner.
 
@@ -585,13 +585,20 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
     test process alive; the host's ``connection_scope()`` is what bounds and
     closes its connection.
 
+    ``timeout`` is the race's one deadline, in seconds, from the moment the
+    racers start: the barrier and the joins both wait only for what is left of
+    it. A host that bounds each statement should bound it well inside that
+    deadline (the Django host's five seconds, against the default ten), so a
+    claim blocked on a lock fails with the database's own error rather than,
+    depending on timing, either that or a racer that never returned.
+
     The test must run with real commits — see the host's
     ``database_marks(True)``; inside a test-wrapping transaction the racer
     threads cannot see the row.
     """
     ownership.make_claimable()
 
-    barrier = threading.Barrier(2, timeout=timeout)
+    barrier = threading.Barrier(2)
     claims: list[tuple[Any, UUID] | None] = []
     errors: list[BaseException] = []
     lock = threading.Lock()
@@ -600,7 +607,7 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
     def racer() -> None:
         with connection_scope():
             try:
-                barrier.wait()
+                barrier.wait(timeout=max(0.0, deadline - time.monotonic()))
                 claimed = ownership.claim()
                 with lock:
                     claims.append(claimed)
@@ -609,15 +616,15 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
                     errors.append(error)
 
     threads = [threading.Thread(target=racer, name=f"claim-racer-{i}", daemon=True) for i in range(2)]
+    deadline = time.monotonic() + timeout
     for thread in threads:
         thread.start()
-    deadline = time.monotonic() + timeout * 2
     for thread in threads:
         thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
     hung = [thread.name for thread in threads if thread.is_alive()]
     assert not hung, (
-        f"{ownership.name}: {', '.join(hung)} had not returned {timeout * 2:g}s after the race began "
+        f"{ownership.name}: {', '.join(hung)} had not returned {timeout:g}s after the race began "
         f"({len(claims)} of 2 claims returned, {len(errors)} raised). A claim that does not return is "
         f"blocked, not lost: on the other connection's uncommitted claim, or on a lock nothing releases. "
         f"Two workers would deadlock or stall in production, and the racer that did return says nothing "

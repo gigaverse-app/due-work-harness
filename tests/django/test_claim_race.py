@@ -8,6 +8,7 @@ fails the proof, with the timeout's error, instead of leaving one winner and a
 green result.
 """
 
+import inspect
 import threading
 from collections.abc import Iterator
 from uuid import UUID, uuid4
@@ -107,8 +108,9 @@ def test_a_racing_threads_connection_is_bounded_and_closed_even_when_persistent(
     seen: dict[str, object] = {}
 
     def racer() -> None:
-        # A persistent connection: close_old_connections would leave it open with its thread gone.
-        connection.settings_dict["CONN_MAX_AGE"] = None
+        # A persistent connection: close_old_connections would leave it open with its thread gone. The
+        # settings dict is shared by every thread's wrapper, so this thread's wrapper gets a copy.
+        connection.settings_dict = {**connection.settings_dict, "CONN_MAX_AGE": None}
         with django_host(production_packages=set()).connection_scope():
             with connection.cursor() as cursor:
                 cursor.execute("SHOW statement_timeout")
@@ -119,4 +121,12 @@ def test_a_racing_threads_connection_is_bounded_and_closed_even_when_persistent(
     thread = threading.Thread(target=racer)
     thread.start()
     thread.join(timeout=30)
-    assert seen == {"timeout": "10s", "open_inside": True, "closed_after": True}
+    assert seen == {"timeout": "5s", "open_inside": True, "closed_after": True}
+    assert connection.settings_dict["CONN_MAX_AGE"] == 0, "the racer's persistent setting leaked into this thread"
+
+
+def test_a_blocked_claim_times_out_in_the_database_before_the_race_gives_up_on_it() -> None:
+    # Ordered, so a blocked claim reports the database's own error rather than, depending on timing,
+    # either that error or a racer that never returned.
+    race = inspect.signature(assert_claim_is_exclusive_across_connections).parameters["timeout"].default
+    assert django_integration.RACER_STATEMENT_TIMEOUT_MS / 1000 < race
