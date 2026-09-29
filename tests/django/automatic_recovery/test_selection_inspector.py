@@ -345,11 +345,10 @@ def test_a_bitmap_over_a_partial_index_is_rejected_until_the_adopter_names_the_i
     _index_served_with(bitmap_over_a_partial_index, due_work=_active_attempts)
 
 
-def test_a_named_partial_index_does_not_excuse_the_filter_left_above_it(bitmap_over_a_partial_index: str) -> None:
-    # The reference selection also bounds updated_at, which the index's WHERE cannot hold: the heap
-    # scan filters what the bitmap yields. A partial index is excused only for the whole predicate.
-    with pytest.raises(AssertionError, match="lifecycle_attempt_active_ix.*its heap scan still filters"):
-        _index_served_with(bitmap_over_a_partial_index)
+def test_a_named_partial_index_serves_a_time_bounded_selection(bitmap_over_a_partial_index: str) -> None:
+    # The reference selection also bounds updated_at, which the index's WHERE cannot hold: the heap scan
+    # filters owed rows that are not due yet. That is backlog, not history, and the index serves it.
+    _index_served_with(bitmap_over_a_partial_index)
 
 
 def test_naming_an_index_that_is_not_partial_is_refused(bitmap_over_a_partial_index: str) -> None:
@@ -364,19 +363,25 @@ def test_naming_an_index_that_does_not_exist_is_refused() -> None:
         _index_served_with("no_such_ix")
 
 
-def test_a_named_partial_index_whose_predicate_holds_for_the_history_is_still_rejected() -> None:
-    # A valid partial index whose predicate every settled row satisfies too: its bitmap reads the history,
-    # and the heap scan filters it away. Naming the index vouches for its WHERE, not for that Filter.
-    _settled_history(2000)
-    for _ in range(3):
-        _make_owed()
+def test_a_named_partial_index_whose_predicate_holds_for_the_history_fails_the_history_proof() -> None:
+    # Naming a partial index is a claim: the plan cannot tell the Filter above it removing backlog from it
+    # removing settled history. ``status IS NOT NULL`` holds for the history too. The index-served proof
+    # takes the claim; the retained-history proof, which measures what the selection reads, refuses it.
     with connection.cursor() as cursor:
         cursor.execute(f"CREATE INDEX lifecycle_attempt_weak_ix ON {_TABLE} (id) WHERE status IS NOT NULL")
-        cursor.execute(f"ANALYZE {_TABLE}")
         cursor.execute("SET enable_indexscan = off")
     try:
-        with pytest.raises(AssertionError, match="lifecycle_attempt_weak_ix.*its heap scan still filters"):
-            _index_served_with("lifecycle_attempt_weak_ix")
+        _index_served_with("lifecycle_attempt_weak_ix")
+        with pytest.raises(AssertionError, match=r"scans its table sequentially|visited \d+ rows|buffers against"):
+            _history_proof()
     finally:
         with connection.cursor() as cursor:
             cursor.execute("RESET enable_indexscan")
+
+
+def test_a_named_partial_index_that_narrows_the_history_passes_the_history_proof(
+    bitmap_over_a_partial_index: str,
+) -> None:
+    # The conforming claim: the index's WHERE leaves the settled history out, so its bitmap reads little.
+    _index_served_with(bitmap_over_a_partial_index)
+    _history_proof()

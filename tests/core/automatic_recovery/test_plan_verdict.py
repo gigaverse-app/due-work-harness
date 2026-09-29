@@ -272,22 +272,24 @@ def test_a_read_that_never_scans_the_table_says_nothing_about_it() -> None:
         read_cost({"Node Type": "Result"}, table=_TABLE)
 
 
-def test_a_named_partial_index_does_not_excuse_rows_its_bitmap_hands_to_a_filter() -> None:
+def test_a_named_partial_index_is_trusted_with_the_filter_above_it() -> None:
     """
-    Naming a partial index vouches for its own predicate, not for a Filter above it.
+    A named partial index vouches for its bitmap, Filter or not: the plan cannot tell backlog from history.
 
-    ``(id) WHERE status IS NOT NULL`` is a valid partial index, and holds for every
-    settled row too: its bitmap reads the whole history, and the heap node discards it.
+    The Filter above ``(id) WHERE status IN (active)`` removes owed rows that are not due
+    yet (backlog), and the one above ``(id) WHERE status IS NOT NULL`` removes settled
+    history. The plan reads the same for both, so naming a partial index is a claim the
+    adopter backs with the retained-history proof, which does tell them apart.
     """
     plan = {
         "Node Type": "Bitmap Heap Scan",
         "Relation Name": _TABLE,
-        "Recheck Cond": "(status IS NOT NULL)",
-        "Filter": "((status = ANY ('{requested,running}')) AND (updated_at <= $1))",
-        "Rows Removed by Filter": 2000,
-        "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "weak_partial_ix"}],
+        "Recheck Cond": "(status = ANY ('{requested,running}'))",
+        "Filter": "(updated_at <= $1)",
+        "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "active_ix"}],
     }
-    with pytest.raises(AssertionError, match="weak_partial_ix.*its heap scan still filters"):
-        assert_plan_is_index_served(
-            name="weak partial bitmap", plan=plan, table=_TABLE, predicate_indexes=frozenset({"weak_partial_ix"})
-        )
+    assert_plan_is_index_served(
+        name="partial bitmap", plan=plan, table=_TABLE, predicate_indexes=frozenset({"active_ix"})
+    )
+    with pytest.raises(AssertionError, match="Recheck Cond .* is not evidence"):
+        assert_plan_is_index_served(name="partial bitmap", plan=plan, table=_TABLE)

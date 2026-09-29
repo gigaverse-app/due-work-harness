@@ -107,9 +107,11 @@ class DjangoSelectionInspector(HarnessModel):
     name is only trusted after the catalog confirms it is a valid partial index
     on the selection's table; anything else fails the proof, since vouching for
     a full index would excuse the whole-index read the verdict exists to catch.
-    The name excuses only a bitmap whose heap scan filters nothing: a partial
-    index vouches for its own WHERE, and a Filter left above it is where a
-    predicate that also holds for the settled history shows up.
+    The name is a claim the plan cannot check: a Filter above the bitmap may
+    remove backlog (owed rows not due yet) or settled history, and the plan reads
+    the same for both. Back it with
+    :func:`~due_work_harness.profiles.automatic_recovery.assert_selection_cost_does_not_grow_with_the_history`,
+    which measures what the selection reads against the history.
     """
 
     replica_aliases: Collection[str] | Callable[[], Collection[str]] | None = None

@@ -48,8 +48,11 @@ def index_served_verdict(
     The reasoning behind each rule is on :func:`assert_plan_is_index_served`.
     ``predicate_indexes`` names partial indexes whose predicate a catalog-backed
     caller checked against this query; a bitmap built from one of them needs no
-    ``Index Cond``, as long as the heap scan above it filters nothing. Names
-    alone, or an arbitrary ``Recheck Cond``, never establish that guarantee.
+    ``Index Cond``, Filter above it or not. The plan cannot tell a Filter removing
+    backlog (owed rows not due yet) from one removing settled history, so a named
+    partial index is a claim the caller backs with
+    :func:`~due_work_harness.profiles.automatic_recovery.assert_selection_cost_does_not_grow_with_the_history`.
+    Names alone, or an arbitrary ``Recheck Cond``, never establish that guarantee.
     """
     scans = [node for node in iter_plan_nodes(plan) if node.get("Relation Name") == table]
     if not scans:
@@ -71,22 +74,6 @@ def index_served_verdict(
             # assembled by scanning an entire index. The selectivity lives one
             # level down, on the Bitmap Index Scan.
             bitmap_scans = [scan for scan in iter_plan_nodes(node) if scan.get("Node Type") == "Bitmap Index Scan"]
-            # A named partial index vouches for its own predicate: the rows its bitmap
-            # yields all match it. It does not vouch for a Filter above it, which is
-            # where a predicate that also holds for the settled history shows up.
-            excused = [
-                scan.get("Index Name")
-                for scan in bitmap_scans
-                if "Index Cond" not in scan and scan.get("Index Name") in predicate_indexes
-            ]
-            if excused and "Filter" in node:
-                return (
-                    f"the selection builds a bitmap over {table!r} from the partial index(es) {excused}, whose "
-                    f"predicate the caller vouched for, but its heap scan still filters "
-                    f"({node.get('Rows Removed by Filter', '?')} rows removed): the partial index's WHERE holds "
-                    f"for rows the selection discards, so it narrows nothing the selection needs. Give the "
-                    f"partial index the selection's predicate.\n{_rendered(plan)}"
-                )
             # Every input is read to build AND/OR bitmaps: one selective branch
             # cannot vouch for another that walks its entire unrelated index.
             if not bitmap_scans or not all(
