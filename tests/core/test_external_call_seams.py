@@ -5,6 +5,9 @@ A call that returns an awaitable has not acted yet: the death must come after
 the effect, or the history converges on a notification nobody sent. A seam on a
 class keeps the binding Python gave it. And a declaration is held to the
 transition per seam: one seam that is called cannot vouch for another that never is.
+A seam whose result is not a coroutine (an async generator, a generator, a Task, an
+awaitable object) is refused: it would have to be changed to be observed. So is a
+seam declared twice, which would be wrapped twice.
 """
 
 import asyncio
@@ -20,6 +23,7 @@ from due_work_harness.crash_histories import (
     assert_crash_at_every_commit_converges,
 )
 from due_work_harness.host import Host, hosted
+from due_work_harness.models import DueWorkContractDesignError
 from due_work_harness.references import in_memory_handoffs as ref
 from due_work_harness.worker_death import WorkerDied
 
@@ -126,3 +130,97 @@ def test_a_deferred_call_created_before_the_death_cannot_run_during_cleanup(ledg
     # The second effect belongs to a dead process: it never happens, and its coroutine is closed, not leaked.
     assert ref.RECIPIENT.received == [1]
     assert worker.calls == 1
+
+
+class _Provider:
+    """
+    Seams whose result is not a coroutine: the effect happens later, when the caller consumes it.
+
+    Waiting for such a result would change what the caller receives (an ``async with``
+    target, a Task with its callbacks, a generator to iterate), and not waiting would
+    kill the worker before the effect. Neither is honest, so the seam is refused.
+    """
+
+    def __init__(self) -> None:
+        self.received: list[int] = []
+
+    async def stream(self, value: int) -> Any:
+        self.received.append(value)  # The effect happens on iteration, like a streaming upload.
+        yield value
+
+    def chunks(self, value: int) -> Any:
+        self.received.append(value)
+        yield value
+
+    def request(self, value: int) -> Any:
+        return _Request(self, value)
+
+    def schedule(self, value: int) -> "asyncio.Task[None]":
+        return asyncio.get_running_loop().create_task(self.send(value))
+
+    async def send(self, value: int) -> None:
+        self.received.append(value)
+
+
+class _Request:
+    """An aiohttp-style request: awaitable, and an async context manager, but not a coroutine."""
+
+    def __init__(self, provider: _Provider, value: int) -> None:
+        self._provider, self._value = provider, value
+
+    def __await__(self) -> Any:
+        return self._provider.send(self._value).__await__()
+
+
+@pytest.mark.parametrize(
+    ("seam", "invoke", "kind"),
+    [
+        ("stream", lambda provider: _drain(provider.stream(1)), "an async generator"),
+        ("chunks", lambda provider: _as_coroutine(list, provider.chunks(1)), "a generator"),
+        ("request", lambda provider: provider.request(1), "an awaitable that is not a coroutine"),
+        ("schedule", lambda provider: _awaited(provider.schedule, 1), "an awaitable that is not a coroutine"),
+    ],
+    ids=["async-generator", "generator", "custom-awaitable", "task"],
+)
+def test_a_seam_whose_result_is_not_a_coroutine_is_refused(seam: str, invoke: Callable[[Any], Any], kind: str) -> None:
+    provider = _Provider()
+    history = _history(ExternalCall(provider, seam))
+    with (
+        hosted(Host()),
+        _worker(history, None, 1, None),
+        pytest.raises(DueWorkContractDesignError, match=rf"_Provider\.{seam} returned {kind}.*coroutine method"),
+    ):
+        asyncio.run(_run(invoke, provider))
+
+
+def test_declaring_the_coroutine_underneath_an_awaitable_kills_after_its_effect() -> None:
+    # The conforming declaration for the refused request above: the coroutine that performs the send.
+    provider = _Provider()
+    with hosted(Host()), pytest.raises(WorkerDied), _worker(_history(ExternalCall(provider, "send")), None, 1, None):
+        asyncio.run(_run(lambda provider: provider.request(1), provider))
+    assert provider.received == [1]
+
+
+def test_a_seam_declared_twice_is_refused() -> None:
+    # Declared twice, it would be wrapped twice and every call counted twice.
+    with pytest.raises(DueWorkContractDesignError, match=r"declares the external call Recipient\.notify twice"):
+        _history(ExternalCall(ref.RECIPIENT, "notify"), ExternalCall(ref.RECIPIENT, "notify"))
+
+
+async def _run(invoke: Callable[[Any], Any], provider: _Provider) -> None:
+    result = invoke(provider)
+    if asyncio.iscoroutine(result) or isinstance(result, _Request):
+        await result
+
+
+async def _drain(stream: Any) -> None:
+    async for _ in stream:
+        pass
+
+
+async def _as_coroutine(consume: Callable[[Any], Any], value: Any) -> None:
+    consume(value)
+
+
+async def _awaited(schedule: Callable[[int], Any], value: int) -> None:
+    await schedule(value)

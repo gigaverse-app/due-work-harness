@@ -85,14 +85,20 @@ What these histories do not claim:
 
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
-from inspect import getattr_static, isawaitable, iscoroutine, iscoroutinefunction
+from inspect import getattr_static, isasyncgen, isawaitable, iscoroutine, iscoroutinefunction, isgenerator
 from typing import Any, NamedTuple, Protocol
 
 import pytest
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from due_work_harness.host import CountedFaults, current_host
-from due_work_harness.models import MISSING, HarnessModel, MutableHarnessModel, with_positional
+from due_work_harness.models import (
+    MISSING,
+    DueWorkContractDesignError,
+    HarnessModel,
+    MutableHarnessModel,
+    with_positional,
+)
 from due_work_harness.recording import current_recorder
 from due_work_harness.worker_death import WorkerDied
 
@@ -104,11 +110,13 @@ class ExternalCall(HarnessModel):
     Name the provider client or fake method that performs the effect, on the
     object the transition actually calls — an instance, a class or a module.
     The harness wraps it only while the transition runs, calls the original,
-    and kills the worker right after the chosen call completes. A result that is
-    awaitable is awaited first — coroutine creation is not an effect — so an
-    async client, or a sync method returning deferred work, is killed after its
-    effect, never before it. On a class the seam keeps its ``staticmethod`` or
-    ``classmethod`` binding, and is restored as it was.
+    and kills the worker right after the chosen call completes. A coroutine
+    result is awaited first — coroutine creation is not an effect — so an async
+    client, or a sync method returning a coroutine, is killed after its effect,
+    never before it. Any other deferred result (an async generator, a generator,
+    a Task or an awaitable object) is refused: declare the coroutine method
+    underneath it. On a class the seam keeps its ``staticmethod`` or
+    ``classmethod`` binding, and is restored as it was. Declare each seam once.
     """
 
     owner: object
@@ -176,6 +184,17 @@ class HandoffHistory[HandleT, ObservationT](HarnessModel):
     external_calls: tuple[ExternalCall, ...] = ()
     #: Optional: what the histories leave, checked in the same run as the verdict.
     findings: Findings | None = None
+
+    def model_post_init(self, _context: Any) -> None:
+        seen: set[tuple[int, str]] = set()
+        for call in self.external_calls:
+            key = (id(call.owner), call.attribute)
+            if key in seen:
+                # Wrapped twice, every call would be counted twice and the deaths misplaced.
+                raise DueWorkContractDesignError(
+                    f"handoff {self.name!r} declares the external call {call} twice; declare each seam once"
+                )
+            seen.add(key)
 
 
 class DeliverySession(Protocol):
@@ -391,8 +410,9 @@ def _external_call_wrapper(call: ExternalCall, original: Callable[..., Any], wor
     def dying_after(*args: Any, **kwargs: Any) -> Any:
         worker.refuse_if_dead()
         result = original(*args, **kwargs)
-        if isawaitable(result):
+        if iscoroutine(result):
             return after_await(result)
+        _refuse_a_deferred_result(call, result)
         worker.called(call)
         return result
 
@@ -402,6 +422,31 @@ def _external_call_wrapper(call: ExternalCall, original: Callable[..., Any], wor
     # Preserve coroutine-function introspection for callers such as async_to_sync,
     # but inspect every result: a sync SDK method may return an awaitable too.
     return dying_after_await if iscoroutinefunction(original) else dying_after
+
+
+def _refuse_a_deferred_result(call: ExternalCall, result: object) -> None:
+    """
+    A result whose effect happens later, when the caller consumes it, cannot be observed honestly.
+
+    Counting the call when it returns kills the worker before the effect (the
+    false green awaiting a coroutine removes); waiting for the effect would hand
+    the caller something other than what production returns: no ``async with``,
+    no Task callbacks, no iteration. The coroutine method underneath is the seam.
+    """
+    if isasyncgen(result):
+        kind = "an async generator"
+    elif isgenerator(result):
+        kind = "a generator"
+    elif isawaitable(result):
+        kind = "an awaitable that is not a coroutine (a Future, a Task or an awaitable object)"
+    else:
+        return
+    raise DueWorkContractDesignError(
+        f"the external call {call} returned {kind}, whose effect happens only when the caller consumes it. "
+        f"The harness cannot wait for that without changing what the caller receives, and not waiting would "
+        f"kill the worker before the effect. Declare the coroutine method underneath it, the one that "
+        f"performs the effect, as the seam"
+    )
 
 
 def _patched_seam(call: ExternalCall, worker: _Worker) -> object:
