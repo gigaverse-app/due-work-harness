@@ -49,6 +49,13 @@ proof green, the proof was about to tell you something.
 | **The hook that rewrites the record** | a worker runs the task, records it SUCCESSFUL, then sends `task_finished`; every death converges, but a receiver that raises lands in the worker's own failure path, which records the task FAILED after its effect happened | `receiver_breaker`: each receiver of the worker's signals failing in turn must converge too |
 | **The handoff behind a publish** | a callback publishes a webhook or a task, then the handoff runs; with the broker up every history converges, but a refused publish raises out of the callback and takes everything after it down | `publication_breaker`: the broker refusing each publication in turn must converge too |
 
+## Observations that cannot fail
+
+- **The observation recovery erases.** A project's own cleanup (a periodic task that deletes sent mail, expired
+  rows, finished jobs) removes what the contract observes, so a history that lost the work and one that did it
+  look identical after recovery. Refused by review only: observe what the cleanup leaves, and before trusting a
+  green history ask what a run that lost the work would have shown.
+
 ## What only a reviewer can refuse
 
 - **A production reference that is not load-bearing.** The delegation tripwire

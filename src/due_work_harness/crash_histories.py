@@ -92,6 +92,7 @@ import pytest
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from due_work_harness.host import CountedFaults, current_host
 from due_work_harness.models import MISSING, HarnessModel, MutableHarnessModel, with_positional
+from due_work_harness.recording import current_recorder
 from due_work_harness.worker_death import WorkerDied
 
 
@@ -586,7 +587,16 @@ def divergence_for(findings: Findings | None) -> type[AssertionError]:
 
 
 def assert_findings_hold(name: str, runs: list[HistoryRun], findings: Findings | None) -> None:
-    """The runs match a history's declared findings table; nothing to check when it declares none."""
+    """
+    The runs match a history's declared findings table; nothing to check when it declares none.
+
+    While ``pytest --due-work-record-findings`` is recording, the runs are
+    recorded instead of checked (see :mod:`due_work_harness.recording`).
+    """
+    recorder = current_recorder()
+    if recorder is not None:
+        recorder.record(name, runs)
+        return
     if findings is not None:
         assert_runs_match_table(name, runs, delivered=findings.delivered, outcomes=findings.outcomes)
 

@@ -7,6 +7,10 @@ declaration exists; this option fails the session unless every one of those
 declarations also ran at least one case here — so a suite that is skipped by an
 ``importorskip``, deselected, or never collected cannot keep a function counted.
 
+``pytest --due-work-record-findings`` prints, after the run, the ``Findings`` each
+history would pin, ready to paste (see :mod:`due_work_harness.recording`); run it
+without ``-n``, since the runs are recorded in the process that makes them.
+
 ``pytest --due-work-summary`` prints, after the run, what every generated suite
 produced: each class's cases with their outcome, and each known gap's reason.
 A contract class is empty in the source, so this is where a reader sees what
@@ -21,11 +25,14 @@ import pytest
 from due_work_harness.coverage.config import load_config
 from due_work_harness.coverage.scan import scan
 from due_work_harness.host import Host, configure
+from due_work_harness.recording import report, start_recording, stop_recording
 
 VERIFY = "--due-work-verify"
 VERIFY_PLUGIN = "due-work-verify"
 SUMMARY = "--due-work-summary"
 SUMMARY_PLUGIN = "due-work-summary"
+RECORD = "--due-work-record-findings"
+RECORD_PLUGIN = "due-work-record-findings"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -40,6 +47,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         default=False,
         help="fail unless every contract and exemption suite the coverage scan counts ran at least one case",
+    )
+    parser.getgroup("due-work-harness").addoption(
+        RECORD,
+        action="store_true",
+        default=False,
+        help="print the Findings every history would pin, instead of checking the declared tables (run without -n)",
     )
     parser.getgroup("due-work-harness").addoption(
         SUMMARY,
@@ -59,6 +72,8 @@ def pytest_configure(config: pytest.Config) -> None:
         config.pluginmanager.register(_SuitesRan(config), VERIFY_PLUGIN)
     if config.getoption(SUMMARY) and not hasattr(config, "workerinput"):
         config.pluginmanager.register(_Summary(), SUMMARY_PLUGIN)
+    if config.getoption(RECORD):
+        config.pluginmanager.register(_Recording(), RECORD_PLUGIN)
     path = config.getini("due_work_harness_host")
     if not path:
         return
@@ -156,3 +171,22 @@ _WORDS = {"PASSED": "passed", "FAILED": "failed", "SKIPPED": "skipped", "XFAIL":
 
 def _shorten(reason: str, limit: int = 110) -> str:
     return reason if len(reason) <= limit else reason[: limit - 1].rstrip() + "…"
+
+
+class _Recording:
+    """Turns findings recording on for the session, and prints what it recorded."""
+
+    def __init__(self) -> None:
+        self.recorder = start_recording()
+
+    def pytest_terminal_summary(self, terminalreporter: pytest.TerminalReporter) -> None:
+        if not self.recorder.histories:
+            terminalreporter.line("due-work-harness: no history ran, so nothing was recorded")
+            return
+        terminalreporter.section(
+            "due-work-harness: recorded findings (what the code does today: review before pinning)"
+        )
+        terminalreporter.write_line(report(self.recorder))
+
+    def pytest_unconfigure(self) -> None:
+        stop_recording()

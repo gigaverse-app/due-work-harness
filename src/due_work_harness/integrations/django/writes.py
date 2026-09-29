@@ -11,6 +11,8 @@ like. Harness observers that must not miss a write classify it here.
 from collections.abc import Callable
 from typing import Any
 
+from django.db import connections
+
 from due_work_harness.models import HarnessModel
 
 #: Commands whose status reports rows written. ``COPY`` counts: ``COPY FROM``
@@ -58,6 +60,21 @@ def leading_keyword(sql: str) -> str:
         else:
             break
     return text.split(None, 1)[0].upper() if text else ""
+
+
+def require_postgresql(alias: str, reading: str, because: str) -> None:
+    """
+    Refuse, in words, a proof that reads PostgreSQL-specific state on another database.
+
+    Without this a SQLite run fails on a SQL error from inside the harness
+    (``pg_current_xact_id_if_assigned`` does not exist), which reads as a
+    harness bug rather than as a database the proof cannot serve.
+    """
+    vendor = connections[alias].vendor
+    assert vendor == "postgresql", (
+        f"{reading} needs PostgreSQL ({because}), and database {alias!r} is {vendor!r}. "
+        f"Run this proof against PostgreSQL, or configure the host for this database"
+    )
 
 
 def execute_reporting_autocommit_write(
