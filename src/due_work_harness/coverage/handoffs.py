@@ -93,8 +93,8 @@ ATOMIC = "django.db.transaction.atomic"
 AFTER_COMMIT_KINDS = frozenset({"django", "bridge"})
 
 
-def _publishes_after_commit(kind: str, node: ast.expr) -> bool:
-    """``on_commit``, a helper that forwards to it, and Celery's ``*_on_commit`` variants wait for the commit."""
+def _waits_for_the_commit(kind: str, node: ast.expr) -> bool:
+    """Whether this handoff reference is a deferral: ``on_commit``, a forwarding helper, or a ``*_on_commit`` method."""
     return kind in AFTER_COMMIT_KINDS or (terminal_name(node) or "").endswith("_on_commit")
 
 
@@ -141,7 +141,9 @@ class _Sites(ast.NodeVisitor):
             self.self_clients.update(seed.self_clients)
         self.scopes: list[_Scope] = [top]
         #: Depth of ``atomic`` blocks around the node being visited, in the current function.
-        self.atomic = 0
+        self.atomic_depth = 0
+        #: Kinds whose queue can commit with the caller's data, so a handoff of that kind in a block is safe.
+        self.joining = {kind.name for kind in kinds if kind.can_join_transaction}
         self.found: dict[str, list[Site]] = defaultdict(list)
 
     # Resolution
@@ -248,11 +250,20 @@ class _Sites(ast.NodeVisitor):
         return f"{self.module.name}.{MODULE_LEVEL}"
 
     def _record(self, kind: str, node: ast.expr) -> None:
-        joins = any(known.can_join_transaction for known in self.kinds if known.name == kind)
-        in_transaction = self.atomic > 0 and not joins and not _publishes_after_commit(kind, node)
         self.found[self._owner()].append(
-            Site(kind=kind, path=self.module.relative, line=node.lineno, in_transaction=in_transaction)
+            Site(
+                kind=kind, path=self.module.relative, line=node.lineno, in_transaction=self._in_transaction(kind, node)
+            )
         )
+
+    def _in_transaction(self, kind: str, node: ast.expr) -> bool:
+        """
+        Whether the handoff can run before the block commits, or outlive its rollback.
+
+        This is the whole judgement behind ``due-work-harness in-transaction``: the reference sits inside an
+        ``atomic`` block, and it is not a deferral (``on_commit``) or a queue that commits with the block.
+        """
+        return self.atomic_depth > 0 and kind not in self.joining and not _waits_for_the_commit(kind, node)
 
     def _is_atomic(self, expression: ast.expr) -> bool:
         """``transaction.atomic``, ``atomic(using=...)``: the transaction block, as a decorator or a context."""
@@ -260,21 +271,25 @@ class _Sites(ast.NodeVisitor):
 
     @contextmanager
     def _outside_the_block(self, *, atomic: bool = False) -> Iterator[None]:
-        """Visit code that is defined here but does not run here: a callback runs after the block ends."""
-        enclosing, self.atomic = self.atomic, int(atomic)
+        """
+        Visit code that is written here but does not run here: a callback, or what is handed to ``on_commit``.
+
+        A function decorated with ``atomic`` is the exception that runs inside its own transaction (``atomic=True``).
+        """
+        enclosing, self.atomic_depth = self.atomic_depth, int(atomic)
         try:
             yield
         finally:
-            self.atomic = enclosing
+            self.atomic_depth = enclosing
 
     def _with(self, node: ast.With | ast.AsyncWith) -> None:
         entered = sum(self._is_atomic(item.context_expr) for item in node.items)
         for item in node.items:
-            self.visit(item)
-        self.atomic += entered
+            self.visit(item)  # the context expressions run before the block is entered
+        self.atomic_depth += entered
         for statement in node.body:
             self.visit(statement)
-        self.atomic -= entered
+        self.atomic_depth -= entered
 
     visit_With = visit_AsyncWith = _with
 

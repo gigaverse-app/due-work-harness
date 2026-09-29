@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from due_work_harness.coverage.config import baseline_from, load_config
+from due_work_harness.coverage.report import Site
 from due_work_harness.coverage.scan import baseline_growth, scan, sites_in_transaction, unaccounted_baseline
 
 
@@ -74,13 +75,18 @@ def _check(root: Path, base_ref: str | None) -> int:
     return 0
 
 
+def _site_line(site: Site, qualified: str, *trailing: str) -> str:
+    """One tab-separated line per site: where it is, its kind, the function that makes it, then ``trailing``."""
+    return "\t".join((f"{site.path}:{site.line}", site.kind, qualified, *trailing))
+
+
 def _sites(root: Path) -> int:
     report = scan(load_config(root))
     for qualified in sorted(report.sites):
         disposition = report.dispositions.get(qualified)
         status = f"{disposition.how}: {disposition.where}" if disposition else "UNACCOUNTED"
         for site in report.sites[qualified]:
-            print(f"{site.path}:{site.line}\t{site.kind}\t{qualified}\t{status}")
+            print(_site_line(site, qualified, status))
     return 0
 
 
@@ -96,7 +102,7 @@ def _in_transaction(root: Path) -> int:
     found = sites_in_transaction(load_config(root))
     for qualified in sorted(found):
         for site in found[qualified]:
-            print(f"{site.path}:{site.line}\t{site.kind}\t{qualified}")
+            print(_site_line(site, qualified))
     count = sum(len(sites) for sites in found.values())
     if not count:
         print("due-work-harness: no handoff inside transaction.atomic()")
