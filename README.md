@@ -259,6 +259,8 @@ is the cycle behind the findings above, written to be repeated: choose a target,
 the harness in a fork, confirm each finding on its own, declare the findings, improve the harness with what
 the probe needed, and disclose with the templates in
 [`docs/upstream-templates`](https://github.com/gigaverse-app/due-work-harness/tree/main/docs/upstream-templates).
+In Claude Code, the [`find-upstream-weaknesses` skill](https://github.com/gigaverse-app/due-work-harness/blob/main/.claude/skills/find-upstream-weaknesses/SKILL.md)
+runs the cycle for you.
 
 ## Status
 

@@ -60,4 +60,4 @@ message).
 
 ## Finding weaknesses in other projects
 
-A new demo, an integration, or an upstream report follows [the upstream playbook](docs/upstream-playbook.md), with the templates in [`docs/upstream-templates`](docs/upstream-templates/).
+A new demo, an integration, or an upstream report follows [the upstream playbook](docs/upstream-playbook.md), with the templates in [`docs/upstream-templates`](docs/upstream-templates/). With Claude Code, the `find-upstream-weaknesses` skill in `.claude/skills` runs the whole cycle.

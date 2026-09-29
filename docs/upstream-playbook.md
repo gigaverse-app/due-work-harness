@@ -3,7 +3,9 @@
 How to point the harness at a project you don't own, find a weakness that costs someone something, and
 disclose it so the maintainers can reproduce it in minutes. It is the cycle behind the findings in the
 [README](../README.md#not-theoretical-it-found-these-in-code-youve-heard-of) and the
-[demos](../demos/README.md), written so a person or an agent can run it again.
+[demos](../demos/README.md), written so a person or an agent can run it again. An agent loads it as the
+[`find-upstream-weaknesses` skill](../.claude/skills/find-upstream-weaknesses/SKILL.md), which is the same cycle as a
+runbook; this document holds the reasoning behind each step.
 
 The rules that shape every step:
 
