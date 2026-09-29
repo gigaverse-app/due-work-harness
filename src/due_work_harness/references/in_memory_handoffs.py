@@ -354,6 +354,15 @@ def complete_notifying_best_effort(attempt: int) -> None:
     RECIPIENT.notify(attempt)
 
 
+def complete_notifying_wrapping_errors(attempt: int) -> None:
+    """Completion, then a streamed notification whose errors are wrapped in the client's own error type."""
+    LEDGER.update(attempt, status=COMPLETE)
+    try:
+        list(RECIPIENT.notify_in_chunks(attempt))
+    except Exception as error:
+        raise LedgerConnectionError("the notification could not be sent") from error
+
+
 def status_and_notifications(attempt: int) -> tuple[str, int]:
     return LEDGER.get(attempt)["status"], RECIPIENT.received.count(attempt)
 

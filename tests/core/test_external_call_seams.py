@@ -309,3 +309,25 @@ def test_an_instance_seam_is_removed_again_not_left_as_a_bound_method() -> None:
         recipient.notify(2)
     assert worker.calls == 1
     assert "notify" in vars(Recipient) and not isinstance(vars(Recipient)["notify"], type(recipient.notify))
+
+
+def test_a_refusal_the_transition_wraps_is_reported_as_itself(ledger_host: Host) -> None:
+    # Production re-raises its client's own error ``from`` the refusal; the refusal is what the history reports.
+    history = _notifying(ref.complete_notifying_wrapping_errors, "notify_in_chunks")
+    with pytest.raises(DueWorkContractDesignError, match=r"Recipient\.notify_in_chunks returned a generator"):
+        assert_crash_at_every_commit_converges(ref.NOTIFYING_DELIVERY, history)
+
+
+class _Slotted:
+    __slots__ = ("send",)
+
+    def __init__(self) -> None:
+        self.send = lambda: "sent"
+
+
+def test_a_seam_held_in_a_slot_is_put_back_not_deleted() -> None:
+    provider = _Slotted()
+    with hosted(Host()), _worker(_history(ExternalCall(provider, "send")), None, None, None) as worker:
+        assert provider.send() == "sent"
+    assert worker.calls == 1
+    assert provider.send() == "sent"

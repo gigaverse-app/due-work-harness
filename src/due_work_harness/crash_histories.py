@@ -526,8 +526,11 @@ def _install(owner: object, name: str, replacement: object) -> Callable[[], None
     """
     try:
         namespace: Any = vars(owner)
-    except TypeError:  # an instance with __slots__ has no namespace of its own
-        namespace = {}
+    except TypeError:
+        # An instance with __slots__: the seam is a slot's value, which is put back, never deleted.
+        held = getattr(owner, name)
+        setattr(owner, name, replacement)
+        return lambda: setattr(owner, name, held)
     if name in namespace:
         original = namespace[name]
         setattr(owner, name, replacement)
@@ -555,6 +558,11 @@ def _run(
             except WorkerDied:
                 assert worker.dead, "WorkerDied escaped from something other than the simulated death"
             except Exception as error:
+                # A seam's refusal is reported as itself, even when production wrapped it in its own error.
+                if worker.refused is not None and error is not worker.refused:
+                    raise worker.refused from error
+                if worker.refused is not None:
+                    raise
                 # An invariant failing, in production or in a proof, is never absorbed.
                 if isinstance(error, AssertionError):
                     raise
