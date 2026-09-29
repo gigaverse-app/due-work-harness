@@ -84,6 +84,33 @@ jobs:
       - run: uv sync --locked --no-default-groups --extra django --extra celery
       - run: uv run --no-sync pytest tests/django --ds=tests.django.settings
 
+  # The same suite on psycopg2, which Django uses when psycopg 3 is not installed: pretix and many older
+  # projects run on it, and the host's autocommit-write probe once assumed psycopg 3.
+  django-psycopg2:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGPORT: "5432"
+      PGDATABASE: due_work_harness_psycopg2
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-default-groups --extra django --extra celery
+      - run: uv pip uninstall psycopg psycopg-binary && uv pip install psycopg2-binary
+      - run: uv run --no-sync pytest tests/django --ds=tests.django.settings
+
   # Redis-backed queues, and Celery's real worker as a child process on a Redis broker.
   redis:
     runs-on: ubuntu-latest
