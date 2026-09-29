@@ -307,9 +307,9 @@ def test_an_index_that_reads_its_whole_range_and_filters_it_still_reads_the_hist
 @pytest.fixture
 def bitmap_over_a_partial_index() -> Iterator[str]:
     """
-    A partial index that narrows the selection through its WHERE clause alone, read as a bitmap.
+    A partial index that narrows a selection through its WHERE clause alone, read as a bitmap.
 
-    The index is keyed on ``id``, which the selection never constrains, so the plan's bitmap
+    The index is keyed on ``id``, which no selection here constrains, so the plan's bitmap
     index scan has no index condition: exactly what the verdict rejects for a full index.
     """
     active = ", ".join(f"'{status}'" for status in ref.ACTIVE_STATUSES)
@@ -323,18 +323,33 @@ def bitmap_over_a_partial_index() -> Iterator[str]:
             cursor.execute("RESET enable_indexscan")
 
 
-def _index_served_with(*partial_indexes: str) -> None:
+def _index_served_with(*partial_indexes: str, due_work: Any = ref.due_for_recovery) -> None:
     inspector = DjangoSelectionInspector(partial_indexes=partial_indexes)
     with hosted(Host(selection_inspectors=(inspector,))):
-        assert_selection_is_index_served(_scheduled(ref.due_for_recovery))
+        assert_selection_is_index_served(_scheduled(due_work))
+
+
+def _active_attempts() -> QuerySet[ref.LifecycleAttempt]:
+    # ARRANGE: none; the partial index fixture builds the index this selection's predicate matches.
+    # REAL PRODUCTION: a real ORM queryset whose whole predicate is the partial index's WHERE.
+    # EXTERNAL SEAM: none.
+    # OBSERVE: the proof reads the real PostgreSQL plan.
+    return ref.LifecycleAttempt.objects.filter(status__in=ref.ACTIVE_STATUSES)
 
 
 def test_a_bitmap_over_a_partial_index_is_rejected_until_the_adopter_names_the_index(
     bitmap_over_a_partial_index: str,
 ) -> None:
     with pytest.raises(AssertionError, match="builds a bitmap.*no index condition"):
-        _index_served_with()
-    _index_served_with(bitmap_over_a_partial_index)
+        _index_served_with(due_work=_active_attempts)
+    _index_served_with(bitmap_over_a_partial_index, due_work=_active_attempts)
+
+
+def test_a_named_partial_index_does_not_excuse_the_filter_left_above_it(bitmap_over_a_partial_index: str) -> None:
+    # The reference selection also bounds updated_at, which the index's WHERE cannot hold: the heap
+    # scan filters what the bitmap yields. A partial index is excused only for the whole predicate.
+    with pytest.raises(AssertionError, match="lifecycle_attempt_active_ix.*its heap scan still filters"):
+        _index_served_with(bitmap_over_a_partial_index)
 
 
 def test_naming_an_index_that_is_not_partial_is_refused(bitmap_over_a_partial_index: str) -> None:
@@ -347,3 +362,21 @@ def test_naming_an_index_that_is_not_partial_is_refused(bitmap_over_a_partial_in
 def test_naming_an_index_that_does_not_exist_is_refused() -> None:
     with pytest.raises(AssertionError, match=r"partial_indexes names \['no_such_ix'\]"):
         _index_served_with("no_such_ix")
+
+
+def test_a_named_partial_index_whose_predicate_holds_for_the_history_is_still_rejected() -> None:
+    # A valid partial index whose predicate every settled row satisfies too: its bitmap reads the history,
+    # and the heap scan filters it away. Naming the index vouches for its WHERE, not for that Filter.
+    _settled_history(2000)
+    for _ in range(3):
+        _make_owed()
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_weak_ix ON {_TABLE} (id) WHERE status IS NOT NULL")
+        cursor.execute(f"ANALYZE {_TABLE}")
+        cursor.execute("SET enable_indexscan = off")
+    try:
+        with pytest.raises(AssertionError, match="lifecycle_attempt_weak_ix.*its heap scan still filters"):
+            _index_served_with("lifecycle_attempt_weak_ix")
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("RESET enable_indexscan")

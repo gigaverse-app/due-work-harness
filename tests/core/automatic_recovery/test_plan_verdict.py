@@ -270,3 +270,24 @@ def test_a_sequential_scan_of_the_table_is_reported(node_type: str) -> None:
 def test_a_read_that_never_scans_the_table_says_nothing_about_it() -> None:
     with pytest.raises(AssertionError, match="never scanned 'shop_examplework'"):
         read_cost({"Node Type": "Result"}, table=_TABLE)
+
+
+def test_a_named_partial_index_does_not_excuse_rows_its_bitmap_hands_to_a_filter() -> None:
+    """
+    Naming a partial index vouches for its own predicate, not for a Filter above it.
+
+    ``(id) WHERE status IS NOT NULL`` is a valid partial index, and holds for every
+    settled row too: its bitmap reads the whole history, and the heap node discards it.
+    """
+    plan = {
+        "Node Type": "Bitmap Heap Scan",
+        "Relation Name": _TABLE,
+        "Recheck Cond": "(status IS NOT NULL)",
+        "Filter": "((status = ANY ('{requested,running}')) AND (updated_at <= $1))",
+        "Rows Removed by Filter": 2000,
+        "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "weak_partial_ix"}],
+    }
+    with pytest.raises(AssertionError, match="weak_partial_ix.*its heap scan still filters"):
+        assert_plan_is_index_served(
+            name="weak partial bitmap", plan=plan, table=_TABLE, predicate_indexes=frozenset({"weak_partial_ix"})
+        )
