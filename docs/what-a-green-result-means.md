@@ -69,9 +69,10 @@ notification lost. Five proofs run against a fresh example each:
   that re-checks the blocker without executing anything;
 - the gate describes the contract sweep's own recovery: the sweep's selection
   leaves the blocked work out and takes it in once eligible, and during
-  `recover` the sweep's `dispatched_ids` (the recorder of what its tick
-  dispatched, which the contract sweep must declare) records the gate's
-  identity. What is observed is the dispatch, not which code ran where, so a tick
+  `recover` the sweep's `dispatched_ids` (the recorder of what its dispatch
+  path sent, which the contract sweep must declare) records the gate's identity
+  once more; a readiness notification sent through the same path earlier does
+  not count against it. What is observed is the dispatch, not which code ran where, so a tick
   reached through a service, a task queue or another thread counts alike. The
   gate's `identity` is what the sweep's `identity_of` reports for the same row.
 

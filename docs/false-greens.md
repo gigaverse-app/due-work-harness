@@ -67,7 +67,7 @@ proof green, the proof was about to tell you something.
 | **The fallback on the wrong side of its boundary** | the periodic inspection fires a second early, never fires, fires on every run because inspecting does not move its next inspection, re-arms after one second instead of `recheck_after`, or happens once and never again | `recheck_after` is probed one `clock_resolution` (at most 1s, at most a tenth of `recheck_after`) before and at the boundary by moving a clock; from the first inspection, nothing may run before the boundary and the next inspection must happen within the recovery timeout; a second run without time passing must not inspect again |
 | **The fallback that runs the blocked work** | the periodic inspection calls the provider, completes the work or drops it while it is still blocked; "it inspected" is all that was checked | at each inspection, provider calls, product state and the owed obligation must be unchanged; with `inspections` declared, executions too |
 | **The counterfeit around the verdict** | a test-written `owed_work` that always reports the obligation, or a `make_eligible` that flips a flag instead of running production's transition | both are held to the production-binding guard, with `due_work`, the routes and `recover` |
-| **The gate beside the sweep** | a gate whose `recover` invokes the worker directly and whose `due_work` is some other query: every eligibility proof passes while the sweep never releases the work | the contract sweep's selection must agree with the gate on the blocked and eligible work, and the sweep's `dispatched_ids` must record the gate's identity while `recover` runs, and not before |
+| **The gate beside the sweep** | a gate whose `recover` invokes the worker directly and whose `due_work` is some other query: every eligibility proof passes while the sweep never releases the work | the contract sweep's selection must agree with the gate on the blocked and eligible work, and the sweep's `dispatched_ids` must record the gate's identity more times after `recover` than before |
 
 ## Observations that cannot fail
 
@@ -77,6 +77,11 @@ proof green, the proof was about to tell you something.
   green history ask what a run that lost the work would have shown.
 
 ## What only a reviewer can refuse
+
+- **Another sender on the sweep's dispatch path.** The sweep tie observes the
+  dispatch path the sweep's `dispatched_ids` records, not the tick itself. A
+  recovery that sends the gate's work through that path some other way (another
+  sweep's tick, the path called without the tick) passes it.
 
 - **A production reference that is not load-bearing.** The delegation tripwire
   proves a binding reaches production, not that production does the work. A

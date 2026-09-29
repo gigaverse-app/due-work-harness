@@ -16,6 +16,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
+import pydantic
 import pytest
 
 from due_work_harness.models import DueWorkContractDesignError
@@ -97,6 +98,18 @@ def test_a_fallback_a_second_early_is_caught_at_the_largest_resolution_allowed()
     reference = GateReference(fault="early_fallback", clock_resolution=timedelta(seconds=1))
     with pytest.raises(AssertionError, match="due before recheck_after has passed"):
         assert_periodic_inspection_is_bounded(reference.binding())
+
+
+def test_a_first_inspection_armed_late_is_named_as_such() -> None:
+    # Only the re-inspection may come later than recheck_after; the first is measured from admission.
+    reference = GateReference(rearm_delay=timedelta(seconds=7), next_inspection=timedelta(seconds=37))
+    with pytest.raises(AssertionError, match="the first inspection is armed later than recheck_after"):
+        assert_periodic_inspection_is_bounded(reference.binding())
+
+
+def test_a_misspelled_fault_is_refused_rather_than_conforming() -> None:
+    with pytest.raises(pydantic.ValidationError, match="fault"):
+        GateReference(fault="hot-loop")  # type: ignore[arg-type]
 
 
 def test_a_coarse_clock_needs_its_resolution_declared() -> None:
@@ -209,6 +222,33 @@ def test_a_gate_whose_recovery_bypasses_the_sweeps_dispatch_is_refused(path: str
     gate = reference.binding().model_copy(update={"recover": recover})
     with pytest.raises(AssertionError, match="recover never dispatched 'obligation' through the contract sweep"):
         assert_gate_is_recovered_by_the_contract_sweep(gate, reference.sweep())
+
+
+class _NotifyingThroughTheDispatchPath(GateReference):
+    """Readiness is published through the same dispatch path the sweep's recorder watches, and then lost."""
+
+    sent: list[str] = []
+
+    def tick(self) -> int:
+        due = self.due()
+        self.sent.extend(due)
+        for _ in due:
+            self.execute()
+        return len(due)
+
+    def make_eligible(self) -> None:
+        super().make_eligible()
+        self.sent.append("obligation")  # the readiness notification, which the broker loses
+
+
+def test_a_readiness_notification_sent_through_the_recorded_path_does_not_fail_the_tie() -> None:
+    # The recorder already holds the identity before recovery runs; what counts is that recovery adds to it.
+    reference = _NotifyingThroughTheDispatchPath()
+    gate = reference.binding().model_copy(update={"recover": reference.tick})
+    sweep = reference.sweep().model_copy(
+        update={"dispatched_ids": lambda: list(reference.sent), "run_tick": reference.tick}
+    )
+    assert_gate_is_recovered_by_the_contract_sweep(gate, sweep)
 
 
 def test_a_sweep_that_records_no_dispatches_cannot_be_tied_to_a_gate() -> None:

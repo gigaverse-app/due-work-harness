@@ -31,6 +31,7 @@ Never bind this in an adopter.
 """
 
 from datetime import timedelta
+from typing import Literal
 
 from due_work_harness.helpers import undeclared
 from due_work_harness.models import MutableHarnessModel
@@ -39,11 +40,32 @@ from due_work_harness.profiles.execution_eligibility import ExecutionGate
 
 _INSPECTION = timedelta(seconds=30)
 
+#: Every fault the reference can inject; a misspelled one is refused, not silently conforming.
+Fault = Literal[
+    "",
+    "hidden_write",
+    "lost_intent",
+    "mutated_intent",
+    "blocked_execution",
+    "reset_on_readiness",
+    "no_recovery",
+    "fake_completion",
+    "no_fallback",
+    "early_fallback",
+    "hot_loop",
+    "short_rearm",
+    "one_shot_fallback",
+    "runs_at_inspection",
+    "completes_at_inspection",
+    "drops_at_inspection",
+    "executes_at_inspection",
+]
+
 
 class GateReference(MutableHarnessModel):
     """One blocked obligation and the scheduler that releases it, with an optional injected fault."""
 
-    fault: str = ""
+    fault: Fault = ""
     recheck_after: timedelta | None = _INSPECTION
     separate_inspections: bool = False
     whole_seconds: bool = False

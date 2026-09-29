@@ -277,8 +277,9 @@ def assert_periodic_inspection_is_bounded(gate: ExecutionGate) -> None:
     _not_before_the_boundary(gate, gate.recheck_after, "from admission")
     gate.advance(gate.clock_resolution)
     assert gate.identity in gate.due_work(), (
-        f"{gate.name}: periodic inspection never becomes due once recheck_after has passed from admission. A "
-        f"clock coarser than {gate.clock_resolution} declares its clock_resolution"
+        f"{gate.name}: periodic inspection never becomes due once recheck_after has passed from admission: the "
+        f"first inspection is armed later than recheck_after, or never, or the clock moves in steps coarser than "
+        f"the declared clock_resolution ({gate.clock_resolution})"
     )
     _inspection_leaves_the_work_blocked(gate, _inspecting(gate, lambda: gate.recover()))
     _not_before_the_boundary(gate, gate.recheck_after, "since the last inspection")
@@ -350,12 +351,15 @@ def assert_gate_is_recovered_by_the_contract_sweep(gate: ExecutionGate, sweep: D
     they would all pass while the sweep that profile A proves never releases the
     work. So the sweep's own selection (compared through its ``identity_of``) must
     leave the blocked work out and take it in once eligible, and ``gate.recover``
-    must make the sweep's dispatch path send it: the gate's identity must appear
-    in the sweep's ``dispatched_ids``, the recorder of what its tick dispatched,
-    during ``gate.recover`` and not before. What is observed is the dispatch, not
-    which code ran where, so a tick reached through a service, a module attribute,
-    a task queue or another thread is recognised alike; a recovery that calls the
-    sweep's dispatch path without its tick would pass, and is for review.
+    must make the sweep's dispatch path send it: the number of times the gate's
+    identity appears in the sweep's ``dispatched_ids``, the recorder of what its
+    dispatch path sent, must rise while ``gate.recover`` runs. A readiness
+    notification sent through the same path before recovery (and then lost)
+    changes nothing. What is observed is the dispatch, not which code ran where,
+    so a tick reached through a service, a module attribute, a task queue or
+    another thread is recognised alike. Anything else that sends through the same
+    recorded path during recovery (another sweep's tick, the path called without
+    the tick) passes too; that residual is for review.
     """
     assert sweep.dispatched_ids is not None, (
         f"{gate.name}: the contract sweep {sweep.name!r} declares no dispatched_ids, so nothing shows whether "
@@ -371,12 +375,9 @@ def assert_gate_is_recovered_by_the_contract_sweep(gate: ExecutionGate, sweep: D
         f"{gate.name}: eligible work is absent from the contract sweep's selection: the gate describes another "
         f"selection than the one {sweep.name!r} recovers"
     )
-    assert gate.identity not in sweep.dispatched_ids(), (
-        f"{gate.name}: the contract sweep recorded {gate.identity!r} as dispatched before the gate's recovery ran, "
-        f"so its recovery cannot be told from an earlier one"
-    )
+    before = list(sweep.dispatched_ids()).count(gate.identity)
     gate.recover()
-    assert gate.identity in sweep.dispatched_ids(), (
+    assert list(sweep.dispatched_ids()).count(gate.identity) > before, (
         f"{gate.name}: recover never dispatched {gate.identity!r} through the contract sweep {sweep.name!r}. Bind "
         f"the recovery that runs the sweep, not another path to the same worker"
     )
