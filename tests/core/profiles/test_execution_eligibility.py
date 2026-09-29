@@ -29,7 +29,7 @@ from due_work_harness.profiles.execution_eligibility import (
     assert_gate_is_recovered_by_the_contract_sweep,
     assert_periodic_inspection_is_bounded,
 )
-from due_work_harness.references.eligibility import GateReference
+from due_work_harness.references.eligibility import Fault, GateReference
 
 
 @pytest.mark.parametrize("proof", ELIGIBILITY_PROOFS, ids=lambda proof: proof.__name__)
@@ -75,7 +75,7 @@ def test_every_proof_accepts_the_independent_scheduler(
     ],
 )
 def test_each_fault_fails_with_the_message_of_the_check_that_catches_it(
-    fault: str, proof: Callable[[ExecutionGate], None], message: str
+    fault: Fault, proof: Callable[[ExecutionGate], None], message: str
 ) -> None:
     with pytest.raises(AssertionError, match=message):
         proof(GateReference(fault=fault).binding())

@@ -612,6 +612,67 @@ def test_a_detect_that_re_raises_only_on_some_paths_is_refused() -> None:
         )
 
 
+def _returning_from_finally_detect() -> None:
+    try:
+        assert_the_reference_capability_exists()
+    finally:
+        return  # noqa: B012 - the swallow under test
+
+
+def _re_raising_then_returning_from_finally_detect() -> None:
+    try:
+        try:
+            assert_the_reference_capability_exists()
+        except AssertionError:
+            raise
+    finally:
+        return  # noqa: B012 - swallows the re-raised assertion
+
+
+def _breaking_out_of_finally_detect() -> None:
+    for _ in range(1):
+        try:
+            assert_the_reference_capability_exists()
+        except AssertionError:
+            raise
+        finally:
+            break  # noqa: B012
+
+
+@pytest.mark.parametrize(
+    "detect",
+    [_returning_from_finally_detect, _re_raising_then_returning_from_finally_detect, _breaking_out_of_finally_detect],
+    ids=["return", "re-raise-then-return", "break"],
+)
+def test_a_detect_that_leaves_a_finally_block_early_is_refused(detect: Any) -> None:
+    # Leaving a finally by return, break or continue discards whatever exception was propagating, assertions too.
+    with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*finally"):
+        _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=detect)))
+
+
+def _cleaning_up_in_finally_detect() -> None:
+    cleaned: list[int] = []
+    try:
+        assert_the_reference_capability_exists()
+    finally:
+        for item in range(3):
+            if item:
+                break  # leaves the loop inside the finally, not the finally
+        cleaned.append(1)
+
+        def later() -> int:
+            return len(cleaned)  # a return in a nested function leaves nothing
+
+        later()
+
+
+def test_a_detect_whose_finally_only_cleans_up_is_accepted() -> None:
+    _contract(
+        adoption=Adoption.LEGACY,
+        profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=_cleaning_up_in_finally_detect)),
+    )
+
+
 def test_a_detect_whose_own_asserts_pytest_rewrote_is_accepted() -> None:
     assert "AssertionError" in _arranging_detect.__code__.co_names, "this module's asserts are rewritten by pytest"
     _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=_arranging_detect)))
