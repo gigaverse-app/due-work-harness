@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/gigaverse-app/due-work-harness/compare/v0.5.1...v0.5.2) (2026-09-29)
+
+
+### Documentation
+
+* the upstream playbook and a skill, for repeating the find-and-disclose cycle ([#21](https://github.com/gigaverse-app/due-work-harness/issues/21)) ([9cc0639](https://github.com/gigaverse-app/due-work-harness/commit/9cc06397d36ca53c15bfb06a11cb6e12f3b5f7cb))
+
 ## [0.5.1](https://github.com/gigaverse-app/due-work-harness/compare/v0.5.0...v0.5.1) (2026-09-29)
 
 
