@@ -222,6 +222,12 @@ declaration counts only if pytest would actually run it, and
 `pytest --due-work-verify` then checks that it did. An existing project adopts
 with a baseline that only shrinks.
 
+`uv run due-work-harness in-transaction` lists the handoffs made inside `transaction.atomic()`,
+where the worker can run before the commit (and find no row) or after a rollback (and find a row that
+never was). `on_commit` and Celery's `*_on_commit` variants wait for the commit and are not reported.
+It is lexical, so a handoff in a function the block calls is not seen; each line is a place to write a
+contract first, not a verdict.
+
 In GitHub Actions, `gigaverse-app/due-work-harness/check@v0` runs the scan and
 `gigaverse-app/due-work-harness/test@v0` runs the generated suites (every
 generated case carries the `due_work` mark). The path from install to CI is in

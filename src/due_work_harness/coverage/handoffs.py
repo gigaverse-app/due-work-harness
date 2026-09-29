@@ -8,7 +8,8 @@ each handoff reference against the function that contains it.
 
 import ast
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 
 from due_work_harness.coverage.config import CoverageConfig
 from due_work_harness.coverage.project import (
@@ -84,6 +85,16 @@ def _is_self(expression: ast.expr) -> bool:
     return isinstance(expression, ast.Name) and expression.id == "self"
 
 
+#: Django's transaction block, however imported: ``transaction.atomic``, ``from django.db.transaction import atomic``.
+ATOMIC = "django.db.transaction.atomic"
+
+
+def _publishes_after_commit(kind: str, node: ast.expr) -> bool:
+    """``on_commit`` and Celery's ``*_on_commit`` variants wait for the commit; every other handoff does not."""
+    name = terminal_name(node) or ""
+    return kind == "django" or name.endswith("_on_commit")
+
+
 class _Scope:
     def __init__(self, name: str, function: bool) -> None:
         self.name = name
@@ -126,6 +137,8 @@ class _Sites(ast.NodeVisitor):
             self.self_handoffs.update(seed.self_handoffs)
             self.self_clients.update(seed.self_clients)
         self.scopes: list[_Scope] = [top]
+        #: Depth of ``atomic`` blocks around the node being visited, in the current function.
+        self.atomic = 0
         self.found: dict[str, list[Site]] = defaultdict(list)
 
     # Resolution
@@ -232,7 +245,38 @@ class _Sites(ast.NodeVisitor):
         return f"{self.module.name}.{MODULE_LEVEL}"
 
     def _record(self, kind: str, node: ast.expr) -> None:
-        self.found[self._owner()].append(Site(kind=kind, path=self.module.relative, line=node.lineno))
+        in_transaction = self.atomic > 0 and not _publishes_after_commit(kind, node)
+        self.found[self._owner()].append(
+            Site(kind=kind, path=self.module.relative, line=node.lineno, in_transaction=in_transaction)
+        )
+
+    def _is_atomic(self, expression: ast.expr) -> bool:
+        """``transaction.atomic``, ``atomic(using=...)``: the transaction block, as a decorator or a context."""
+        return self._resolve(expression.func if isinstance(expression, ast.Call) else expression) == ATOMIC
+
+    @contextmanager
+    def _outside_the_block(self, *, atomic: bool = False) -> Iterator[None]:
+        """Visit code that is defined here but does not run here: a callback runs after the block ends."""
+        enclosing, self.atomic = self.atomic, int(atomic)
+        try:
+            yield
+        finally:
+            self.atomic = enclosing
+
+    def _with(self, node: ast.With | ast.AsyncWith) -> None:
+        entered = sum(self._is_atomic(item.context_expr) for item in node.items)
+        for item in node.items:
+            self.visit(item)
+        self.atomic += entered
+        for statement in node.body:
+            self.visit(statement)
+        self.atomic -= entered
+
+    visit_With = visit_AsyncWith = _with
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        with self._outside_the_block():
+            self.generic_visit(node)
 
     # Scopes and bindings
 
@@ -256,8 +300,10 @@ class _Sites(ast.NodeVisitor):
             else:
                 scope.handoffs[argument.arg] = kind
         self.scopes.append(scope)
-        for statement in node.body:
-            self.visit(statement)
+        # A decorated function runs entirely inside its transaction; a function defined inside a block does not.
+        with self._outside_the_block(atomic=any(self._is_atomic(decorator) for decorator in node.decorator_list)):
+            for statement in node.body:
+                self.visit(statement)
         self.scopes.pop()
 
     visit_FunctionDef = visit_AsyncFunctionDef = _function
@@ -372,3 +418,21 @@ def production_sites(config: CoverageConfig) -> dict[str, list[Site]]:
     """Every handoff site in production, by the qualified name of the function that makes it."""
     project = Project(config)
     return sites_by_function(project, kinds_for(project.frameworks, config.kinds))
+
+
+def sites_in_transaction(config: CoverageConfig) -> dict[str, list[Site]]:
+    """
+    The handoffs production makes inside a ``transaction.atomic()`` block, by function.
+
+    A message published there can be consumed before the block commits (the worker
+    finds no row) or outlive a rollback (the worker finds a row that never was).
+    ``transaction.on_commit`` and Celery's ``*_on_commit`` variants wait for the
+    commit and are not reported. The scan is lexical: a handoff in a function
+    that an atomic block calls, or in an ``ATOMIC_REQUESTS`` request, is not seen,
+    and a callback defined inside the block is taken to run after it.
+    """
+    inside = {
+        qualified: [site for site in sites if site.in_transaction]
+        for qualified, sites in production_sites(config).items()
+    }
+    return {qualified: sites for qualified, sites in inside.items() if sites}

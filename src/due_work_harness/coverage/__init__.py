@@ -24,6 +24,7 @@ from due_work_harness.coverage.scan import (
     baseline_growth,
     production_sites,
     scan,
+    sites_in_transaction,
     unaccounted_baseline,
 )
 from due_work_harness.coverage.sites import BUILT_IN, SiteKind, kinds_for
@@ -49,5 +50,6 @@ __all__ = [
     "load_config",
     "production_sites",
     "scan",
+    "sites_in_transaction",
     "unaccounted_baseline",
 ]

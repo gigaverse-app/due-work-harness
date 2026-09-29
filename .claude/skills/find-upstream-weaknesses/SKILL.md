@@ -38,7 +38,8 @@ Work in a scratch directory, not in a checkout that matters. Track the steps as 
    pick one and say why; ask only if the choice needs the user's judgement (policy, risk to a relationship).
 2. **Set up.** Fork and clone; put Postgres/Redis in containers the way their CI does; **run their
    unmodified suite first** so a red baseline is known before it is blamed on you.
-3. **Map.** Run the prompt in
+3. **Map.** `due-work-harness sites` and `due-work-harness in-transaction` list the candidates first
+   (a throwaway `[tool.due-work-harness]` table in the fork is enough). Then run the prompt in
    [map-the-handoffs.md](../../../docs/upstream-templates/map-the-handoffs.md) through an agent (fill the
    placeholders from the scan). Keep the result as ranked hypotheses.
 4. **Adopt in the fork.** A branch such as `test/<what-breaks>`, a `tests/due_work/` directory named the way

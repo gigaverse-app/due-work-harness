@@ -4,13 +4,16 @@
     due-work-harness check [--root DIR] [--base-ref REF]
     due-work-harness sites [--root DIR]
     due-work-harness baseline [--root DIR]
+    due-work-harness in-transaction [--root DIR]
 
 ``check`` exits 1 on any problem. With ``--base-ref`` it also refuses baseline
 entries added, or whose count grew, since that git ref: the baseline records
 sites that predate adoption, and it only shrinks. ``sites`` prints the inventory with each site's
 disposition. ``baseline`` prints a ``[tool.due-work-harness.baseline]`` table for
 the currently unaccounted sites, the starting point when adopting the harness in
-an existing project.
+an existing project. ``in-transaction`` lists the handoffs made inside
+``transaction.atomic()``, where a worker can run before the commit or after a
+rollback, and exits 1 if there are any: the places to write a contract first.
 """
 
 import argparse
@@ -20,7 +23,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from due_work_harness.coverage.config import baseline_from, load_config
-from due_work_harness.coverage.scan import baseline_growth, scan, unaccounted_baseline
+from due_work_harness.coverage.scan import baseline_growth, scan, sites_in_transaction, unaccounted_baseline
 
 
 class MissingBaseRef(ValueError):
@@ -89,6 +92,22 @@ def _baseline(root: Path) -> int:
     return 0
 
 
+def _in_transaction(root: Path) -> int:
+    found = sites_in_transaction(load_config(root))
+    for qualified in sorted(found):
+        for site in found[qualified]:
+            print(f"{site.path}:{site.line}\t{site.kind}\t{qualified}")
+    count = sum(len(sites) for sites in found.values())
+    if not count:
+        print("due-work-harness: no handoff inside transaction.atomic()")
+        return 0
+    print(
+        f"due-work-harness: {count} handoff(s) inside transaction.atomic() in {len(found)} function(s); "
+        f"the work can start before the commit or outlive a rollback"
+    )
+    return 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="due-work-harness", description=__doc__.split("\n\n")[0].strip())
     commands = parser.add_subparsers(dest="command", required=True)
@@ -96,6 +115,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ("check", "fail unless every handoff site has exactly one disposition"),
         ("sites", "list every handoff site and its disposition"),
         ("baseline", "print a baseline table for the currently unaccounted sites"),
+        ("in-transaction", "list handoffs made inside transaction.atomic(); exit 1 if any"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--root", type=Path, default=Path("."), help="the project directory (default: .)")
@@ -107,6 +127,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _check(arguments.root, arguments.base_ref)
         if arguments.command == "sites":
             return _sites(arguments.root)
+        if arguments.command == "in-transaction":
+            return _in_transaction(arguments.root)
         return _baseline(arguments.root)
     except ValueError as error:
         print(f"due-work-harness: {error}", file=sys.stderr)
