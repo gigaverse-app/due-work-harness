@@ -21,6 +21,9 @@ from due_work_harness.integrations.django.commands import management_command
 
 COMMAND = "remove_stale_contenttypes"
 
+#: Each ``handle`` call of the recorded production command: its options, and the time the application saw.
+Runs = list[tuple[dict[str, Any], datetime]]
+
 
 class CommandDefinedInATest(BaseCommand):
     """Defined in a test module, so recovery built from it would certify nothing."""
@@ -30,9 +33,9 @@ class CommandDefinedInATest(BaseCommand):
 
 
 @pytest.fixture
-def runs() -> Iterator[list[tuple[dict[str, Any], datetime]]]:
+def runs() -> Iterator[Runs]:
     configure(django_host(production_packages={"contenttypes"}))
-    recorded: list[tuple[dict[str, Any], datetime]] = []
+    recorded: Runs = []
 
     def handle(command: Command, *args: Any, **options: Any) -> None:
         recorded.append((options, now()))
@@ -41,14 +44,14 @@ def runs() -> Iterator[list[tuple[dict[str, Any], datetime]]]:
         yield recorded
 
 
-def test_runs_the_projects_command_with_its_options(runs: list[tuple[dict[str, Any], datetime]]) -> None:
+def test_runs_the_projects_command_with_its_options(runs: Runs) -> None:
     management_command(COMMAND, verbosity=0)()
 
     ((options, _),) = runs
     assert options["verbosity"] == 0
 
 
-def test_after_runs_the_command_later_on_the_hosts_frozen_clock(runs: list[tuple[dict[str, Any], datetime]]) -> None:
+def test_after_runs_the_command_later_on_the_hosts_frozen_clock(runs: Runs) -> None:
     before = now()
 
     management_command(COMMAND, after=timedelta(days=30))()
@@ -58,12 +61,12 @@ def test_after_runs_the_command_later_on_the_hosts_frozen_clock(runs: list[tuple
     assert now() - before < timedelta(days=1), "the clock is restored afterwards"
 
 
-def test_an_unknown_command_names_the_ones_that_exist(runs: list[tuple[dict[str, Any], datetime]]) -> None:
+def test_an_unknown_command_names_the_ones_that_exist(runs: Runs) -> None:
     with pytest.raises(AssertionError, match=rf"no management command 'missing'.*'{COMMAND}'"):
         management_command("missing")()
 
 
-def test_a_command_defined_in_test_code_is_refused_as_recovery(runs: list[tuple[dict[str, Any], datetime]]) -> None:
+def test_a_command_defined_in_test_code_is_refused_as_recovery(runs: Runs) -> None:
     with mock.patch(
         "due_work_harness.integrations.django.commands.get_commands", return_value={"mine": CommandDefinedInATest()}
     ):

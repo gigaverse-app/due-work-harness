@@ -19,6 +19,8 @@ import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
+from due_work_harness.models import HarnessModel
+
 if TYPE_CHECKING:
     from due_work_harness.crash_histories import Findings
 
@@ -52,43 +54,54 @@ def stop_recording() -> None:
     _recorder = None
 
 
+#: Labels are folded into a comprehension only from this many in a row; two are clearer written out.
+MIN_FOLDED = 3
+
 _NUMBERED = re.compile(r"^(?P<prefix>.*?)(?P<number>\d+)(?P<suffix>\D*)$")
 
 
-def _folded(labels: list[str]) -> Iterator[tuple[str, tuple[str, int, int] | None]]:
-    """Group labels differing only by one number into runs of three or more; the rest stay single."""
-    index = 0
-    while index < len(labels):
-        match = _NUMBERED.match(labels[index])
-        if match is None:
-            yield labels[index], None
-            index += 1
-            continue
-        prefix, suffix = match["prefix"], match["suffix"]
-        start = int(match["number"])
-        end = start
-        while index + (end - start) + 1 < len(labels):
-            following = _NUMBERED.match(labels[index + (end - start) + 1])
-            if not (
-                following
-                and following["prefix"] == prefix
-                and following["suffix"] == suffix
-                and int(following["number"]) == end + 1
-            ):
-                break
-            end += 1
-        if end - start >= 2:
-            yield labels[index], (_template(prefix, suffix), start, end)
-            index += end - start + 1
-        else:
-            yield labels[index], None
-            index += 1
+class NumberedRun(HarnessModel):
+    """Consecutive labels that differ only by one number: ``worker died after commit 1`` to ``8``."""
+
+    #: The label with the number as ``{k}``, braces of the label itself escaped, ready for an f-string.
+    template: str
+    first: int
+    last: int
+
+
+def _split(label: str) -> tuple[str, int, str] | None:
+    """The label as (text before its last number, the number, text after it), or None without a number."""
+    match = _NUMBERED.match(label)
+    return (match["prefix"], int(match["number"]), match["suffix"]) if match else None
+
+
+def _run_length(labels: list[str], index: int, parts: tuple[str, int, str]) -> int:
+    """How many labels from ``index`` are the same label with its number going up by one each time."""
+    prefix, number, suffix = parts
+    length = 1
+    while index + length < len(labels) and _split(labels[index + length]) == (prefix, number + length, suffix):
+        length += 1
+    return length
 
 
 def _template(prefix: str, suffix: str) -> str:
-    """The label with its number as ``{k}``; braces in the label itself are escaped for the f-string."""
     escaped = (part.replace("{", "{{").replace("}", "}}") for part in (prefix, suffix))
     return "{k}".join(escaped)
+
+
+def _folded(labels: list[str]) -> Iterator[str | NumberedRun]:
+    """The labels in order, each run of :data:`MIN_FOLDED` or more numbered ones replaced by one ``NumberedRun``."""
+    index = 0
+    while index < len(labels):
+        parts = _split(labels[index])
+        length = _run_length(labels, index, parts) if parts else 1
+        if parts and length >= MIN_FOLDED:
+            prefix, number, suffix = parts
+            yield NumberedRun(template=_template(prefix, suffix), first=number, last=number + length - 1)
+        else:
+            length = 1
+            yield labels[index]
+        index += length
 
 
 def findings_literal(findings: "Findings") -> str:
@@ -99,12 +112,12 @@ def findings_literal(findings: "Findings") -> str:
     lines = ["Findings(", f"    {findings.delivered!r},", "    {"]
     for outcome, labels in by_outcome.items():
         lines.append(f"        # {len(labels)} run(s) reach this")
-        for label, run in _folded(labels):
-            if run is None:
-                lines.append(f"        {label!r}: {outcome},")
+        for item in _folded(labels):
+            if isinstance(item, NumberedRun):
+                comprehension = f"f{item.template!r}: {outcome} for k in range({item.first}, {item.last + 1})"
+                lines.append(f"        **{{{comprehension}}},")
             else:
-                template, start, end = run
-                lines.append(f"        **{{f{template!r}: {outcome} for k in range({start}, {end + 1})}},")
+                lines.append(f"        {item!r}: {outcome},")
     lines += ["    },", ")"]
     return "\n".join(lines)
 

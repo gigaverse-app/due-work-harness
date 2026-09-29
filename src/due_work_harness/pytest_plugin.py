@@ -42,24 +42,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "the attribute may be a Host or a zero-argument callable returning one.",
         default="",
     )
-    parser.getgroup("due-work-harness").addoption(
-        VERIFY,
-        action="store_true",
-        default=False,
-        help="fail unless every contract and exemption suite the coverage scan counts ran at least one case",
-    )
-    parser.getgroup("due-work-harness").addoption(
-        RECORD,
-        action="store_true",
-        default=False,
-        help="print the Findings every history would pin, instead of checking the declared tables (run without -n)",
-    )
-    parser.getgroup("due-work-harness").addoption(
-        SUMMARY,
-        action="store_true",
-        default=False,
-        help="after the run, list every generated case by suite with its outcome, and each known gap's reason",
-    )
+    group = parser.getgroup("due-work-harness")
+    for flag, help_text in (
+        (VERIFY, "fail unless every contract and exemption suite the coverage scan counts ran at least one case"),
+        (
+            RECORD,
+            "print the Findings every history would pin, instead of checking the declared tables (run without -n)",
+        ),
+        (SUMMARY, "after the run, list every generated case by suite with its outcome, and each known gap's reason"),
+    ):
+        group.addoption(flag, action="store_true", default=False, help=help_text)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -68,12 +60,15 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     # Under xdist, the controller receives every worker's reports and holds the verdict; a worker
     # sees only its share, and would rescan the whole project at its own session's end for nothing.
-    if config.getoption(VERIFY) and not hasattr(config, "workerinput"):
+    worker = hasattr(config, "workerinput")
+    if config.getoption(VERIFY) and not worker:
         config.pluginmanager.register(_SuitesRan(config), VERIFY_PLUGIN)
-    if config.getoption(SUMMARY) and not hasattr(config, "workerinput"):
+    if config.getoption(SUMMARY) and not worker:
         config.pluginmanager.register(_Summary(), SUMMARY_PLUGIN)
     if config.getoption(RECORD):
-        if config.getoption("numprocesses", default=None) or hasattr(config, "workerinput"):
+        # Histories run in the process that owns the database; under xdist that is a worker, whose
+        # recorder the controller never sees, so recording would silently print nothing.
+        if worker or config.getoption("numprocesses", default=None):
             raise pytest.UsageError(f"{RECORD} records in the process that runs the histories: run without -n")
         config.pluginmanager.register(_Recording(), RECORD_PLUGIN)
     path = config.getini("due_work_harness_host")

@@ -20,7 +20,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
-from django.core.management import call_command, get_commands, load_command_class
+from django.core.management import BaseCommand, call_command, get_commands, load_command_class
 from django.utils.timezone import now
 
 from due_work_harness.binding import is_production_value
@@ -44,21 +44,31 @@ def management_command(
     """
 
     def run(*_given: object) -> None:
-        commands = get_commands()
-        assert name in commands, f"no management command {name!r}; the project has {sorted(commands)}"
-        source = commands[name]
-        command = load_command_class(source, name) if isinstance(source, str) else source
-        assert is_production_value(type(command)), (
-            f"management command {name!r} is {type(command).__module__}.{type(command).__qualname__}, which is not "
-            f"in the host's production packages {sorted(production_packages())}: recovery must be production code"
-        )
+        command = _production_command(name)
         if after is None:
             call_command(command, *arguments, **options)
             return
+        # Cron running the command later: the application reads the later time, the test does not wait.
         with current_host().require("frozen_clock")(now() + after):
             call_command(command, *arguments, **options)
 
     return run
+
+
+def _production_command(name: str) -> BaseCommand:
+    """The command ``manage.py <name>`` would run, provided it is the project's own code."""
+    commands = get_commands()
+    assert name in commands, f"no management command {name!r}; the project has {sorted(commands)}"
+    # ``get_commands`` maps a name to its app's module path, or to a ready command instance.
+    source = commands[name]
+    command = load_command_class(source, name) if isinstance(source, str) else source
+    # The check the binding guard cannot make for us: it trusts this helper, so a command defined in a
+    # test app would pass as recovery unless the helper refuses it here.
+    assert is_production_value(type(command)), (
+        f"management command {name!r} is {type(command).__module__}.{type(command).__qualname__}, which is not "
+        f"in the host's production packages {sorted(production_packages())}: recovery must be production code"
+    )
+    return command
 
 
 __all__ = ["management_command"]
