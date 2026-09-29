@@ -71,6 +71,7 @@ by construction, so this is close to free for one — which is the point.
 """
 
 import threading
+import time
 from collections.abc import Callable
 from datetime import timedelta  # noqa: F401 - referenced in an annotation
 from typing import Any
@@ -576,6 +577,14 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
     releases it on exit, a barrier to force the overlap, and exceptions
     collected rather than swallowed.
 
+    A racer that has not returned when the race's time is up fails the proof.
+    A claim blocked on the other connection's uncommitted claim, or on a lock
+    nothing releases, is not a lost race: counting only the racer that came
+    back would find one winner and pass, where two workers in production would
+    deadlock or stall. Racers are daemon threads, so a hung one cannot keep the
+    test process alive; the host's ``connection_scope()`` is what bounds and
+    closes its connection.
+
     The test must run with real commits — see the host's
     ``database_marks(True)``; inside a test-wrapping transaction the racer
     threads cannot see the row.
@@ -599,12 +608,21 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
                 with lock:
                     errors.append(error)
 
-    threads = [threading.Thread(target=racer, name=f"claim-racer-{i}") for i in range(2)]
+    threads = [threading.Thread(target=racer, name=f"claim-racer-{i}", daemon=True) for i in range(2)]
     for thread in threads:
         thread.start()
+    deadline = time.monotonic() + timeout * 2
     for thread in threads:
-        thread.join(timeout=timeout * 2)
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
+    hung = [thread.name for thread in threads if thread.is_alive()]
+    assert not hung, (
+        f"{ownership.name}: {', '.join(hung)} had not returned {timeout * 2:g}s after the race began "
+        f"({len(claims)} of 2 claims returned, {len(errors)} raised). A claim that does not return is "
+        f"blocked, not lost: on the other connection's uncommitted claim, or on a lock nothing releases. "
+        f"Two workers would deadlock or stall in production, and the racer that did return says nothing "
+        f"about exclusivity"
+    )
     assert not errors, (
         f"{ownership.name}: a racing claim raised instead of losing cleanly: "
         f"{errors!r}. Losing a claim race is an ordinary outcome and must "
