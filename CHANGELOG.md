@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.5.2...v0.6.0) (2026-09-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* `ExternalCall` seams now accept only plain results and coroutines. A seam whose call returns an async generator, a generator, an asyncio Task or Future, a `concurrent.futures.Future` or another non-coroutine awaitable raises `DueWorkContractDesignError` naming the seam; declare the coroutine method that performs the effect instead. `main` passed such a result through and counted the call when it returned. One function declared through overlapping owners is refused too. The Django commit observer now counts a `DO` block, and a zero-row `INSERT`/`UPDATE`/`DELETE`/`MERGE` whose trigger or predicate function writes, as commits: histories that pin `Findings` by commit number (`worker died after commit N`) may need re-recording.
+
+### Features
+
+* **coverage:** in-transaction lists handoffs made inside transaction.atomic() ([#26](https://github.com/gigaverse-app/due-work-harness/issues/26)) ([db152dc](https://github.com/gigaverse-app/due-work-harness/commit/db152dc54aec2e568d5b267fdfaab4a110095dce))
+* execution-eligibility profile and the backend's hardened write, seam and race proofs ([#28](https://github.com/gigaverse-app/due-work-harness/issues/28)) ([9c871c1](https://github.com/gigaverse-app/due-work-harness/commit/9c871c18eea897f308d3ccd3cbcb917541e1a217))
+* record findings, management_command recovery, clear PostgreSQL-only error ([#25](https://github.com/gigaverse-app/due-work-harness/issues/25)) ([9ccf4f4](https://github.com/gigaverse-app/due-work-harness/commit/9ccf4f43782abff5f29da82e812f64d3dec88061))
+
 ## [0.5.2](https://github.com/gigaverse-app/due-work-harness/compare/v0.5.1...v0.5.2) (2026-09-29)
 
 
