@@ -8,7 +8,8 @@ each handoff reference against the function that contains it.
 
 import ast
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 
 from due_work_harness.coverage.config import CoverageConfig
 from due_work_harness.coverage.project import (
@@ -84,6 +85,19 @@ def _is_self(expression: ast.expr) -> bool:
     return isinstance(expression, ast.Name) and expression.id == "self"
 
 
+#: Django's transaction block, however imported: ``transaction.atomic``, ``from django.db.transaction import atomic``.
+ATOMIC = "django.db.transaction.atomic"
+
+
+#: Kinds whose site is itself a deferral: ``on_commit``, and the project's forwarding helpers that call it.
+AFTER_COMMIT_KINDS = frozenset({"django", "bridge"})
+
+
+def _waits_for_the_commit(kind: str, node: ast.expr) -> bool:
+    """Whether this handoff reference is a deferral: ``on_commit``, a forwarding helper, or a ``*_on_commit`` method."""
+    return kind in AFTER_COMMIT_KINDS or (terminal_name(node) or "").endswith("_on_commit")
+
+
 class _Scope:
     def __init__(self, name: str, function: bool) -> None:
         self.name = name
@@ -126,6 +140,10 @@ class _Sites(ast.NodeVisitor):
             self.self_handoffs.update(seed.self_handoffs)
             self.self_clients.update(seed.self_clients)
         self.scopes: list[_Scope] = [top]
+        #: Depth of ``atomic`` blocks around the node being visited, in the current function.
+        self.atomic_depth = 0
+        #: Kinds whose queue can commit with the caller's data, so a handoff of that kind in a block is safe.
+        self.joining = {kind.name for kind in kinds if kind.can_join_transaction}
         self.found: dict[str, list[Site]] = defaultdict(list)
 
     # Resolution
@@ -232,7 +250,52 @@ class _Sites(ast.NodeVisitor):
         return f"{self.module.name}.{MODULE_LEVEL}"
 
     def _record(self, kind: str, node: ast.expr) -> None:
-        self.found[self._owner()].append(Site(kind=kind, path=self.module.relative, line=node.lineno))
+        self.found[self._owner()].append(
+            Site(
+                kind=kind, path=self.module.relative, line=node.lineno, in_transaction=self._in_transaction(kind, node)
+            )
+        )
+
+    def _in_transaction(self, kind: str, node: ast.expr) -> bool:
+        """
+        Whether the handoff can run before the block commits, or outlive its rollback.
+
+        This is the whole judgement behind ``due-work-harness in-transaction``: the reference sits inside an
+        ``atomic`` block, and it is not a deferral (``on_commit``) or a queue that commits with the block.
+        """
+        return self.atomic_depth > 0 and kind not in self.joining and not _waits_for_the_commit(kind, node)
+
+    def _is_atomic(self, expression: ast.expr) -> bool:
+        """``transaction.atomic``, ``atomic(using=...)``: the transaction block, as a decorator or a context."""
+        return self._resolve(expression.func if isinstance(expression, ast.Call) else expression) == ATOMIC
+
+    @contextmanager
+    def _outside_the_block(self, *, atomic: bool = False) -> Iterator[None]:
+        """
+        Visit code that is written here but does not run here: a callback, or what is handed to ``on_commit``.
+
+        A function decorated with ``atomic`` is the exception that runs inside its own transaction (``atomic=True``).
+        """
+        enclosing, self.atomic_depth = self.atomic_depth, int(atomic)
+        try:
+            yield
+        finally:
+            self.atomic_depth = enclosing
+
+    def _with(self, node: ast.With | ast.AsyncWith) -> None:
+        entered = sum(self._is_atomic(item.context_expr) for item in node.items)
+        for item in node.items:
+            self.visit(item)  # the context expressions run before the block is entered
+        self.atomic_depth += entered
+        for statement in node.body:
+            self.visit(statement)
+        self.atomic_depth -= entered
+
+    visit_With = visit_AsyncWith = _with
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        with self._outside_the_block():
+            self.generic_visit(node)
 
     # Scopes and bindings
 
@@ -256,8 +319,10 @@ class _Sites(ast.NodeVisitor):
             else:
                 scope.handoffs[argument.arg] = kind
         self.scopes.append(scope)
-        for statement in node.body:
-            self.visit(statement)
+        # A decorated function runs entirely inside its transaction; a function defined inside a block does not.
+        with self._outside_the_block(atomic=any(self._is_atomic(decorator) for decorator in node.decorator_list)):
+            for statement in node.body:
+                self.visit(statement)
         self.scopes.pop()
 
     visit_FunctionDef = visit_AsyncFunctionDef = _function
@@ -350,6 +415,13 @@ class _Sites(ast.NodeVisitor):
             ):
                 self._record(kind.name, node)
                 break
+        if self.kind_of(node.func) in AFTER_COMMIT_KINDS:
+            # ``on_commit(partial(task.delay, pk))``: what it is given runs after the block, not in it.
+            self.visit(node.func)
+            with self._outside_the_block():
+                for argument in (*node.args, *node.keywords):
+                    self.visit(argument)
+            return
         self.generic_visit(node)
 
 
@@ -372,3 +444,24 @@ def production_sites(config: CoverageConfig) -> dict[str, list[Site]]:
     """Every handoff site in production, by the qualified name of the function that makes it."""
     project = Project(config)
     return sites_by_function(project, kinds_for(project.frameworks, config.kinds))
+
+
+def sites_in_transaction(config: CoverageConfig) -> dict[str, list[Site]]:
+    """
+    The handoffs production makes inside a ``transaction.atomic()`` block, by function.
+
+    A message published there can be consumed before the block commits (the worker
+    finds no row) or outlive a rollback (the worker finds a row that never was).
+    ``transaction.on_commit`` (and what is passed to it, or to a configured
+    bridge) and Celery's ``*_on_commit`` variants wait for the commit and are not
+    reported; nor are queues that can be a table in the caller's own database
+    (Procrastinate's Django connector, django-tasks' database backend), where a
+    job deferred in the block commits with the data. The scan is lexical: a handoff in a function
+    that an atomic block calls, or in an ``ATOMIC_REQUESTS`` request, is not seen,
+    and a callback defined inside the block is taken to run after it.
+    """
+    inside = {
+        qualified: [site for site in sites if site.in_transaction]
+        for qualified, sites in production_sites(config).items()
+    }
+    return {qualified: sites for qualified, sites in inside.items() if sites}

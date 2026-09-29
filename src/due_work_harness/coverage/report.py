@@ -16,6 +16,8 @@ class Site(HarnessModel):
     kind: str
     path: str
     line: int
+    #: Made lexically inside ``transaction.atomic()``, where the work can start before the commit or outlive a rollback.
+    in_transaction: bool = False
 
 
 class Disposition(HarnessModel):

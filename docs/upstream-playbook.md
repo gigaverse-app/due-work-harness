@@ -62,6 +62,12 @@ commits together, what is published after the commit (`on_commit`, `.delay`, `ap
 **what recovers it if the process dies right after, or the broker refuses the publish**. The map that
 finds weaknesses is a recovery map: durable record, periodic recovery, none.
 
+Two commands give the agent a head start. `due-work-harness sites` lists every handoff with the function
+that makes it, and `due-work-harness in-transaction` lists the ones made inside `transaction.atomic()`,
+which a worker can run before the commit or after a rollback. Both are static and need a
+`[tool.due-work-harness]` table (a throwaway one in the fork is enough); a line is a candidate to
+read, not a finding, and the next step still confirms it.
+
 An agent does this well. [`upstream-templates/map-the-handoffs.md`](upstream-templates/map-the-handoffs.md)
 is the prompt: ranked candidates, each with the scenario, the code path, the visible cost, whether it is
 reported, and a sketch of a reproduction in their own test suite. Treat its output as hypotheses: the next
