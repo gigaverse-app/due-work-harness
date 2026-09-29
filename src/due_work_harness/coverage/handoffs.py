@@ -89,10 +89,13 @@ def _is_self(expression: ast.expr) -> bool:
 ATOMIC = "django.db.transaction.atomic"
 
 
+#: Kinds whose site is itself a deferral: ``on_commit``, and the project's forwarding helpers that call it.
+AFTER_COMMIT_KINDS = frozenset({"django", "bridge"})
+
+
 def _publishes_after_commit(kind: str, node: ast.expr) -> bool:
-    """``on_commit`` and Celery's ``*_on_commit`` variants wait for the commit; every other handoff does not."""
-    name = terminal_name(node) or ""
-    return kind == "django" or name.endswith("_on_commit")
+    """``on_commit``, a helper that forwards to it, and Celery's ``*_on_commit`` variants wait for the commit."""
+    return kind in AFTER_COMMIT_KINDS or (terminal_name(node) or "").endswith("_on_commit")
 
 
 class _Scope:
@@ -245,7 +248,8 @@ class _Sites(ast.NodeVisitor):
         return f"{self.module.name}.{MODULE_LEVEL}"
 
     def _record(self, kind: str, node: ast.expr) -> None:
-        in_transaction = self.atomic > 0 and not _publishes_after_commit(kind, node)
+        joins = any(known.can_join_transaction for known in self.kinds if known.name == kind)
+        in_transaction = self.atomic > 0 and not joins and not _publishes_after_commit(kind, node)
         self.found[self._owner()].append(
             Site(kind=kind, path=self.module.relative, line=node.lineno, in_transaction=in_transaction)
         )
@@ -396,6 +400,13 @@ class _Sites(ast.NodeVisitor):
             ):
                 self._record(kind.name, node)
                 break
+        if self.kind_of(node.func) in AFTER_COMMIT_KINDS:
+            # ``on_commit(partial(task.delay, pk))``: what it is given runs after the block, not in it.
+            self.visit(node.func)
+            with self._outside_the_block():
+                for argument in (*node.args, *node.keywords):
+                    self.visit(argument)
+            return
         self.generic_visit(node)
 
 
@@ -426,8 +437,11 @@ def sites_in_transaction(config: CoverageConfig) -> dict[str, list[Site]]:
 
     A message published there can be consumed before the block commits (the worker
     finds no row) or outlive a rollback (the worker finds a row that never was).
-    ``transaction.on_commit`` and Celery's ``*_on_commit`` variants wait for the
-    commit and are not reported. The scan is lexical: a handoff in a function
+    ``transaction.on_commit`` (and what is passed to it, or to a configured
+    bridge) and Celery's ``*_on_commit`` variants wait for the commit and are not
+    reported; nor are queues that can be a table in the caller's own database
+    (Procrastinate's Django connector, django-tasks' database backend), where a
+    job deferred in the block commits with the data. The scan is lexical: a handoff in a function
     that an atomic block calls, or in an ``ATOMIC_REQUESTS`` request, is not seen,
     and a callback defined inside the block is taken to run after it.
     """

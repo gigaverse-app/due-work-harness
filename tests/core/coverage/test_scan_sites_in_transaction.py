@@ -157,3 +157,75 @@ def test_the_command_lists_them_and_fails_only_when_there_are_some(
     )
     assert main(["in-transaction", "--root", str(tmp_path)]) == 0
     assert "no handoff inside transaction.atomic()" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "deferral",
+    [
+        "transaction.on_commit(partial(notify.delay, order.pk))",
+        "transaction.on_commit(notify.s(order.pk).delay)",
+        "send = notify.delay\n        transaction.on_commit(send)",
+    ],
+    ids=["partial", "signature", "alias"],
+)
+def test_a_handoff_passed_to_on_commit_runs_after_the_block(tmp_path: Path, deferral: str) -> None:
+    found = _found(
+        tmp_path,
+        f"""
+            from functools import partial
+            from django.db import transaction
+            from shop.tasks import notify
+
+            def place(order):
+                with transaction.atomic():
+                    {deferral}
+        """,
+    )
+    assert found == {}
+
+
+def test_a_handoff_passed_to_a_configured_bridge_runs_after_the_block(tmp_path: Path) -> None:
+    files = {
+        "shop/tasks.py": TASKS,
+        "shop/orders.py": """
+            from django.db import transaction
+            from shop.tasks import notify
+
+            class Orders:
+                def place(self, order):
+                    with transaction.atomic():
+                        self.after_commit(notify.delay, order.pk)
+        """,
+    }
+    found = sites_in_transaction(write_project(tmp_path, files, extra='bridge-methods = ["after_commit"]'))
+    assert found == {}
+
+
+def test_a_queue_that_can_be_a_table_in_the_callers_database_is_not_reported(tmp_path: Path) -> None:
+    files = {
+        "shop/tasks.py": "from django.tasks import task\n\n@task\ndef notify(order_id): ...\n",
+        "shop/orders.py": """
+            from django.db import transaction
+            from shop.tasks import notify
+
+            def place(order):
+                with transaction.atomic():
+                    notify.enqueue(order.pk)
+        """,
+    }
+    assert sites_in_transaction(write_project(tmp_path, files)) == {}
+
+
+def test_a_broker_that_cannot_join_the_transaction_is_reported(tmp_path: Path) -> None:
+    files = {
+        "shop/orders.py": """
+            import django_rq
+            from django.db import transaction
+
+            def place(order, send):
+                with transaction.atomic():
+                    django_rq.enqueue(send, order.pk)
+        """
+    }
+    found = sites_in_transaction(write_project(tmp_path, files))
+    assert list(found) == ["shop.orders.place"]
