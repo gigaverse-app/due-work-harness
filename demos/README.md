@@ -29,6 +29,9 @@ Each demo **adopts the harness the way a project does**:
 If upstream changes a demo, a strict xfail turns red and the write-up here must
 change with it.
 
+A new demo, or a report to the project a demo found something in, follows the
+[upstream playbook](../docs/upstream-playbook.md).
+
 Where the framework has a capability, the contract **claims** it and the harness
 proves it against the framework itself, through its integration
 (`due_work_harness.integrations.procrastinate`, `.dbos`); a decline or "not
