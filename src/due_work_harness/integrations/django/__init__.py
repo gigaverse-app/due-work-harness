@@ -26,6 +26,10 @@ What the host supplies:
 * ``publication_recorder`` — pass one for your queue (for example
   :func:`due_work_harness.integrations.celery.celery_publications`); without one,
   every ``Lifecycle`` must say why its worker publishes nothing.
+
+Beside the host, :mod:`~due_work_harness.integrations.django.lock_order` ships a recorder
+and a ``lock_order`` fixture that fail when two transactions lock the same tables in
+opposite orders, which deadlock only under concurrency.
 """
 
 import functools

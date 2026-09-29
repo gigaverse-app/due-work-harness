@@ -116,7 +116,8 @@ due_work_harness/
   references/eligibility.py an independent scheduler with ten injectable faults, for ExecutionGate's proofs
   integrations/
     django/    django_host(), worker killer, write classification,
-               QuerySet SelectionInspector, lifecycle-state proofs (2b/2c)
+               QuerySet SelectionInspector, lifecycle-state proofs (2b/2c),
+               lock_order (row-lock order per transaction; a cycle is a deadlock)
     celery.py  beat schedule evidence
     procrastinate.py  worker recovery, stalled-job arrangement, periodic evidence
     dbos.py    relaunch helper
