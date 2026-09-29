@@ -80,15 +80,27 @@ def execute_reporting_autocommit_write(
         result = execute(sql, params, many, context)
         return result, row_write(sql, context["cursor"]) is not None
     database = context["connection"].connection
-    database.execute("BEGIN")
+    _run(database, "BEGIN")
     try:
         result = execute(sql, params, many, context)
-        wrote = database.execute("SELECT pg_current_xact_id_if_assigned() IS NOT NULL").fetchone()[0]
+        (wrote,) = _run(database, "SELECT pg_current_xact_id_if_assigned() IS NOT NULL", fetch=True)
     except BaseException:
-        database.execute("ROLLBACK")
+        _run(database, "ROLLBACK")
         raise
-    database.execute("COMMIT")
+    _run(database, "COMMIT")
     return result, bool(wrote)
+
+
+def _run(database: Any, sql: str, *, fetch: bool = False) -> Any:
+    """
+    One statement on the raw driver connection, through a DB-API cursor.
+
+    Every PostgreSQL driver has ``cursor()``; only psycopg 3 also has the
+    ``connection.execute()`` shortcut, and Django runs on psycopg2 too.
+    """
+    with database.cursor() as cursor:
+        cursor.execute(sql)
+        return cursor.fetchone() if fetch else None
 
 
 def row_write(sql: str, cursor: Any) -> RowWrite | None:
