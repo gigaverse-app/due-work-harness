@@ -60,7 +60,7 @@ from due_work_harness.profiles.fact_derived_obligations import (
     assert_unrecorded_obligation_is_discovered,
 )
 from due_work_harness.references import in_memory_handoffs
-from due_work_harness.references.eligibility import GateReference, reference_gate
+from due_work_harness.references.eligibility import GateReference, latest_reference, reference_gate, reference_sweep
 from due_work_harness.references.in_memory import (
     EdgeTriggeredDeriver,
     MaterialisingDeriver,
@@ -1201,13 +1201,19 @@ def test_a_history_without_findings_still_diverges_with_a_plain_assertion(ledger
 
 # Execution eligibility.
 
+_SWEEP_TIED = "assert_gate_is_recovered_by_the_contract_sweep"
+
+
+def _eligibility_case_ids(prefix: str) -> set[str]:
+    return {f"{prefix}-{proof.__name__}" for proof in ELIGIBILITY_PROOFS} | {f"{prefix}-{_SWEEP_TIED}"}
+
 
 def test_a_contract_generates_and_reports_eligibility_without_work_tables() -> None:
     contract = _contract(
-        profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=reference_gate, derivation=None
+        profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=reference_gate, derivation=None
     )
     cases = [param.values[0] for param in contract_cases(contract) if param.id.startswith("eligibility-")]
-    assert {case.id for case in cases} == {f"eligibility-{proof.__name__}" for proof in ELIGIBILITY_PROOFS}
+    assert {case.id for case in cases} == _eligibility_case_ids("eligibility")
     assert "Eligibility: claimed" in contract_report(contract)
     for case in cases:
         case.run()
@@ -1222,12 +1228,28 @@ def test_a_generated_eligibility_case_fails_a_scheduler_that_breaks_its_proof() 
         return GateReference(fault="hot_loop").binding()
 
     contract = _contract(
-        profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=hot_looping_gate, derivation=None
+        profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=hot_looping_gate, derivation=None
     )
     cases = _params_by_id(contract_cases(contract))
     with pytest.raises(AssertionError, match="hot-loops"):
         cases["eligibility-assert_periodic_inspection_is_bounded"].values[0].run()
     cases["eligibility-assert_blocked_gate_preserves_intent"].values[0].run()
+
+
+def test_a_generated_case_ties_the_gate_to_the_contracts_own_sweep() -> None:
+    def gate_recovered_elsewhere() -> Any:
+        # ARRANGE — the reference scheduler, its recovery bound to a direct worker call.
+        # REAL PRODUCTION — none; the harness-owned reference scheduler stands in.
+        # EXTERNAL SEAM — none; the scheduler has no provider.
+        # OBSERVE — the gate's own observations.
+        return reference_gate().model_copy(update={"recover": latest_reference().complete_directly})
+
+    contract = _contract(
+        profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=gate_recovered_elsewhere, derivation=None
+    )
+    case = _params_by_id(contract_cases(contract))[f"eligibility-{_SWEEP_TIED}"]
+    with pytest.raises(AssertionError, match="recover never reached the contract sweep's tick"):
+        case.values[0].run()
 
 
 def test_eligibility_cannot_claim_recovery_without_a_sweep() -> None:
@@ -1240,15 +1262,13 @@ def test_every_eligibility_variant_is_generated_and_reported(named: bool) -> Non
     variants = {"active_owner": reference_gate, "unsettled_dependency": reference_gate}
     contract = _contract(
         profiles=dispositions(A=Claim()),
-        sweep=annotated_never_built,
+        sweep=reference_sweep,
         eligibility=variants if named else reference_gate,
         derivation=None,
     )
     cases = [param.values[0] for param in contract_cases(contract) if param.id.startswith("eligibility-")]
     prefixes = [f"eligibility-{name}" for name in variants] if named else ["eligibility"]
-    assert {case.id for case in cases} == {
-        f"{prefix}-{proof.__name__}" for prefix in prefixes for proof in ELIGIBILITY_PROOFS
-    }
+    assert {case.id for case in cases} == set().union(*(_eligibility_case_ids(prefix) for prefix in prefixes))
     report = contract_report(contract)
     if named:
         assert all(name in report for name in variants)
@@ -1269,7 +1289,7 @@ def test_an_eligibility_binding_without_adopter_annotations_is_refused() -> None
         return GateReference().binding()
 
     with pytest.raises(
-        DueWorkContractDesignError, match="eligibility  binding is missing adopter evidence annotations"
+        DueWorkContractDesignError, match="the eligibility binding is missing adopter evidence annotations"
     ):
         _contract(
             profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=unannotated_gate, derivation=None

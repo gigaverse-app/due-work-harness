@@ -47,14 +47,29 @@ recovery is what must find the work once it is eligible. It is not a seventh
 disposition: a domain without a product-level blocker has no gate to describe.
 
 Each gate is one blocked, already time-due obligation with its readiness
-notification lost. Four proofs run against a fresh example each: the bindings
-reach production; blocked work stays owed and unselected, and no route or
-recovery route executes it, calls the provider or writes anything (including a
-write that restores the same state, which an independent mutation count sees);
-once eligible, recovery alone completes it, and readiness released the existing
-obligation without a new revision, a reset retry budget or an earlier
-not-before time; and the fallback inspection (`recheck_after`) happens on its
-declared boundary, probed on both sides by moving the clock, without a hot loop.
+notification lost. Five proofs run against a fresh example each:
+
+- the bindings reach production: the routes, recovery, both selections
+  (`due_work` and `owed_work`) and the readiness transition `make_eligible`;
+- blocked work stays owed and unselected, and no route or recovery executes it,
+  inspects it early, calls the provider or writes anything (including a write
+  that restores the same state, which an independent mutation count sees);
+- once eligible, recovery alone completes it, and readiness released the
+  existing obligation without a new revision, a reset retry budget or an
+  earlier not-before time;
+- the fallback inspection (`recheck_after`) happens on its declared boundary, in
+  two windows (from admission, then from that inspection), each probed one
+  `clock_resolution` before the boundary and across it by moving the clock. The
+  inspection must not call the provider, change the product state or drop the
+  obligation, and must not repeat without time passing. It counts as an
+  execution unless the gate declares `inspections`, for a design that re-checks
+  the blocker without executing anything;
+- the gate describes the contract sweep's own recovery: the sweep's selection
+  leaves the blocked work out and takes it in once eligible, and `recover`
+  enters the code the sweep's `run_tick` runs (observed with a profiler on the
+  calling thread). The gate's `identity` is what the sweep's `identity_of`
+  reports for the same row.
+
 A pass says a scheduler with blocked work neither loses it nor runs it early. It
 does not say the blocker is the right product rule.
 

@@ -167,7 +167,7 @@ from due_work_harness.crash_histories import (
     assert_crash_at_every_commit_converges,
 )
 from due_work_harness.host import current_host
-from due_work_harness.models import MISSING, HarnessModel, with_positional
+from due_work_harness.models import MISSING, DueWorkContractDesignError, HarnessModel, with_positional
 from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
 from due_work_harness.profiles.automatic_recovery import (
     DUE_WORK_PROOFS,
@@ -201,6 +201,7 @@ from due_work_harness.profiles.eventual_convergence import (
 from due_work_harness.profiles.execution_eligibility import (
     ELIGIBILITY_PROOFS,
     ExecutionGateBinding,
+    assert_gate_is_recovered_by_the_contract_sweep,
 )
 from due_work_harness.profiles.fact_derived_obligations import (
     STATE_DERIVED_PROOFS,
@@ -331,16 +332,6 @@ class DueWorkSource(HarnessModel):
                 "DueWorkSource.callable must expose __module__ and __qualname__ so it can be identified"
             )
         return f"{module}.{qualname}"
-
-
-class DueWorkContractDesignError(Exception):
-    """
-    The contract's declaration is incomplete or contradictory.
-
-    Raised at construction — import/collection time — so a missing disposition
-    or an unbindable claim fails the whole module loudly before any behavioral
-    proof runs, rather than surfacing as a confusing runtime assertion.
-    """
 
 
 class Claim(HarnessModel):
@@ -904,7 +895,7 @@ def _eligibility_errors(contract: DueWorkContract) -> list[str]:
         if any(not name.strip() for name in contract.eligibility):
             errors.append("eligibility variants need nonempty names")
     for name, binding in eligibility_bindings(contract).items():
-        defect = _adopter_annotation_defect(f"eligibility {name} binding", binding)
+        defect = _adopter_annotation_defect(f"the eligibility {name + ' ' if name else ''}binding", binding)
         if defect:
             errors.append(defect)
     return errors
@@ -1173,6 +1164,16 @@ def _proof_runner(factory: Callable[[], Any], proof: Callable[[Any], None]) -> C
     return run
 
 
+def _gate_sweep_runner(gate_factory: Callable[[], Any], sweep_factory: Callable[[], Any]) -> Callable[[], None]:
+    """The gate is entered first: it arranges the blocked example the sweep then selects, or does not."""
+
+    def run() -> None:
+        with _entered(gate_factory) as gate, _entered(sweep_factory) as sweep:
+            assert_gate_is_recovered_by_the_contract_sweep(gate, sweep)
+
+    return run
+
+
 def _coherence_runner(
     sweep_factory: Callable[[], Any],
     derivation_factory: Callable[[], Any],
@@ -1318,6 +1319,13 @@ def contract_cases(contract: DueWorkContract) -> list[Any]:
                 fixtures=contract.fixtures,
             )
             params.append(pytest.param(case, id=case.id, marks=_database_marks(contract.transactional)))
+        assert contract.sweep is not None, "DueWorkContract validation requires a sweep with eligibility"
+        case = ContractCase(
+            id=f"{prefix}-assert_gate_is_recovered_by_the_contract_sweep",
+            run=_gate_sweep_runner(binding, contract.sweep),
+            fixtures=contract.fixtures,
+        )
+        params.append(pytest.param(case, id=case.id, marks=_database_marks(contract.transactional)))
     params.extend(_coherence_cases(contract))
     params.extend(_handoff_cases(contract))
     for extra in contract.extras:
@@ -1608,7 +1616,7 @@ def contract_report(contract: DueWorkContract) -> str:
             lines.append(f"  {label}: known gap — {disposition.because}")
     for name in eligibility_bindings(contract):
         label = f"Eligibility [{name}]" if name else "Eligibility"
-        lines.append(f"  {label}: claimed — {len(ELIGIBILITY_PROOFS)} framework-neutral proofs")
+        lines.append(f"  {label}: claimed — {len(ELIGIBILITY_PROOFS) + 1} proofs, one against the contract sweep")
     for extra in contract.extras:
         note = f"known gap — {extra.gap}" if extra.gap else "applied"
         lines.append(f"  Extra {extra.name}: {note}")
