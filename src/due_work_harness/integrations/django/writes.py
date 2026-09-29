@@ -20,10 +20,13 @@ from due_work_harness.models import HarnessModel
 #: inserts rows, and ``COPY TO`` never reaches an execute wrapper as a write.
 _ROW_WRITES = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE", "COPY"})
 _CREATES_ROWS = frozenset({"INSERT", "MERGE", "COPY"})
-#: Statements that can write without their own status saying so: a function called from a
-#: ``SELECT``, or a trigger or a predicate function called from a DML statement that then
-#: affects zero rows. Everything else reports honestly, or refuses a transaction block.
-_TRANSACTIONAL_STATEMENTS = frozenset({"SELECT", "WITH", "VALUES", "INSERT", "UPDATE", "DELETE", "MERGE"})
+#: Statements that can write without their own status saying so, and can run in a
+#: transaction block: a function called from a ``SELECT``, a trigger or a predicate
+#: function called from a DML statement that then affects zero rows, an anonymous
+#: ``DO`` block (its status is ``DO`` whatever it wrote). A known gap: ``CALL`` can
+#: write the same way, but a procedure may commit itself, which it cannot do inside a
+#: transaction block, so it is not wrapped and a write it makes is not counted.
+_TRANSACTIONAL_STATEMENTS = frozenset({"SELECT", "WITH", "VALUES", "INSERT", "UPDATE", "DELETE", "MERGE", "DO"})
 
 
 class RowWrite(HarnessModel):

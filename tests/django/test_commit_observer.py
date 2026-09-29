@@ -148,3 +148,44 @@ def test_a_dead_workers_session_is_closed_when_a_history_is_rejected_while_it_is
         assert session.closed
     finally:
         connection.close()
+
+
+def test_a_write_in_a_do_block_counts_as_a_commit() -> None:
+    # DO reports "DO" whatever its body wrote, and may run inside a transaction block, so it is wrapped.
+    pk = _running()
+    table = ref.LifecycleAttempt._meta.db_table
+    with django_worker_killer(None) as worker, connection.cursor() as cursor:
+        cursor.execute(f"DO $$ BEGIN UPDATE {table} SET status = 'complete' WHERE id = {pk}; END $$")
+    assert _status(pk) == Status.COMPLETE
+    assert worker.commits == 1
+
+
+def test_a_do_block_that_writes_nothing_is_not_a_commit() -> None:
+    pk = _running()
+    with django_worker_killer(None) as worker, connection.cursor() as cursor:
+        cursor.execute("DO $$ BEGIN PERFORM 1; END $$")
+    assert _status(pk) == Status.RUNNING
+    assert worker.commits == 0
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="known gap: CALL may commit inside its procedure, so it cannot be wrapped in a one-statement "
+    "transaction, and its status reports CALL whatever it wrote",
+)
+def test_a_write_in_a_called_procedure_counts_as_a_commit() -> None:
+    pk = _running()
+    table = ref.LifecycleAttempt._meta.db_table
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "CREATE PROCEDURE due_work_harness_complete(attempt_id bigint) LANGUAGE sql AS "
+            f"$$ UPDATE {table} SET status = 'complete' WHERE id = attempt_id $$"
+        )
+    try:
+        with django_worker_killer(None) as worker, connection.cursor() as cursor:
+            cursor.execute("CALL due_work_harness_complete(%s)", [pk])
+        assert _status(pk) == Status.COMPLETE
+        assert worker.commits == 1
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP PROCEDURE due_work_harness_complete(bigint)")
