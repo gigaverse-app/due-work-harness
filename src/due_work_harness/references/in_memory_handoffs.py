@@ -20,7 +20,8 @@ idempotency key. The harness's own self-tests run every crash history against
 them, in both directions. Never bind these in an adopter.
 """
 
-from collections.abc import Callable, Iterator
+import asyncio
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
@@ -280,6 +281,18 @@ class Recipient:
         if attempt not in self.received:
             self.received.append(attempt)
 
+    async def notify_async(self, attempt: int) -> None:
+        """An async client records the effect when awaited, not when called."""
+        self.notify(attempt)
+
+    async def notify_once_async(self, attempt: int) -> None:
+        """The keyed call on an async client."""
+        self.notify_once(attempt)
+
+    def deferred_notify(self, attempt: int) -> Awaitable[None]:
+        """An SDK-style sync method that returns deferred work rather than its result."""
+        return self.notify_async(attempt)
+
 
 RECIPIENT = Recipient()
 
@@ -291,6 +304,24 @@ def complete_notifying(attempt: int) -> None:
 
 def complete_notifying_once(attempt: int) -> None:
     RECIPIENT.notify_once(attempt)
+    LEDGER.update(attempt, status=COMPLETE)
+
+
+def complete_notifying_async(attempt: int) -> None:
+    """Notify through an async client, then record completion."""
+    asyncio.run(RECIPIENT.notify_async(attempt))
+    LEDGER.update(attempt, status=COMPLETE)
+
+
+def complete_notifying_deferred(attempt: int) -> None:
+    """Notify through a sync method that returns the deferred effect, then record completion."""
+    asyncio.run(RECIPIENT.deferred_notify(attempt))
+    LEDGER.update(attempt, status=COMPLETE)
+
+
+def complete_notifying_once_async(attempt: int) -> None:
+    """The keyed notification on an async client."""
+    asyncio.run(RECIPIENT.notify_once_async(attempt))
     LEDGER.update(attempt, status=COMPLETE)
 
 

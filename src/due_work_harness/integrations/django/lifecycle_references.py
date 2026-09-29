@@ -16,6 +16,7 @@ is only ever observed (by a publication recorder), never delivered.
 Never import this module in an adopter: binding it measures the reference.
 """
 
+import asyncio
 import functools
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -30,6 +31,7 @@ from django.utils import timezone
 
 from due_work_harness.crash_histories import CallableDelivery
 from due_work_harness.host import current_host
+from due_work_harness.references.in_memory_handoffs import Recipient
 
 with isolate_apps("due_work_harness"):
 
@@ -348,27 +350,25 @@ def fail_attempt_atomically_under_session_lock(pk: int) -> None:
             cursor.execute("SELECT pg_advisory_unlock(%s)", [pk])
 
 
-class Recipient:
-    """An external system that records every notification it receives."""
-
-    def __init__(self) -> None:
-        self.received: list[int] = []
-
-    def notify(self, pk: int) -> None:
-        self.received.append(pk)
-
-    def notify_once(self, pk: int) -> None:
-        """The same call keyed by the attempt: the recipient drops a repeated key."""
-        if pk not in self.received:
-            self.received.append(pk)
-
-
+#: The external recipient is the framework-free reference's: sync, keyed, async and deferred seams.
 RECIPIENT = Recipient()
 
 
 def complete_attempt_notifying(pk: int) -> None:
     """Notify, then record completion: a death between the two leaves the attempt running."""
     RECIPIENT.notify(pk)
+    LifecycleAttempt.objects.filter(pk=pk).update(status=Status.COMPLETE)
+
+
+def complete_attempt_notifying_async(pk: int) -> None:
+    """Notify through an async client, then record completion."""
+    asyncio.run(RECIPIENT.notify_async(pk))
+    LifecycleAttempt.objects.filter(pk=pk).update(status=Status.COMPLETE)
+
+
+def complete_attempt_notifying_deferred(pk: int) -> None:
+    """Notify through a sync method that returns the deferred effect, then record completion."""
+    asyncio.run(RECIPIENT.deferred_notify(pk))
     LifecycleAttempt.objects.filter(pk=pk).update(status=Status.COMPLETE)
 
 

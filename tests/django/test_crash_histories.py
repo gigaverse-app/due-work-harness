@@ -170,13 +170,18 @@ def _notifying(transition: Callable[[int], Any], seam: str) -> HandoffHistory[in
 
 
 @pytest.mark.parametrize(
-    "transition",
-    [ref.complete_attempt_notifying, ref.complete_attempt_notifying_inside_its_transaction],
-    ids=["after-the-call", "inside-the-transaction"],
+    ("transition", "seam"),
+    [
+        (ref.complete_attempt_notifying, "notify"),
+        (ref.complete_attempt_notifying_inside_its_transaction, "notify"),
+        (ref.complete_attempt_notifying_async, "notify_async"),
+        (ref.complete_attempt_notifying_deferred, "deferred_notify"),
+    ],
+    ids=["after-the-call", "inside-the-transaction", "async-client", "deferred-result"],
 )
-def test_a_notification_recovery_repeats_diverges(transition: Callable[[int], Any]) -> None:
+def test_a_notification_recovery_repeats_diverges(transition: Callable[[int], Any], seam: str) -> None:
     with pytest.raises(AssertionError, match=r"'worker died after external call 1': \('complete', 2\).*repeated"):
-        _converges(ref.NOTIFYING_DELIVERY, _notifying(transition, "notify"))
+        _converges(ref.NOTIFYING_DELIVERY, _notifying(transition, seam))
 
 
 def test_an_idempotent_notification_converges() -> None:
@@ -184,7 +189,7 @@ def test_an_idempotent_notification_converges() -> None:
 
 
 def test_naming_a_seam_the_transition_never_calls_is_refused() -> None:
-    with pytest.raises(AssertionError, match="made none of them"):
+    with pytest.raises(AssertionError, match=r"never called: Recipient\.notify\."):
         _converges(ref.NOTIFYING_ONCE_DELIVERY, _notifying(ref.complete_attempt_notifying_once, "notify"))
 
 

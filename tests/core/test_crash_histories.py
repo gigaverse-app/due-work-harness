@@ -81,7 +81,7 @@ def test_an_idempotent_notification_converges(ledger_host: Host) -> None:
 
 
 def test_naming_a_seam_the_transition_never_calls_is_refused(ledger_host: Host) -> None:
-    with pytest.raises(AssertionError, match="made none of them"):
+    with pytest.raises(AssertionError, match=r"never called: Recipient\.notify\."):
         assert_crash_at_every_commit_converges(
             ref.NOTIFYING_ONCE_DELIVERY, _notifying(ref.complete_notifying_once, "notify")
         )
