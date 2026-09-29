@@ -23,10 +23,17 @@ What it sees, and what it does not:
 
 * Outermost ``transaction.atomic()`` blocks on one database alias, on the
   thread that started recording. A savepoint does not start a new sequence; a
-  transaction opened with ``set_autocommit(False)`` or raw ``BEGIN`` is not seen.
+  block that fails to open (a nested ``durable=True``) is not counted; another
+  alias's blocks are ignored; a transaction opened with ``set_autocommit(False)``
+  or raw ``BEGIN`` is not seen.
 * Only statements Django generates with quoted identifiers, which is what the
   ORM emits. Hand-written SQL is classified only when it quotes its tables.
+  Leading comments (sqlcommenter's, for one) are skipped as PostgreSQL skips them.
 * A transaction that locks one table records no order. Two tables are the smallest ordering.
+* Only the tables of the locking statement's own query level: a subquery's rows
+  are read, not locked. A derived table (``FROM (SELECT ...)``) is not classified.
+* Exclusive row locks only. ``FOR SHARE``, ``FOR KEY SHARE`` and ``LOCK TABLE``
+  are not recorded, though they can take part in a deadlock too.
 * Row locks a trigger or a function takes are invisible: they are not in the statement.
 
 PostgreSQL's ``FOR [NO KEY] UPDATE [OF ...]`` and the writes ``UPDATE`` and
@@ -35,9 +42,10 @@ PostgreSQL's ``FOR [NO KEY] UPDATE [OF ...]`` and the writes ``UPDATE`` and
 
 import re
 import threading
-from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from graphlib import CycleError, TopologicalSorter
+from itertools import pairwise
 from typing import Any
 from unittest.mock import patch
 
@@ -45,29 +53,47 @@ import pytest
 from django.db import DEFAULT_DB_ALIAS, connections, transaction
 from pydantic import PrivateAttr
 
+from due_work_harness.integrations.django.writes import statement_text
 from due_work_harness.models import HarnessModel, MutableHarnessModel
 
 _LOCKING_SELECT = re.compile(r"\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b", re.IGNORECASE)
 _LOCK_OF = re.compile(r"\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\s+OF\s+((?:\"[^\"]+\"(?:\s*,\s*)?)+)", re.IGNORECASE)
 _QUOTED = re.compile(r"\"([^\"]+)\"")
 _FROM_OR_JOIN = re.compile(r"\b(?:FROM|JOIN)\s+\"([^\"]+)\"", re.IGNORECASE)
-_UPDATE = re.compile(r"^\s*UPDATE\s+\"([^\"]+)\"", re.IGNORECASE)
-_DELETE = re.compile(r"^\s*DELETE\s+FROM\s+\"([^\"]+)\"", re.IGNORECASE)
+_UPDATE = re.compile(r"UPDATE\s+\"([^\"]+)\"", re.IGNORECASE)
+_DELETE = re.compile(r"DELETE\s+FROM\s+\"([^\"]+)\"", re.IGNORECASE)
 
 
 def locked_tables(sql: str) -> tuple[str, ...]:
     """Tables whose rows this statement locks, in the order the statement names them."""
-    if (match := _UPDATE.match(sql)) or (match := _DELETE.match(sql)):
+    text = statement_text(sql)
+    if (match := _UPDATE.match(text)) or (match := _DELETE.match(text)):
         return (match.group(1),)
-    if not _LOCKING_SELECT.search(sql):
+    top_level = _outside_parentheses(text)
+    if not _LOCKING_SELECT.search(top_level):
         return ()
-    if scoped := _LOCK_OF.search(sql):
+    if scoped := _LOCK_OF.search(top_level):
         return tuple(_QUOTED.findall(scoped.group(1)))
     seen: list[str] = []
-    for table in _FROM_OR_JOIN.findall(sql):
+    for table in _FROM_OR_JOIN.findall(top_level):
         if table not in seen:
             seen.append(table)
     return tuple(seen)
+
+
+def _outside_parentheses(sql: str) -> str:
+    """The statement's own query level: every parenthesised group (a subquery, a JOIN's ON) blanked out."""
+    depth, kept = 0, []
+    for character in sql:
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth = max(depth - 1, 0)
+        elif depth == 0:
+            kept.append(character)
+            continue
+        kept.append(" ")
+    return "".join(kept)
 
 
 class LockSequence(HarnessModel):
@@ -140,15 +166,22 @@ def record_lock_order(label: str, using: str = DEFAULT_DB_ALIAS) -> Iterator[Loc
     original_enter = transaction.Atomic.__enter__
     original_exit = transaction.Atomic.__exit__
 
+    def watched(atomic: transaction.Atomic) -> bool:
+        return (atomic.using or DEFAULT_DB_ALIAS) == using
+
     def enter(self: transaction.Atomic) -> None:
-        recorder.enter()
-        return original_enter(self)
+        # Counted only once open: a block whose __enter__ raises never reaches __exit__.
+        result = original_enter(self)
+        if watched(self):
+            recorder.enter()
+        return result
 
     def exit(self: transaction.Atomic, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         try:
             return original_exit(self, exc_type, exc_value, traceback)
         finally:
-            recorder.exit()
+            if watched(self):
+                recorder.exit()
 
     with (
         patch.object(transaction.Atomic, "__enter__", enter),
@@ -161,58 +194,22 @@ def record_lock_order(label: str, using: str = DEFAULT_DB_ALIAS) -> Iterator[Loc
 def assert_consistent_lock_order(sequences: Iterable[LockSequence]) -> None:
     """Every pair of tables must be locked in one global order across all recorded transactions."""
     witness: dict[tuple[str, str], LockSequence] = {}
-    successors: dict[str, set[str]] = defaultdict(set)
+    # A table's predecessors: every table some transaction locked before it.
+    graph = TopologicalSorter[str]()
     for sequence in sequences:
         for index, first in enumerate(sequence.tables):
             for second in sequence.tables[index + 1 :]:
                 witness.setdefault((first, second), sequence)
-                successors[first].add(second)
-
-    cycle = _find_cycle(successors)
-    if cycle is None:
-        return
-    edges = list(zip(cycle, cycle[1:] + cycle[:1], strict=True))
-    lines = [f"  {first} -> {second}  (in {witness[(first, second)].label})" for first, second in edges]
-    raise AssertionError(
-        "inconsistent row-lock order; these transactions can deadlock each other:\n" + "\n".join(lines)
-    )
-
-
-def _find_cycle(successors: dict[str, set[str]]) -> list[str] | None:
-    white, grey, black = 0, 1, 2
-    colour: dict[str, int] = defaultdict(int)
-    parent: dict[str, str | None] = {}
-
-    def visit(start: str) -> list[str] | None:
-        stack: list[tuple[str, Iterator[str]]] = [(start, iter(sorted(successors[start])))]
-        colour[start] = grey
-        parent[start] = None
-        while stack:
-            node, children = stack[-1]
-            for child in children:
-                if colour[child] == grey:
-                    path = [child]
-                    cursor: str | None = node
-                    while cursor is not None and cursor != child:
-                        path.append(cursor)
-                        cursor = parent[cursor]
-                    path.reverse()
-                    return path
-                if colour[child] == white:
-                    colour[child] = grey
-                    parent[child] = node
-                    stack.append((child, iter(sorted(successors[child]))))
-                    break
-            else:
-                colour[node] = black
-                stack.pop()
-        return None
-
-    for node in sorted(successors):
-        if colour[node] == white:
-            if (found := visit(node)) is not None:
-                return found
-    return None
+                graph.add(second, first)
+    try:
+        graph.prepare()
+    except CycleError as error:
+        # Each node of the reported cycle precedes the next; the first is repeated at the end.
+        cycle: list[str] = error.args[1]
+        lines = [f"  {first} -> {second}  (in {witness[(first, second)].label})" for first, second in pairwise(cycle)]
+        raise AssertionError(
+            "inconsistent row-lock order; these transactions can deadlock each other:\n" + "\n".join(lines)
+        ) from None
 
 
 @contextmanager
@@ -220,13 +217,14 @@ def recording_against_the_ledger(label: str, using: str = DEFAULT_DB_ALIAS) -> I
     """
     Record, then check what was recorded against every sequence recorded before it.
 
-    The sequences join :data:`LOCK_ORDER_LEDGER` before the check, so a later
-    test that reverses an earlier one fails, naming both.
+    A later test that reverses an earlier one fails, naming both. Only sequences
+    that pass join :data:`LOCK_ORDER_LEDGER`: a rejected cycle kept there would
+    fail every later test that checks against it.
     """
     with record_lock_order(label, using) as recorder:
         yield recorder
+    assert_consistent_lock_order([*LOCK_ORDER_LEDGER, *recorder.sequences])
     LOCK_ORDER_LEDGER.extend(recorder.sequences)
-    assert_consistent_lock_order(LOCK_ORDER_LEDGER)
 
 
 @pytest.fixture

@@ -40,8 +40,36 @@ pytestmark = pytest.mark.django_db(transaction=True)
         ('DELETE FROM "egress" WHERE "egress"."id" IN (%s)', ("egress",)),
         ('SELECT "room"."id" FROM "room" WHERE "room"."id" = %s', ()),
         ('INSERT INTO "room" ("id") VALUES (%s)', ()),
+        # A subquery's rows are read, not locked: FOR UPDATE locks the rows of its own query level.
+        (
+            'SELECT "work"."id" FROM "work" WHERE "work"."product_id" IN '
+            '(SELECT U0."id" FROM "product" U0 WHERE U0."x" = %s) FOR UPDATE',
+            ("work",),
+        ),
+        ('UPDATE "work" SET "s" = 1 WHERE "work"."id" IN (SELECT U0."id" FROM "product" U0)', ("work",)),
+        # sqlcommenter and friends put a comment first; PostgreSQL still runs an UPDATE.
+        ('/* controller=job */ UPDATE "work" SET "s" = 1', ("work",)),
+        ('/* a /* nested */ comment */ SELECT "work"."id" FROM "work" FOR UPDATE', ("work",)),
+        # Share locks and table locks are not recorded (documented).
+        ('SELECT "work"."id" FROM "work" WHERE "work"."id" = 1 FOR SHARE', ()),
+        ('LOCK TABLE "work" IN EXCLUSIVE MODE', ()),
     ],
-    ids=["for-update", "join", "for-update-of", "no-key-skip-locked", "update", "delete", "plain-read", "insert"],
+    ids=[
+        "for-update",
+        "join",
+        "for-update-of",
+        "no-key-skip-locked",
+        "update",
+        "delete",
+        "plain-read",
+        "insert",
+        "subquery-in-select",
+        "subquery-in-update",
+        "comment-before-update",
+        "nested-comment-before-select",
+        "for-share",
+        "lock-table",
+    ],
 )
 def test_locked_tables_classifies_row_locking_statements(sql: str, expected: tuple[str, ...]) -> None:
     assert locked_tables(sql) == expected
@@ -184,3 +212,59 @@ def test_the_shipped_fixture_records_this_tests_transactions(two_tables: None, l
     with transaction.atomic():
         _lock("lock_order_a", "lock_order_b")
     assert [item.tables for item in lock_order.sequences] == [("lock_order_a", "lock_order_b")]  # type: ignore[attr-defined]
+
+
+def test_a_transaction_that_failed_to_open_does_not_silence_the_recorder(two_tables: None) -> None:
+    # A durable block nested in another raises from __enter__, and Django never calls its __exit__:
+    # counting the entry would leave the recorder one level deep, merging every later transaction.
+    with record_lock_order("probe") as recorder:
+        with transaction.atomic(), pytest.raises(RuntimeError), transaction.atomic(durable=True):
+            pass
+        with transaction.atomic():
+            _lock("lock_order_a", "lock_order_b")
+        with transaction.atomic():
+            _lock("lock_order_b", "lock_order_a")
+    assert [item.tables for item in recorder.sequences] == [
+        ("lock_order_a", "lock_order_b"),
+        ("lock_order_b", "lock_order_a"),
+    ]
+    with pytest.raises(AssertionError, match="deadlock"):
+        assert_consistent_lock_order(recorder.sequences)
+
+
+def test_a_rejected_sequence_does_not_join_the_ledger(two_tables: None, fresh_ledger: list[LockSequence]) -> None:
+    # Recorded before the check, the cycle would fail every later test that uses the fixture, in teardown.
+    with recording_against_the_ledger("first test"):
+        with transaction.atomic():
+            _lock("lock_order_a", "lock_order_b")
+    with pytest.raises(AssertionError, match="deadlock"), recording_against_the_ledger("second test"):
+        with transaction.atomic():
+            _lock("lock_order_b", "lock_order_a")
+    assert [item.label for item in fresh_ledger] == ["first test"]
+    with recording_against_the_ledger("a later test that locks nothing"):
+        pass
+
+
+def test_another_aliass_transaction_neither_starts_nor_ends_a_sequence(
+    two_tables: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The recorder watches one alias; Atomic is patched class-wide, so another alias's block must not count.
+    # The other alias is simulated: its Atomic enters and exits without a connection.
+    real_enter, real_exit = transaction.Atomic.__enter__, transaction.Atomic.__exit__
+
+    def enter(self: transaction.Atomic) -> None:
+        return None if self.using == "other" else real_enter(self)
+
+    def exit(self: transaction.Atomic, *exc: object) -> None:
+        return None if self.using == "other" else real_exit(self, *exc)
+
+    monkeypatch.setattr(transaction.Atomic, "__enter__", enter)
+    monkeypatch.setattr(transaction.Atomic, "__exit__", exit)
+    with record_lock_order("default only") as recorder:
+        with transaction.atomic(using="other"):
+            with transaction.atomic():
+                _lock("lock_order_a")
+            with transaction.atomic():
+                _lock("lock_order_b")
+    # Two one-table transactions on default: no order. Merged under the other alias's block, a false (a, b).
+    assert recorder.sequences == []

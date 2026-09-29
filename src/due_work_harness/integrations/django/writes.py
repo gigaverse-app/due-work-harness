@@ -54,6 +54,17 @@ def _target(sql: str) -> str:
 
 def leading_keyword(sql: str) -> str:
     """The first SQL keyword after comments, whitespace and opening parentheses."""
+    keyword = re.match(r"[a-zA-Z]+", statement_text(sql))
+    return keyword.group().upper() if keyword else ""
+
+
+def statement_text(sql: str) -> str:
+    """
+    The statement as PostgreSQL reads it: leading comments, whitespace and opening parentheses removed.
+
+    Empty when a leading block comment never closes. The one place the harness strips
+    SQL comments, so every reader of a statement's first word agrees on it.
+    """
     text = sql.lstrip()
     while True:
         if text.startswith("/*"):
@@ -72,9 +83,7 @@ def leading_keyword(sql: str) -> str:
         elif text.startswith("("):
             text = text[1:].lstrip()
         else:
-            break
-    keyword = re.match(r"[a-zA-Z]+", text)
-    return keyword.group().upper() if keyword else ""
+            return text
 
 
 def require_postgresql(alias: str, reading: str, because: str) -> None:
