@@ -30,7 +30,7 @@ Failures the worker survives:
 
 :func:`worker_history` builds the process history; its observation is the
 adopter's, typically the task's result state with what its links and errbacks
-did. Helpers import Celery only in the child.
+did. Helpers import Celery only in the child. POSIX only (see :func:`running_worker`).
 """
 
 import importlib
@@ -96,7 +96,15 @@ def running_worker(
     names a death or failure point, the first execution of ``task`` fails there
     and ``marker`` is created. On exit the worker gets a warm shutdown, as a
     deploy would, and is killed if it does not stop.
+
+    POSIX only: the fault is installed in the worker's main process and reaches
+    its pool child through ``fork``, and the warm shutdown is ``SIGTERM``.
     """
+    assert sys.platform != "win32", (
+        "the Celery worker histories need Celery's prefork pool, which does not run on Windows: billiard "
+        "spawns the pool child, which inherits neither the fault installed in the worker's main process nor "
+        "usable pool semaphores, so the task never settles. Run these histories on Linux or macOS"
+    )
     environ = {**os.environ, **(env or {}), **fault_environment(fault, marker), _TASK: task or ""}
     output = open(log, "ab") if log is not None else subprocess.DEVNULL  # noqa: SIM115 - closed below
     command = [sys.executable, "-m", "due_work_harness.integrations.celery_worker", app, *worker_args]

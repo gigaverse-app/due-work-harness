@@ -7,14 +7,22 @@ history in ``FINDINGS`` within the same run, so a change in Celery turns this
 suite red until the table is updated.
 """
 
+import sys
 from typing import cast
 
+import pytest
 import redis
 from celery.result import AsyncResult
 
 from due_work_harness import Findings, due_work_contract_suite
 from due_work_harness.integrations.celery_worker import worker_contract, worker_history
 from tests.celery_worker import app as reference
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Celery's prefork pool does not run on Windows (billiard spawns the pool child, which inherits neither "
+    "the fault nor usable pool semaphores); running_worker refuses it",
+)
 
 MESSAGE = "your order has shipped"
 SENT = f"sent {MESSAGE!r}"
