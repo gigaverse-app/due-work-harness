@@ -11,6 +11,7 @@ the first proof that owns each fault. Both directions matter: a proof that a
 conforming scheduler passes and a broken one also passes would certify nothing.
 """
 
+import threading
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
@@ -38,8 +39,10 @@ from due_work_harness.references.eligibility import GateReference
         GateReference(),
         GateReference(separate_inspections=True),
         GateReference(whole_seconds=True, clock_resolution=timedelta(seconds=1)),
+        # A continuation delay pushes the second inspection past recheck_after: later is allowed, never earlier.
+        GateReference(rearm_delay=timedelta(seconds=7)),
     ],
-    ids=["notification-driven", "periodic", "inspections-observed-apart", "whole-second-clock"],
+    ids=["notification-driven", "periodic", "inspections-observed-apart", "whole-second-clock", "late-rearm"],
 )
 def test_every_proof_accepts_the_independent_scheduler(
     proof: Callable[[ExecutionGate], None], reference: GateReference
@@ -66,6 +69,8 @@ def test_every_proof_accepts_the_independent_scheduler(
         ("drops_at_inspection", assert_periodic_inspection_is_bounded, "inspection dropped the blocked obligation"),
         # Re-armed one second later, not recheck_after: a hot loop at a one-second sweep cadence.
         ("short_rearm", assert_periodic_inspection_is_bounded, "due before recheck_after has passed"),
+        # Inspected once, never again: the second window's inspection must eventually happen.
+        ("one_shot_fallback", assert_periodic_inspection_is_bounded, "never inspected the blocked work again"),
     ],
 )
 def test_each_fault_fails_with_the_message_of_the_check_that_catches_it(
@@ -86,6 +91,12 @@ def test_an_inspection_that_is_not_counted_anywhere_is_never_seen() -> None:
     gate = GateReference(separate_inspections=True).binding().model_copy(update={"inspections": None})
     with pytest.raises(AssertionError, match="periodic inspection never inspected"):
         assert_periodic_inspection_is_bounded(gate)
+
+
+def test_a_fallback_a_second_early_is_caught_at_the_largest_resolution_allowed() -> None:
+    reference = GateReference(fault="early_fallback", clock_resolution=timedelta(seconds=1))
+    with pytest.raises(AssertionError, match="due before recheck_after has passed"):
+        assert_periodic_inspection_is_bounded(reference.binding())
 
 
 def test_a_coarse_clock_needs_its_resolution_declared() -> None:
@@ -124,6 +135,9 @@ def test_the_boundary_is_probed_twice_by_moving_the_clock_never_by_sleeping() ->
         {"recheck_after": timedelta(0)},
         {"clock_resolution": timedelta(0)},
         {"clock_resolution": timedelta(seconds=30)},
+        # A declared resolution is how far early an inspection may fire unseen: it is kept small.
+        {"clock_resolution": timedelta(seconds=2)},
+        {"clock_resolution": timedelta(seconds=1), "recheck_after": timedelta(seconds=5)},
     ],
     ids=[
         "no-routes",
@@ -133,6 +147,8 @@ def test_the_boundary_is_probed_twice_by_moving_the_clock_never_by_sleeping() ->
         "zero-recheck",
         "zero-resolution",
         "resolution-not-below-recheck",
+        "resolution-over-a-second",
+        "resolution-over-a-tenth-of-recheck",
     ],
 )
 def test_invalid_gate_bounds_are_refused(changes: dict[str, Any]) -> None:
@@ -169,12 +185,37 @@ def test_a_gate_recovered_by_the_contract_sweep_passes() -> None:
     assert_gate_is_recovered_by_the_contract_sweep(reference.binding(), reference.sweep())
 
 
-def test_a_gate_whose_recovery_never_reaches_the_sweeps_tick_is_refused() -> None:
+def test_a_recovery_that_runs_the_tick_on_another_thread_passes() -> None:
+    # What is observed is what the sweep's dispatch path sent, not which code ran on which thread: a tick
+    # run through async_to_sync, a service created by DI or a module attribute is recognised alike.
     reference = GateReference()
-    # Recovery bound to something the contract's tick never runs: a directly invoked worker, say.
-    gate = reference.binding().model_copy(update={"recover": reference.complete_directly})
-    with pytest.raises(AssertionError, match="recover never reached the contract sweep's tick"):
+
+    def recover_elsewhere() -> None:
+        thread = threading.Thread(target=reference.tick)
+        thread.start()
+        thread.join()
+
+    gate = reference.binding().model_copy(update={"recover": recover_elsewhere})
+    assert_gate_is_recovered_by_the_contract_sweep(gate, reference.sweep())
+
+
+@pytest.mark.parametrize("path", ["worker-directly", "another-sweep"])
+def test_a_gate_whose_recovery_bypasses_the_sweeps_dispatch_is_refused(path: str) -> None:
+    # Recovery that completes the work some other way: the worker invoked directly, or a generic tick run
+    # for another sweep. Either way the contract sweep never dispatched the gate's work.
+    reference = GateReference()
+    other = GateReference()
+    recover = reference.complete_directly if path == "worker-directly" else other.tick
+    gate = reference.binding().model_copy(update={"recover": recover})
+    with pytest.raises(AssertionError, match="recover never dispatched 'obligation' through the contract sweep"):
         assert_gate_is_recovered_by_the_contract_sweep(gate, reference.sweep())
+
+
+def test_a_sweep_that_records_no_dispatches_cannot_be_tied_to_a_gate() -> None:
+    reference = GateReference()
+    sweep = reference.sweep().model_copy(update={"dispatched_ids": None})
+    with pytest.raises(AssertionError, match="declares no dispatched_ids"):
+        assert_gate_is_recovered_by_the_contract_sweep(reference.binding(), sweep)
 
 
 def test_a_gate_whose_selection_is_not_the_sweeps_is_refused() -> None:

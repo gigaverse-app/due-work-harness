@@ -57,18 +57,23 @@ notification lost. Five proofs run against a fresh example each:
 - once eligible, recovery alone completes it, and readiness released the
   existing obligation without a new revision, a reset retry budget or an
   earlier not-before time;
-- the fallback inspection (`recheck_after`) happens on its declared boundary, in
-  two windows (from admission, then from that inspection), each probed one
-  `clock_resolution` before the boundary and across it by moving the clock. The
-  inspection must not call the provider, change the product state or drop the
-  obligation, and must not repeat without time passing. It counts as an
-  execution unless the gate declares `inspections`, for a design that re-checks
-  the blocker without executing anything;
+- the fallback inspection (`recheck_after`) happens on its declared boundary
+  from admission, probed one `clock_resolution` before the boundary and across
+  it by moving the clock; then, from that inspection, not before the boundary
+  again, and within the recovery timeout after it (a continuation delay may push
+  it later, never earlier, and it must happen). `clock_resolution` is how early an
+  inspection may fire unseen, so it is at most one second and a tenth of
+  `recheck_after`. The inspection must not call the provider, change the product
+  state or drop the obligation, and must not repeat without time passing. It
+  counts as an execution unless the gate declares `inspections`, for a design
+  that re-checks the blocker without executing anything;
 - the gate describes the contract sweep's own recovery: the sweep's selection
-  leaves the blocked work out and takes it in once eligible, and `recover`
-  enters the code the sweep's `run_tick` runs (observed with a profiler on the
-  calling thread). The gate's `identity` is what the sweep's `identity_of`
-  reports for the same row.
+  leaves the blocked work out and takes it in once eligible, and during
+  `recover` the sweep's `dispatched_ids` (the recorder of what its tick
+  dispatched, which the contract sweep must declare) records the gate's
+  identity. What is observed is the dispatch, not which code ran where, so a tick
+  reached through a service, a task queue or another thread counts alike. The
+  gate's `identity` is what the sweep's `identity_of` reports for the same row.
 
 A pass says a scheduler with blocked work neither loses it nor runs it early. It
 does not say the blocker is the right product rule.

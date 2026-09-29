@@ -60,7 +60,7 @@ from due_work_harness.profiles.fact_derived_obligations import (
     assert_unrecorded_obligation_is_discovered,
 )
 from due_work_harness.references import in_memory_handoffs
-from due_work_harness.references.eligibility import GateReference, latest_reference, reference_gate, reference_sweep
+from due_work_harness.references.eligibility import SCHEDULER, GateReference, reference_gate, reference_sweep
 from due_work_harness.references.in_memory import (
     EdgeTriggeredDeriver,
     MaterialisingDeriver,
@@ -1242,13 +1242,13 @@ def test_a_generated_case_ties_the_gate_to_the_contracts_own_sweep() -> None:
         # REAL PRODUCTION — none; the harness-owned reference scheduler stands in.
         # EXTERNAL SEAM — none; the scheduler has no provider.
         # OBSERVE — the gate's own observations.
-        return reference_gate().model_copy(update={"recover": latest_reference().complete_directly})
+        return reference_gate().model_copy(update={"recover": SCHEDULER.complete_directly})
 
     contract = _contract(
         profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=gate_recovered_elsewhere, derivation=None
     )
     case = _params_by_id(contract_cases(contract))[f"eligibility-{_SWEEP_TIED}"]
-    with pytest.raises(AssertionError, match="recover never reached the contract sweep's tick"):
+    with pytest.raises(AssertionError, match="recover never dispatched 'obligation' through the contract sweep"):
         case.values[0].run()
 
 

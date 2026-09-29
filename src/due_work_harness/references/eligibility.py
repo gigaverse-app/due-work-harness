@@ -15,14 +15,17 @@ seconds (``whole_seconds``, conforming once its resolution is declared). Each
 * ``reset_on_readiness`` — becoming eligible rewrites the reserved intent;
 * ``no_recovery`` — an eligible obligation is never executed;
 * ``fake_completion`` — completion that never reaches the provider;
-* ``no_fallback``, ``early_fallback``, ``hot_loop``, ``short_rearm`` — the
-  periodic inspection never happens, happens a second early, never advances its
-  own next time, or re-arms one second later instead of ``recheck_after``;
+* ``no_fallback``, ``early_fallback``, ``hot_loop``, ``short_rearm``,
+  ``one_shot_fallback`` — the periodic inspection never happens, happens a
+  second early, never advances its own next time, re-arms one second later
+  instead of ``recheck_after``, or happens once and never again;
 * ``runs_at_inspection``, ``completes_at_inspection``, ``drops_at_inspection``,
   ``executes_at_inspection`` — the inspection calls the provider, completes the
   blocked work, drops it, or (observed apart) executes it.
 
-:meth:`GateReference.sweep` is the contract sweep over the same scheduler.
+:meth:`GateReference.sweep` is the contract sweep over the same scheduler: its selection, and a tick
+that records what it dispatched. ``rearm_delay`` pushes each re-inspection later than ``recheck_after``,
+as a continuation delay does; the scheduler still conforms.
 
 Never bind this in an adopter.
 """
@@ -45,6 +48,7 @@ class GateReference(MutableHarnessModel):
     separate_inspections: bool = False
     whole_seconds: bool = False
     clock_resolution: timedelta = timedelta(microseconds=1)
+    rearm_delay: timedelta = timedelta(0)
     elapsed: timedelta = timedelta(0)
     next_inspection: timedelta = _INSPECTION
     eligible: bool = False
@@ -55,6 +59,7 @@ class GateReference(MutableHarnessModel):
     calls: int = 0
     mutations: int = 0
     completed: bool = False
+    dispatched: list[str] = []
 
     def due(self) -> list[str]:
         periodic = self.recheck_after is not None and self.elapsed >= self.next_inspection
@@ -111,9 +116,19 @@ class GateReference(MutableHarnessModel):
         if self.fault == "hot_loop":
             return
         assert self.recheck_after is not None
-        self.next_inspection = self.elapsed + (
-            timedelta(seconds=1) if self.fault == "short_rearm" else self.recheck_after
-        )
+        if self.fault == "one_shot_fallback":
+            self.next_inspection = timedelta.max
+        elif self.fault == "short_rearm":
+            self.next_inspection = self.elapsed + timedelta(seconds=1)
+        else:
+            self.next_inspection = self.elapsed + self.recheck_after + self.rearm_delay
+
+    def tick(self) -> int:
+        """The sweep: dispatch everything due, recording what it dispatched, and run it."""
+        self.dispatched = self.due()
+        for _ in self.dispatched:
+            self.execute()
+        return len(self.dispatched)
 
     def make_eligible(self) -> None:
         self.eligible = True
@@ -134,7 +149,7 @@ class GateReference(MutableHarnessModel):
             reserved_state=lambda: self.revision,
             routes={"execute": self.execute},
             make_eligible=self.make_eligible,
-            recover=self.execute,
+            recover=self.tick,
             advance=self.advance,
             executions=lambda: self.executions,
             inspections=(lambda: self.inspections) if self.separate_inspections else None,
@@ -149,36 +164,37 @@ class GateReference(MutableHarnessModel):
         )
 
     def sweep(self) -> DueWorkSweep:
-        """The contract sweep over this scheduler: its selection, and a tick that runs it."""
+        """The contract sweep over this scheduler: its selection, its tick, and what the tick dispatched."""
         refuse = undeclared("only the sweep's selection and tick are compared with the gate")
         return DueWorkSweep(
             name="independent in-memory scheduler's sweep",
             due_work=self.due,
-            run_tick=self.execute,
+            run_tick=self.tick,
             make_owed=refuse,
             make_terminal=refuse,
             recovery_delay=None,
             page_size=None,
+            dispatched_ids=lambda: list(self.dispatched),
         )
 
+    def reset(self) -> None:
+        """Back to one fresh blocked obligation, as a test database is for each case."""
+        for name, field in type(self).model_fields.items():
+            setattr(self, name, field.get_default(call_default_factory=True))
 
-#: The scheduler :func:`reference_gate` built last, which :func:`reference_sweep` sweeps: a contract calls
-#: its gate factory and then its sweep factory for one case, and both must describe the same scheduler.
-_LATEST: list[GateReference] = []
+
+#: The scheduler the contract factories below share, as production code and its test share a database:
+#: :func:`reference_gate` arranges a fresh blocked obligation in it, and :func:`reference_sweep` sweeps
+#: whatever it holds, so the two may be built in either order.
+SCHEDULER = GateReference()
 
 
 def reference_gate() -> ExecutionGate[str, int, bool]:
-    """A fresh gate for every generated contract case, without database fixtures."""
-    _LATEST[:] = [GateReference()]
-    return _LATEST[0].binding()
-
-
-def latest_reference() -> GateReference:
-    """The scheduler behind the gate :func:`reference_gate` built last."""
-    assert _LATEST, "reference_gate() has not built a gate yet"
-    return _LATEST[0]
+    """A fresh blocked obligation in :data:`SCHEDULER`, for every generated contract case."""
+    SCHEDULER.reset()
+    return SCHEDULER.binding()
 
 
 def reference_sweep() -> DueWorkSweep:
-    """The contract sweep over the scheduler :func:`reference_gate` built last."""
-    return latest_reference().sweep()
+    """The contract sweep over :data:`SCHEDULER`."""
+    return SCHEDULER.sweep()

@@ -34,22 +34,16 @@ generates one case per proof in :data:`ELIGIBILITY_PROOFS`, plus
 own sweep.
 """
 
-import sys
-from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import AbstractContextManager, contextmanager
+from collections.abc import Callable, Iterable, Mapping
+from contextlib import AbstractContextManager
 from datetime import timedelta
-from types import CodeType, FrameType
 from typing import Any
 
 from due_work_harness.binding import (
     INVOCATION_AUTHORING_OPERATIONS,
     SELECTION_AUTHORING_OPERATIONS,
     TRANSITION_AUTHORING_OPERATIONS,
-    _referenced_values,
     assert_binding_reaches_production,
-    callable_code,
-    is_harness_owned,
-    is_test_code,
 )
 from due_work_harness.models import DueWorkContractDesignError, HarnessModel
 from due_work_harness.profiles.automatic_recovery import DueWorkSweep
@@ -128,7 +122,9 @@ class ExecutionGate[IdentityT, SnapshotT, ObservationT](HarnessModel):
 
     #: The smallest step :attr:`advance` really moves the clock by. The boundary is
     #: probed this far before ``recheck_after``: a clock counting whole seconds
-    #: never moves by a microsecond, so it declares one second.
+    #: never moves by a microsecond, so it declares one second. It is also how early
+    #: an inspection may fire unseen, so it may be at most one second and at most a
+    #: tenth of ``recheck_after``.
     clock_resolution: timedelta = timedelta(microseconds=1)
 
     def model_post_init(self, _context: Any) -> None:
@@ -138,12 +134,19 @@ class ExecutionGate[IdentityT, SnapshotT, ObservationT](HarnessModel):
             raise DueWorkContractDesignError("ExecutionGate needs a positive interval and a covering recovery timeout")
         if self.recheck_after is not None and self.recheck_after <= timedelta(0):
             raise DueWorkContractDesignError("ExecutionGate recheck_after must be positive")
-        if self.clock_resolution <= timedelta(0) or (
-            self.recheck_after is not None and self.clock_resolution >= self.recheck_after
+        if (
+            self.clock_resolution <= timedelta(0)
+            or self.clock_resolution > MAX_CLOCK_RESOLUTION
+            or (self.recheck_after is not None and self.clock_resolution * 10 > self.recheck_after)
         ):
             raise DueWorkContractDesignError(
-                "ExecutionGate clock_resolution must be positive and shorter than recheck_after"
+                f"ExecutionGate clock_resolution must be positive, at most {MAX_CLOCK_RESOLUTION} and at most a "
+                f"tenth of recheck_after: it is how early an inspection may fire unseen"
             )
+
+
+#: The coarsest clock a gate may declare; see :attr:`ExecutionGate.clock_resolution`.
+MAX_CLOCK_RESOLUTION = timedelta(seconds=1)
 
 
 #: One binding shape shared by native lifecycles and work-table adapters: a factory
@@ -250,47 +253,76 @@ def assert_eligible_gate_recovers_lost_notification(gate: ExecutionGate) -> None
 
 def assert_periodic_inspection_is_bounded(gate: ExecutionGate) -> None:
     """
-    The fallback inspection happens on its declared boundary, and inspects without running the blocked work.
+    The fallback inspection happens on its declared boundary, again later, and inspects without running the work.
 
-    With ``recheck_after``, two windows are probed: from admission to the first
-    inspection, and from that inspection to the next. In each, the clock is moved
-    to :attr:`~ExecutionGate.clock_resolution` before the boundary (the work must
-    be unselected, and no route or recovery may touch it), then across it (the
-    work must be selected, and one recovery must inspect it). The inspection
-    must not call the provider, change the product state, drop the obligation or,
-    when inspections are observed apart, execute; a second recovery without time
-    passing must not inspect again. The second window is what finds a fallback
-    that re-arms too soon: after one second instead of ``recheck_after``, say.
-    Without ``recheck_after``, the whole recovery timeout passes and the work must
-    still be blocked and untouched.
+    With ``recheck_after``, two windows are probed. From admission, the clock is
+    moved to :attr:`~ExecutionGate.clock_resolution` before the boundary (the work
+    must be unselected, and no route or recovery may touch it), then across it
+    (the work must be selected, and one recovery must inspect it). From that
+    inspection, the clock is moved to just before the boundary again (nothing may
+    run), then recovery runs in :attr:`~ExecutionGate.recovery_interval` steps
+    until it inspects the work again, within the recovery timeout: later than
+    ``recheck_after`` is allowed, as a continuation delay may push it, but never
+    earlier and never not at all. At each inspection the provider must not be
+    called, the product state must not change, the obligation must stay owed and,
+    when inspections are observed apart, nothing may execute; a second recovery
+    without time passing must not inspect again. Without ``recheck_after``, the
+    whole recovery timeout passes and the work must still be blocked and untouched.
     """
     assert_blocked_gate_preserves_intent(gate)
     if gate.recheck_after is None:
         gate.advance(gate.recovery_timeout)
         assert_blocked_gate_preserves_intent(gate)
         return
-    for window in ("from admission", "since the last inspection"):
-        _inspect_across_the_boundary(gate, gate.recheck_after, window)
+    _not_before_the_boundary(gate, gate.recheck_after, "from admission")
+    gate.advance(gate.clock_resolution)
+    assert gate.identity in gate.due_work(), (
+        f"{gate.name}: periodic inspection never becomes due once recheck_after has passed from admission. A "
+        f"clock coarser than {gate.clock_resolution} declares its clock_resolution"
+    )
+    _inspection_leaves_the_work_blocked(gate, _inspecting(gate, lambda: gate.recover()))
+    _not_before_the_boundary(gate, gate.recheck_after, "since the last inspection")
+    gate.advance(gate.clock_resolution)
+    _inspection_leaves_the_work_blocked(gate, _inspecting(gate, lambda: _recover_until_inspected(gate)))
 
 
-def _inspect_across_the_boundary(gate: ExecutionGate, recheck_after: timedelta, window: str) -> None:
+def _not_before_the_boundary(gate: ExecutionGate, recheck_after: timedelta, window: str) -> None:
     gate.advance(recheck_after - gate.clock_resolution)
     assert gate.identity not in gate.due_work(), (
         f"{gate.name}: blocked work is due before recheck_after has passed {window} ({recheck_after}, probed "
         f"{gate.clock_resolution} early): the periodic inspection runs too often"
     )
     assert_blocked_gate_preserves_intent(gate)
-    gate.advance(gate.clock_resolution)
-    assert gate.identity in gate.due_work(), (
-        f"{gate.name}: periodic inspection never becomes due once recheck_after has passed {window}. A clock "
-        f"coarser than {gate.clock_resolution} declares its clock_resolution"
-    )
+
+
+def _recover_until_inspected(gate: ExecutionGate) -> None:
+    before, elapsed = _inspected(gate), timedelta(0)
+    while True:
+        gate.recover()
+        if _inspected(gate) > before:
+            return
+        assert elapsed < gate.recovery_timeout, (
+            f"{gate.name}: periodic inspection never inspected the blocked work again within "
+            f"{gate.recovery_timeout} of recheck_after passing since the last inspection"
+        )
+        step = min(gate.recovery_interval, gate.recovery_timeout - elapsed)
+        gate.advance(step)
+        elapsed += step
+
+
+def _inspecting(gate: ExecutionGate, inspect: Callable[[], object]) -> tuple[int, Any, int]:
+    """Run ``inspect``, require it to inspect, and return what the blocked work looked like before it."""
     calls, outcome, executions, before = gate.effect_calls(), gate.observe(), gate.executions(), _inspected(gate)
-    gate.recover()
+    inspect()
     assert _inspected(gate) > before, (
-        f"{gate.name}: periodic inspection never inspected the blocked work {window}. An inspection that does "
-        f"not execute declares `inspections`"
+        f"{gate.name}: periodic inspection never inspected the blocked work. An inspection that does not "
+        f"execute declares `inspections`"
     )
+    return calls, outcome, executions
+
+
+def _inspection_leaves_the_work_blocked(gate: ExecutionGate, before: tuple[int, Any, int]) -> None:
+    calls, outcome, executions = before
     assert gate.effect_calls() == calls, f"{gate.name}: the periodic inspection called the provider for blocked work"
     assert gate.observe() == outcome, f"{gate.name}: the periodic inspection changed the product state of blocked work"
     assert gate.identity in gate.owed_work(), f"{gate.name}: the periodic inspection dropped the blocked obligation"
@@ -318,12 +350,17 @@ def assert_gate_is_recovered_by_the_contract_sweep(gate: ExecutionGate, sweep: D
     they would all pass while the sweep that profile A proves never releases the
     work. So the sweep's own selection (compared through its ``identity_of``) must
     leave the blocked work out and take it in once eligible, and ``gate.recover``
-    must enter the code the sweep's ``run_tick`` runs: the tick itself when it is
-    production or harness code, or the non-test callables an adapter's
-    ``run_tick`` references. Entry is observed with a profiler on the calling
-    thread, so a recovery that only hands the tick to another thread or process
-    is not seen.
+    must make the sweep's dispatch path send it: the gate's identity must appear
+    in the sweep's ``dispatched_ids``, the recorder of what its tick dispatched,
+    during ``gate.recover`` and not before. What is observed is the dispatch, not
+    which code ran where, so a tick reached through a service, a module attribute,
+    a task queue or another thread is recognised alike; a recovery that calls the
+    sweep's dispatch path without its tick would pass, and is for review.
     """
+    assert sweep.dispatched_ids is not None, (
+        f"{gate.name}: the contract sweep {sweep.name!r} declares no dispatched_ids, so nothing shows whether "
+        f"the gate's recovery runs it. Declare the recorder of what its tick dispatches"
+    )
 
     def selected() -> set[Any]:
         return {sweep.identity_of(row) for row in sweep.due_work()}
@@ -334,53 +371,12 @@ def assert_gate_is_recovered_by_the_contract_sweep(gate: ExecutionGate, sweep: D
         f"{gate.name}: eligible work is absent from the contract sweep's selection: the gate describes another "
         f"selection than the one {sweep.name!r} recovers"
     )
-    ticks = _tick_code(sweep.run_tick)
-    assert ticks, f"{gate.name}: the contract sweep's run_tick reaches no inspectable code to recognise"
-    with _entered_code() as entered:
-        gate.recover()
-    assert ticks & entered, (
-        f"{gate.name}: recover never reached the contract sweep's tick ({sweep.name!r}). Bind the recovery that "
-        f"runs the sweep, not another path to the same worker"
+    assert gate.identity not in sweep.dispatched_ids(), (
+        f"{gate.name}: the contract sweep recorded {gate.identity!r} as dispatched before the gate's recovery ran, "
+        f"so its recovery cannot be told from an earlier one"
     )
-
-
-def _tick_code(run_tick: Callable[..., Any]) -> set[CodeType]:
-    """The code a tick binding runs: its own when not test code, else the non-test callables it references."""
-    found: set[CodeType] = set()
-    seen: set[int] = set()
-
-    def collect(binding: Callable[..., Any]) -> None:
-        if id(binding) in seen:
-            return
-        seen.add(id(binding))
-        # A task object's __call__ lives in its library; the code the task runs is ``run``.
-        run = getattr(binding, "run", None)
-        code = callable_code(run if callable(run) and not hasattr(binding, "__code__") else binding)
-        if code is None:
-            return
-        if not is_test_code(code) or is_harness_owned(code):
-            found.add(code)
-            return
-        for value in _referenced_values(binding):
-            if callable(value):
-                collect(value)
-
-    collect(run_tick)
-    return found
-
-
-@contextmanager
-def _entered_code() -> Iterator[set[CodeType]]:
-    """Every Python code object entered on this thread while the context is open."""
-    entered: set[CodeType] = set()
-
-    def profile(frame: FrameType, event: str, _arg: object) -> None:
-        if event == "call":
-            entered.add(frame.f_code)
-
-    previous = sys.getprofile()
-    sys.setprofile(profile)
-    try:
-        yield entered
-    finally:
-        sys.setprofile(previous)
+    gate.recover()
+    assert gate.identity in sweep.dispatched_ids(), (
+        f"{gate.name}: recover never dispatched {gate.identity!r} through the contract sweep {sweep.name!r}. Bind "
+        f"the recovery that runs the sweep, not another path to the same worker"
+    )
