@@ -82,7 +82,7 @@ from due_work_harness.binding import (
     assert_test_binding_delegates_to_production,
     assert_test_binding_forwards,
 )
-from due_work_harness.host import current_host
+from due_work_harness.host import current_host, racing
 from due_work_harness.models import HarnessModel
 
 
@@ -587,10 +587,11 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
 
     ``timeout`` is the race's one deadline, in seconds, from the moment the
     racers start: the barrier and the joins both wait only for what is left of
-    it. A host that bounds each statement should bound it well inside that
-    deadline (the Django host's five seconds, against the default ten), so a
-    claim blocked on a lock fails with the database's own error rather than,
-    depending on timing, either that or a racer that never returned.
+    it. Each racer enters :func:`~due_work_harness.host.racing` with it, so the
+    host's scope bounds the racer's lock waits at half of it (the Django host's
+    ``lock_timeout``): a claim blocked on a lock fails with the database's own
+    error, deterministically, rather than as a racer that never returned. A
+    correct claim that holds its lock longer than that needs a larger ``timeout``.
 
     The test must run with real commits — see the host's
     ``database_marks(True)``; inside a test-wrapping transaction the racer
@@ -605,7 +606,7 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
     connection_scope = current_host().connection_scope
 
     def racer() -> None:
-        with connection_scope():
+        with racing(timeout), connection_scope():
             try:
                 barrier.wait(timeout=max(0.0, deadline - time.monotonic()))
                 claimed = ownership.claim()
@@ -633,7 +634,9 @@ def assert_claim_is_exclusive_across_connections(ownership: FencedOwnership, *, 
     assert not errors, (
         f"{ownership.name}: a racing claim raised instead of losing cleanly: "
         f"{errors!r}. Losing a claim race is an ordinary outcome and must "
-        f"return None, not error"
+        f"return None, not error. Where the host bounds lock waits, each racer's are bounded at "
+        f"{timeout / 2:g}s, half the race's {timeout:g}s: a claim that correctly holds its lock longer "
+        f"than that needs a larger timeout"
     )
     winners = [claim for claim in claims if claim is not None]
     assert len(winners) == 1, (

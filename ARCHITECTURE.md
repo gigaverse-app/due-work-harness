@@ -62,7 +62,7 @@ dataclasses:
 | `callback_breaker(fail_at)` | `CallbackBreaker \| None` | crash histories (each after-commit callback failing) |
 | `publication_breaker(refuse_at)` | `PublicationBreaker \| None` | crash histories (the broker refusing each publication; `celery_publication_breaker` for Celery) |
 | `receiver_breaker(fail_at)` | `ReceiverBreaker \| None` | crash histories (each receiver of the signals an adopter names failing; `django_receiver_breaker(*signals)` for Django) |
-| `connection_scope()` | `Callable[[], ContextManager]` | two-connection races (profile B) |
+| `connection_scope()` | `Callable[[], ContextManager]` | two-connection races (profile B); inside a racer, `host.race_timeout()` is the race's deadline, to bound the racer's waits from |
 | `selection_inspectors` | `tuple[SelectionInspector, ...]` | profile A database proofs: `index_served(selection)`, `replica_read(selection)`, `scan_counts(selection)`, `statements_during(run)` |
 | `ambient_context()` | `Callable[[], object] \| None` | profile A `AMBIENT_CONTEXT_PROOFS`: a tick restores ambient context (opt-in; fails when unset) |
 | `publication_recorder()` | `Callable[[], ContextManager[list[str]]] \| None` | lifecycle-state proof 2c: work handed off only as a queue message |

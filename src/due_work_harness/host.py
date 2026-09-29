@@ -29,6 +29,7 @@ or in the pytest configuration file::
 
 from collections.abc import Callable, Collection, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -190,6 +191,32 @@ class SelectionInspector(Protocol):
         ...
 
 
+#: The deadline, in seconds, of the race the current thread is a racer in; ``None`` outside a race.
+_RACE_TIMEOUT: ContextVar[float | None] = ContextVar("due_work_harness_race_timeout", default=None)
+
+
+@contextmanager
+def racing(timeout: float) -> Iterator[None]:
+    """
+    Mark the calling thread as a racer whose race ends ``timeout`` seconds after it starts.
+
+    A proof that races connections enters this in each racer thread, around the
+    host's ``connection_scope()``, so the scope can bound the racer's database
+    waits from the race's own deadline (see :func:`race_timeout`) instead of a
+    fixed one of its own.
+    """
+    token = _RACE_TIMEOUT.set(timeout)
+    try:
+        yield
+    finally:
+        _RACE_TIMEOUT.reset(token)
+
+
+def race_timeout() -> float | None:
+    """The deadline of the race the calling thread is a racer in, in seconds; ``None`` outside one."""
+    return _RACE_TIMEOUT.get()
+
+
 class Host(HarnessModel):
     """What the application's framework supplies. Every field is optional."""
 
@@ -231,7 +258,8 @@ class Host(HarnessModel):
     reply_breaker: SkipValidation[ReplyBreaker | None] = None
 
     #: The connection lifecycle of a thread a proof starts, for example to race
-    #: two claims on two real connections.
+    #: two claims on two real connections. Inside a race, :func:`race_timeout`
+    #: gives the race's deadline, from which a scope bounds the racer's waits.
     connection_scope: Callable[[], AbstractContextManager[None]] = nullcontext
 
     #: Database facts about a selection: index use, replica reads, scan ratio.

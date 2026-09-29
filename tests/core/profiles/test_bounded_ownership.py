@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from due_work_harness.host import race_timeout
 from due_work_harness.profiles.bounded_ownership import (
     FENCED_OWNERSHIP_PROOFS,
     FencedOwnership,
@@ -521,3 +522,16 @@ def test_the_lease_duration_proof_reads_the_configuration() -> None:
             max_work_duration=timedelta(hours=1),
             renews_during_work=False,
         )
+
+
+def test_each_racer_knows_the_race_deadline_so_the_host_can_bound_its_waits() -> None:
+    seen: list[float | None] = []
+
+    class _Recording(_LockedClaims):
+        def claim(self) -> tuple[int, UUID] | None:
+            seen.append(race_timeout())
+            return super().claim()
+
+    assert_claim_is_exclusive_across_connections(_binding(_Recording()), timeout=3)
+    assert seen == [3, 3]
+    assert race_timeout() is None, "outside the race the calling thread is no racer"

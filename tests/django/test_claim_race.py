@@ -8,15 +8,16 @@ fails the proof, with the timeout's error, instead of leaving one winner and a
 green result.
 """
 
-import inspect
 import threading
+import time
 from collections.abc import Iterator
+from contextlib import nullcontext
 from uuid import UUID, uuid4
 
 import pytest
 from django.db import connection, transaction
 
-from due_work_harness.integrations import django as django_integration
+from due_work_harness.host import racing
 from due_work_harness.integrations.django import django_host
 from due_work_harness.integrations.django import lifecycle_references as ref
 from due_work_harness.profiles.bounded_ownership import (
@@ -81,9 +82,8 @@ def test_a_claim_that_reads_before_it_writes_wins_twice() -> None:
         assert_claim_is_exclusive_across_connections(_owner(claim_without_locking))
 
 
-def test_a_claim_blocked_on_a_lock_fails_the_proof_instead_of_hanging_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(django_integration, "RACER_STATEMENT_TIMEOUT_MS", 500)
-
+def test_a_claim_blocked_on_a_lock_fails_the_proof_naming_the_lock_bound() -> None:
+    # A non-default race deadline: the racers' lock waits are bounded at half of it, and the message says so.
     def hold_the_lock_the_claim_needs() -> int:
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_lock(%s)", [_LOCK])
@@ -95,38 +95,60 @@ def test_a_claim_blocked_on_a_lock_fails_the_proof_instead_of_hanging_it(monkeyp
         return None
 
     try:
-        with pytest.raises(AssertionError, match=r"raised instead of losing cleanly.*statement timeout"):
+        with pytest.raises(AssertionError, match=r"(?s)raised instead of losing cleanly.*lock timeout.*1\.5s"):
             assert_claim_is_exclusive_across_connections(
-                _owner(claim_behind_the_lock, hold_the_lock_the_claim_needs), timeout=5
+                _owner(claim_behind_the_lock, hold_the_lock_the_claim_needs), timeout=3
             )
     finally:
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_unlock_all()")
 
 
-def test_a_racing_threads_connection_is_bounded_and_closed_even_when_persistent() -> None:
+def _claim_holding_its_lock(hold: float) -> object:
+    def claim() -> tuple[int, UUID] | None:
+        # A correct blocking claim: FOR UPDATE without SKIP LOCKED, so the loser waits for the winner's commit.
+        with transaction.atomic():
+            row = ref.LifecycleAttempt.objects.select_for_update().filter(status=Status.REQUESTED).first()
+            if row is None:
+                return None
+            time.sleep(hold)
+            ref.LifecycleAttempt.objects.filter(pk=row.pk).update(status=Status.RUNNING)
+            return row.pk, uuid4()
+
+    return claim
+
+
+def test_a_blocking_claim_that_holds_its_lock_inside_the_bound_wins_once() -> None:
+    assert_claim_is_exclusive_across_connections(_owner(_claim_holding_its_lock(1.0)), timeout=6)
+
+
+def test_a_blocking_claim_that_holds_its_lock_past_the_bound_is_told_to_raise_the_timeout() -> None:
+    with pytest.raises(AssertionError, match=r"(?s)lock timeout.*bounded at 1s, half the race's 2s.*larger timeout"):
+        assert_claim_is_exclusive_across_connections(_owner(_claim_holding_its_lock(1.5)), timeout=2)
+
+
+@pytest.mark.parametrize(("race", "lock", "statement"), [(None, "5s", "10s"), (4.0, "2s", "4s")])
+def test_a_racing_threads_connection_is_bounded_and_closed_even_when_persistent(
+    race: float | None, lock: str, statement: str
+) -> None:
     seen: dict[str, object] = {}
 
     def racer() -> None:
         # A persistent connection: close_old_connections would leave it open with its thread gone. The
         # settings dict is shared by every thread's wrapper, so this thread's wrapper gets a copy.
         connection.settings_dict = {**connection.settings_dict, "CONN_MAX_AGE": None}
-        with django_host(production_packages=set()).connection_scope():
-            with connection.cursor() as cursor:
-                cursor.execute("SHOW statement_timeout")
-                seen["timeout"] = cursor.fetchone()[0]
-            seen["open_inside"] = connection.connection is not None
+        with racing(race) if race is not None else nullcontext():
+            with django_host(production_packages=set()).connection_scope():
+                with connection.cursor() as cursor:
+                    cursor.execute("SHOW lock_timeout")
+                    seen["lock"] = cursor.fetchone()[0]
+                    cursor.execute("SHOW statement_timeout")
+                    seen["statement"] = cursor.fetchone()[0]
+                seen["open_inside"] = connection.connection is not None
         seen["closed_after"] = connection.connection is None
 
     thread = threading.Thread(target=racer)
     thread.start()
     thread.join(timeout=30)
-    assert seen == {"timeout": "5s", "open_inside": True, "closed_after": True}
+    assert seen == {"lock": lock, "statement": statement, "open_inside": True, "closed_after": True}
     assert connection.settings_dict["CONN_MAX_AGE"] == 0, "the racer's persistent setting leaked into this thread"
-
-
-def test_a_blocked_claim_times_out_in_the_database_before_the_race_gives_up_on_it() -> None:
-    # Ordered, so a blocked claim reports the database's own error rather than, depending on timing,
-    # either that error or a racer that never returned.
-    race = inspect.signature(assert_claim_is_exclusive_across_connections).parameters["timeout"].default
-    assert django_integration.RACER_STATEMENT_TIMEOUT_MS / 1000 < race

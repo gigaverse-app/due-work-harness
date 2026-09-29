@@ -17,8 +17,8 @@ What the host supplies:
 * ``in_transaction`` — ``connection.in_atomic_block`` on the default connection;
 * ``worker_killer`` — :func:`.commits.django_worker_killer`, counting commits on
   the calling thread's default connection;
-* ``connection_scope`` — a racing thread's own connection, with a statement timeout
-  on PostgreSQL and closed on every exit;
+* ``connection_scope`` — a racing thread's own connection, its lock waits bounded at
+  half the race's deadline on PostgreSQL, closed on every exit;
 * ``selection_inspectors`` — :class:`.selection.DjangoSelectionInspector` for
   QuerySet selections (PostgreSQL plans, replica reads, statement capture);
 * ``frozen_clock`` — :func:`~due_work_harness.integrations.clocks.time_machine_clock`;
@@ -56,11 +56,9 @@ def _in_transaction() -> bool:
     return connection.in_atomic_block
 
 
-#: A racing thread's statements may take this long on PostgreSQL. A claim blocked on
-#: another connection's lock then fails with a database error, instead of holding a
-#: worker thread and its connection for as long as the server will wait. Half the
-#: race proof's default deadline, so that error arrives before the race gives up.
-RACER_STATEMENT_TIMEOUT_MS = 5_000
+#: The race deadline a racing thread's database waits are bounded from when the proof
+#: that started it gives none, in seconds (the race proof's default).
+DEFAULT_RACE_TIMEOUT = 10.0
 
 
 @contextmanager
@@ -68,16 +66,28 @@ def _connection_scope() -> Iterator[None]:
     """
     A racing thread's own connection: bounded while it runs, closed on every exit.
 
+    On PostgreSQL the bounds come from the race's deadline
+    (:func:`~due_work_harness.host.race_timeout`): ``lock_timeout`` is half of it,
+    so a claim blocked on the other connection's lock fails with the database's
+    error well before the race gives up on it, and ``statement_timeout`` is all of
+    it, so nothing the racer started outlives the race on the server.
+
     ``close_old_connections`` closes only connections past their ``CONN_MAX_AGE``, so
     a persistent one would outlive the thread that owned it; ``close_all`` always
     closes this thread's connections.
     """
     from django.db import connection, connections
 
+    from due_work_harness.host import race_timeout
+
+    race = race_timeout() or DEFAULT_RACE_TIMEOUT
     try:
         if connection.vendor == "postgresql":
             with connection.cursor() as cursor:
-                cursor.execute("SELECT set_config('statement_timeout', %s, false)", [f"{RACER_STATEMENT_TIMEOUT_MS}ms"])
+                cursor.execute(
+                    "SELECT set_config('lock_timeout', %s, false), set_config('statement_timeout', %s, false)",
+                    [f"{int(race * 500)}ms", f"{int(race * 1000)}ms"],
+                )
         yield
     finally:
         connections.close_all()
