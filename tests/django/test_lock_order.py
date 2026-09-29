@@ -64,6 +64,23 @@ pytestmark = pytest.mark.django_db(transaction=True)
         ('WITH "gone" AS (DELETE FROM "a" WHERE "a"."id" = 1 RETURNING "a"."id") DELETE FROM "b"', ("a", "b")),
         ('WITH "c" AS MATERIALIZED (SELECT "a"."id" FROM "a" FOR UPDATE) SELECT 1', ("a",)),
         ('WITH "plain" AS (SELECT "a"."id" FROM "a") SELECT "b"."id" FROM "b" FOR UPDATE', ("b",)),
+        # Writes that lock the rows they change, however they are spelled.
+        ('UPDATE ONLY "a" SET "s" = %s', ("a",)),
+        ('DELETE FROM ONLY "a" WHERE "id" = %s', ("a",)),
+        ('MERGE INTO "a" USING "b" ON "a"."id" = "b"."id" WHEN MATCHED THEN UPDATE SET "x" = 1', ("a",)),
+        ('INSERT INTO "a" ("id") VALUES (%s) ON CONFLICT ("id") DO UPDATE SET "x" = EXCLUDED."x"', ("a",)),
+        ('INSERT INTO "a" ("id") VALUES (%s) ON CONFLICT DO NOTHING', ()),
+        # A subquery with its own FOR UPDATE locks its rows, before the statement it feeds.
+        (
+            'UPDATE "a" SET "s" = 1 WHERE "a"."id" IN (SELECT U0."id" FROM "b" U0 LIMIT 1 FOR UPDATE SKIP LOCKED)',
+            ("b", "a"),
+        ),
+        # An E'' literal's backslash escape does not end it.
+        ("""SELECT "a"."id" FROM "a" WHERE "a"."n" = E'\\'(' FOR UPDATE""", ("a",)),
+        # A parenthesis inside a quoted identifier opens nothing either.
+        ('SELECT "a"."weird(" FROM "a" FOR UPDATE', ("a",)),
+        # FOR UPDATE OF names aliases, quoted or not.
+        ('SELECT "a"."id" FROM "a" INNER JOIN "b" T3 ON ("a"."b_id" = T3."id") FOR UPDATE OF "a", T3', ("a", "b")),
         # Share locks and table locks are not recorded (documented).
         ('SELECT "work"."id" FROM "work" WHERE "work"."id" = 1 FOR SHARE', ()),
         ('LOCK TABLE "work" IN EXCLUSIVE MODE', ()),
@@ -88,6 +105,15 @@ pytestmark = pytest.mark.django_db(transaction=True)
         "cte-delete-then-delete",
         "materialized-cte-for-update",
         "read-only-cte",
+        "update-only",
+        "delete-only",
+        "merge",
+        "insert-on-conflict-update",
+        "insert-on-conflict-nothing",
+        "subquery-for-update",
+        "e-string",
+        "paren-in-a-quoted-identifier",
+        "for-update-of-alias",
         "for-share",
         "lock-table",
     ],
@@ -289,3 +315,41 @@ def test_another_aliass_transaction_neither_starts_nor_ends_a_sequence(
                 _lock("lock_order_b")
     # Two one-table transactions on default: no order. Merged under the other alias's block, a false (a, b).
     assert recorder.sequences == []
+
+
+def test_a_lock_taken_without_waiting_adds_no_edge_into_it() -> None:
+    # SKIP LOCKED and NOWAIT never wait, so the transaction taking them cannot be the one a deadlock waits in.
+    assert_consistent_lock_order(
+        [
+            LockSequence(label="claims a, then locks b", tables=("a", "b"), without_waiting=frozenset({"a"})),
+            LockSequence(label="locks b, then claims a", tables=("b", "a"), without_waiting=frozenset({"a"})),
+        ]
+    )
+    with pytest.raises(AssertionError, match="deadlock"):
+        assert_consistent_lock_order(
+            [
+                LockSequence(label="claims a, then locks b", tables=("a", "b")),
+                LockSequence(label="locks b, then claims a", tables=("b", "a")),
+            ]
+        )
+
+
+@pytest.mark.parametrize("clause", ["SKIP LOCKED", "NOWAIT"])
+def test_the_recorder_marks_a_claim_that_never_waits(two_tables: None, clause: str) -> None:
+    with record_lock_order("claim") as recorder:
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(f'SELECT id FROM "lock_order_a" WHERE id = 1 FOR UPDATE {clause}')
+            cursor.execute('SELECT id FROM "lock_order_b" WHERE id = 1 FOR UPDATE')
+            cursor.execute('SELECT id FROM "lock_order_a" WHERE id = 1 FOR UPDATE SKIP LOCKED')
+    assert [(item.tables, item.without_waiting) for item in recorder.sequences] == [
+        (("lock_order_a", "lock_order_b"), frozenset({"lock_order_a"}))
+    ]
+
+
+def test_a_table_also_locked_with_waiting_is_not_marked(two_tables: None) -> None:
+    with record_lock_order("claim") as recorder:
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute('SELECT id FROM "lock_order_a" WHERE id = 1 FOR UPDATE SKIP LOCKED')
+            cursor.execute('SELECT id FROM "lock_order_b" WHERE id = 1 FOR UPDATE')
+            cursor.execute('UPDATE "lock_order_a" SET id = 1 WHERE id = 1')
+    assert [item.without_waiting for item in recorder.sequences] == [frozenset()]
