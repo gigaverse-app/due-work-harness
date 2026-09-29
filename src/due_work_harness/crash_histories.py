@@ -586,6 +586,12 @@ def divergence_for(findings: Findings | None) -> type[AssertionError]:
     return AssertionError if findings is None else HistoriesDiverged
 
 
+def findings_from(runs: list[HistoryRun]) -> Findings:
+    """The table these runs would pin: what normal operation reaches, and each history that reaches something else."""
+    delivered = runs[0].after
+    return Findings(delivered, {run.label: run.after for run in runs[1:] if run.after != delivered})
+
+
 def assert_findings_hold(name: str, runs: list[HistoryRun], findings: Findings | None) -> None:
     """
     The runs match a history's declared findings table; nothing to check when it declares none.
@@ -595,7 +601,7 @@ def assert_findings_hold(name: str, runs: list[HistoryRun], findings: Findings |
     """
     recorder = current_recorder()
     if recorder is not None:
-        recorder.record(name, runs)
+        recorder.record(name, findings_from(runs))
         return
     if findings is not None:
         assert_runs_match_table(name, runs, delivered=findings.delivered, outcomes=findings.outcomes)

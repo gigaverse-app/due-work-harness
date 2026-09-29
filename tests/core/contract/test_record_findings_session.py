@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from textwrap import dedent
 
-from tests.core.contract.test_declared_findings_session import SUITE
+from tests.core.contract.child_suites import SUITE
 
 
 def _run(tmp_path: Path, *options: str) -> subprocess.CompletedProcess[str]:
@@ -37,3 +37,10 @@ def test_recording_prints_the_findings_and_ignores_the_stale_table(tmp_path: Pat
     assert "Findings(" in recorded
     assert "('retryable_failed', ('running',))," in recorded
     assert "'worker died after commit 1': ('retryable_failed', ())" in recorded
+
+
+def test_recording_under_xdist_is_refused_instead_of_reporting_nothing(tmp_path: Path) -> None:
+    completed = _run(tmp_path, "--due-work-record-findings", "-n", "2")
+
+    assert completed.returncode != 0
+    assert "run without -n" in completed.stderr + completed.stdout

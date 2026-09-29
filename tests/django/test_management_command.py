@@ -1,55 +1,73 @@
 """
-``management_command`` resolves the project's own command and can run it later on the host's clock.
+``management_command`` resolves the project's own command, runs it later on the host's clock, and refuses test code.
 
-The command is replaced by a recording one, so the test sees what production
-code would: the command class runs, its arguments arrive, and time has moved.
+The production command is Django's ``remove_stale_contenttypes`` with its ``handle`` recorded, so the
+test sees what production would: the command class runs, its options arrive, and time has moved.
 """
 
+from collections.abc import Iterator
 from datetime import datetime, timedelta
+from typing import Any
 from unittest import mock
 
 import pytest
-from django.core.management.base import BaseCommand, CommandParser
+from django.contrib.contenttypes.management.commands.remove_stale_contenttypes import Command
+from django.core.management.base import BaseCommand
 from django.utils.timezone import now
 
+from due_work_harness import configure
+from due_work_harness.integrations.django import django_host
 from due_work_harness.integrations.django.commands import management_command
 
-
-class RecordingCommand(BaseCommand):
-    runs: list[tuple[tuple[str, ...], dict[str, str], datetime]] = []
-
-    def add_arguments(self, parser: CommandParser) -> None:
-        parser.add_argument("label")
-        parser.add_argument("--flag", default="off")
-
-    def handle(self, *args: str, **options: str) -> None:
-        self.runs.append((args, {"label": options["label"], "flag": options["flag"]}, now()))
+COMMAND = "remove_stale_contenttypes"
 
 
-@pytest.fixture(autouse=True)
-def _project_commands():
-    RecordingCommand.runs = []
-    with mock.patch("django.core.management.get_commands", return_value={"recording": RecordingCommand()}):
-        yield
+class CommandDefinedInATest(BaseCommand):
+    """Defined in a test module, so recovery built from it would certify nothing."""
+
+    def handle(self, *args: Any, **options: Any) -> None:
+        raise AssertionError("a test-defined command must be refused before it runs")
 
 
-def test_runs_the_projects_command_with_its_arguments() -> None:
-    management_command("recording", "first", flag="on")()
+@pytest.fixture
+def runs() -> Iterator[list[tuple[dict[str, Any], datetime]]]:
+    configure(django_host(production_packages={"contenttypes"}))
+    recorded: list[tuple[dict[str, Any], datetime]] = []
 
-    ((_, options, _),) = RecordingCommand.runs
-    assert options == {"label": "first", "flag": "on"}
+    def handle(command: Command, *args: Any, **options: Any) -> None:
+        recorded.append((options, now()))
+
+    with mock.patch.object(Command, "handle", handle):
+        yield recorded
 
 
-def test_after_runs_the_command_later_on_the_hosts_frozen_clock() -> None:
+def test_runs_the_projects_command_with_its_options(runs: list[tuple[dict[str, Any], datetime]]) -> None:
+    management_command(COMMAND, verbosity=0)()
+
+    ((options, _),) = runs
+    assert options["verbosity"] == 0
+
+
+def test_after_runs_the_command_later_on_the_hosts_frozen_clock(runs: list[tuple[dict[str, Any], datetime]]) -> None:
     before = now()
 
-    management_command("recording", "later", after=timedelta(days=30))()
+    management_command(COMMAND, after=timedelta(days=30))()
 
-    ((_, _, ran_at),) = RecordingCommand.runs
+    ((_, ran_at),) = runs
     assert ran_at - before >= timedelta(days=30)
     assert now() - before < timedelta(days=1), "the clock is restored afterwards"
 
 
-def test_an_unknown_command_names_the_ones_that_exist() -> None:
-    with pytest.raises(AssertionError, match=r"no management command 'missing'.*\['recording'\]"):
+def test_an_unknown_command_names_the_ones_that_exist(runs: list[tuple[dict[str, Any], datetime]]) -> None:
+    with pytest.raises(AssertionError, match=rf"no management command 'missing'.*'{COMMAND}'"):
         management_command("missing")()
+
+
+def test_a_command_defined_in_test_code_is_refused_as_recovery(runs: list[tuple[dict[str, Any], datetime]]) -> None:
+    with mock.patch(
+        "due_work_harness.integrations.django.commands.get_commands", return_value={"mine": CommandDefinedInATest()}
+    ):
+        with pytest.raises(
+            AssertionError, match=r"management command 'mine' is .*CommandDefinedInATest.*production packages"
+        ):
+            management_command("mine")()

@@ -73,6 +73,8 @@ def pytest_configure(config: pytest.Config) -> None:
     if config.getoption(SUMMARY) and not hasattr(config, "workerinput"):
         config.pluginmanager.register(_Summary(), SUMMARY_PLUGIN)
     if config.getoption(RECORD):
+        if config.getoption("numprocesses", default=None) or hasattr(config, "workerinput"):
+            raise pytest.UsageError(f"{RECORD} records in the process that runs the histories: run without -n")
         config.pluginmanager.register(_Recording(), RECORD_PLUGIN)
     path = config.getini("due_work_harness_host")
     if not path:

@@ -321,14 +321,19 @@ def _referenced_values(binding: Callable[..., Any]) -> tuple[Any, ...]:
     return (*values, *methods)
 
 
+def is_production_value(value: Any) -> bool:
+    """Whether a function, class, module or instance's class is defined in one of the host's production packages."""
+    defining = _defining_file(value)
+    return defining is not None and _is_production_file(defining)
+
+
 def _references_production_code(binding: Callable[..., Any], *, seen: set[int]) -> bool:
     identity = id(binding)
     if identity in seen:
         return False
     seen.add(identity)
     for value in _referenced_values(binding):
-        defining = _defining_file(value)
-        if defining is not None and _is_production_file(defining):
+        if is_production_value(value):
             return True
         code = callable_code(value) if callable(value) else None
         if code is not None and is_test_code(code) and _references_production_code(value, seen=seen):
