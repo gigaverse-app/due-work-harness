@@ -13,12 +13,16 @@ Two readings are offered:
   index actually narrows every scan of the selection's own table (profile A,
   invariant 5);
 * :func:`scan_counts` — rows returned against rows read and discarded by
-  filters, from an ``EXPLAIN ANALYZE`` plan (the scan-ratio proof).
+  filters, from an ``EXPLAIN ANALYZE`` plan (the scan-ratio proof);
+* :func:`read_cost` — buffers touched and rows visited, from an
+  ``EXPLAIN (ANALYZE, BUFFERS)`` plan (the retained-history proof).
 """
 
 import json
 from collections.abc import Iterator
 from typing import Any
+
+from due_work_harness.host import ReadCost
 
 #: Plan keys proving an index narrowed the rows a scan node returned.
 PRUNING_KEYS = ("Index Cond", "Recheck Cond")
@@ -169,9 +173,44 @@ def scan_counts(plan: dict[str, Any]) -> tuple[float, float]:
 
     Returned is the largest ``Actual Rows`` of any node — the rows the selection
     actually produced before any limit; discarded is every ``Rows Removed by
-    Filter`` in the tree, the rows read only to be thrown away.
+    Filter`` and ``Rows Removed by Index Recheck`` in the tree, the rows read
+    only to be thrown away. PostgreSQL reports each per loop, so a node run in a
+    nested loop counts once per loop; a bitmap that reads a whole index and then
+    rechecks it away shows up only as the recheck.
     """
     nodes = list(iter_plan_nodes(plan))
     returned = max(float(node.get("Actual Rows", 0) or 0) for node in nodes)
-    discarded = sum(float(node.get("Rows Removed by Filter", 0) or 0) for node in nodes)
+    discarded = sum(_removed(node) for node in nodes)
     return returned, discarded
+
+
+def _loops(node: dict[str, Any]) -> float:
+    return float(node.get("Actual Loops", 1) or 1)
+
+
+def _removed_per_loop(node: dict[str, Any]) -> float:
+    return float(node.get("Rows Removed by Filter", 0) or 0) + float(node.get("Rows Removed by Index Recheck", 0) or 0)
+
+
+def _removed(node: dict[str, Any]) -> float:
+    return _removed_per_loop(node) * _loops(node)
+
+
+def read_cost(plan: dict[str, Any], *, table: str) -> ReadCost:
+    """
+    What the read cost, from the root of an ``EXPLAIN (ANALYZE, BUFFERS)`` plan.
+
+    ``blocks`` is the root's inclusive shared-buffer count, so each block is
+    counted once however many nodes touched it. ``visited`` is every row the
+    scans of ``table`` produced or discarded, over all their loops: the work an
+    index that reads its whole range and filters it leaves behind, which
+    ``blocks`` alone would blur on a small table.
+    """
+    scans = [node for node in iter_plan_nodes(plan) if node.get("Relation Name") == table]
+    assert scans, f"the read never scanned {table!r}, so its cost says nothing about that table"
+    visited = sum((float(node.get("Actual Rows", 0) or 0) + _removed_per_loop(node)) * _loops(node) for node in scans)
+    return ReadCost(
+        blocks=int(plan.get("Shared Hit Blocks", 0)) + int(plan.get("Shared Read Blocks", 0)),
+        visited=visited,
+        sequential=any("Seq Scan" in node.get("Node Type", "") for node in scans),
+    )

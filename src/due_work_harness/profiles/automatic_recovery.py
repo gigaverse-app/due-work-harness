@@ -1199,6 +1199,74 @@ def assert_selection_scan_ratio_is_bounded(
     )
 
 
+def assert_selection_cost_does_not_grow_with_the_history(
+    sweep: DueWorkSweep,
+    *,
+    history_rows: int = 1500,
+    owed_rows: int = 5,
+    max_visited_per_owed: float = 4.0,
+    min_buffer_separation: float = 4.0,
+    min_history_blocks: int = 32,
+) -> None:
+    """
+    The selection's cost follows the few rows owed, not the settled history behind them.
+
+    The scan-ratio proof counts rows a filter discards, which a selection can
+    avoid showing: an index walked end to end and rechecked away, a whole index
+    read to build a bitmap. Buffers cannot be argued with. With ``history_rows``
+    settled rows and ``owed_rows`` owed ones, the database reports what the
+    selection read under its normal planner settings, and what reading the whole
+    table reads, and the selection must
+
+    * not scan the table sequentially;
+    * visit at most ``max_visited_per_owed`` rows for each owed row;
+    * touch ``min_buffer_separation`` times fewer buffers than the whole table.
+
+    Two positive controls keep that from passing by looking away. The history
+    must span at least ``min_history_blocks`` buffers, or "fewer than the
+    history" separates nothing (raise ``history_rows`` for a narrow table). And
+    the selection must return the owed rows: one that selects nothing reads
+    nothing.
+
+    Real work rather than a timing: buffers and rows visited are properties of
+    the data and the index, stable across machines. Opt-in, like the scan ratio:
+    it builds ``history_rows`` rows through ``make_terminal``.
+    """
+    delay = declared_recovery_delay(sweep)
+    for _ in range(history_rows):
+        sweep.make_terminal(age=delay + timedelta(days=30))
+    for index in range(owed_rows):
+        sweep.make_owed(age=delay + timedelta(minutes=index + 1))
+
+    selected = _selected_identities(sweep)
+    expected = owed_rows if sweep.page_size is None else min(owed_rows, sweep.page_size)
+    assert len(selected) >= expected, (
+        f"{sweep.name}: the selection returned {len(selected)} of the {owed_rows} owed rows made, so its cost "
+        f"is the cost of not finding them"
+    )
+    selection = sweep.due_work()
+    costs = _inspector(selection, "assert_selection_cost_does_not_grow_with_the_history").read_costs(selection)
+    assert costs.full_table.blocks >= min_history_blocks, (
+        f"{sweep.name}: reading the whole table touched {costs.full_table.blocks} buffers after {history_rows} "
+        f"history rows, under the {min_history_blocks} needed for the comparison to separate anything. "
+        f"Raise history_rows, or check make_terminal creates rows in the selection's table"
+    )
+    assert not costs.selection.sequential, (
+        f"{sweep.name}: the selection scans its table sequentially ({costs.selection}), so its cost is the "
+        f"history's ({costs.full_table})"
+    )
+    assert costs.selection.visited <= owed_rows * max_visited_per_owed, (
+        f"{sweep.name}: the selection visited {costs.selection.visited:.0f} rows to find {owed_rows} owed ones "
+        f"(limit {max_visited_per_owed:g} each) among {history_rows} settled: an index that reads a range and "
+        f"filters it still reads the history ({costs.selection})"
+    )
+    assert costs.selection.blocks * min_buffer_separation < costs.full_table.blocks, (
+        f"{sweep.name}: the selection touched {costs.selection.blocks} buffers against {costs.full_table.blocks} "
+        f"for the whole table (needs {min_buffer_separation:g} times fewer). It reads the history through an "
+        f"index as surely as a sequential scan would"
+    )
+
+
 # --- Waste -------------------------------------------------------------------
 #
 # Waste is work the system performs that cannot advance any obligation. It is

@@ -33,6 +33,7 @@ proof green, the proof was about to tell you something.
 | **Lifecycle theater** | `run_once` advances counters without reaching the dependency whose failure drives retries | each execution must reach the injected failing boundary exactly once |
 | **Fresh means in flight** | a row too young for the recovery query is called "in flight" though nothing started it | the in-flight example must be in the production selection before it starts |
 | **The replay that never ran** | a replay-safety check whose second run finds the row settled and no-ops | the replay must reach the external boundary a second time (count goes 0 → 1 → 2) |
+| **The index that reads the history** | a selection served by an index that is walked end to end, or a bitmap over a whole index, and rechecked away: the scan-ratio proof saw no `Filter` to count | rows removed by an index recheck count, per loop; `assert_selection_cost_does_not_grow_with_the_history` (opt-in) compares buffers and rows visited against a full-table read, with the history required to be large enough to separate anything, and the owed rows required to be found |
 | **Agreement with an inert recovery** | a crash history whose recovery does nothing, so every history agrees with an equally unfinished normal operation | when every history converges, recovery must have changed the observation in at least one |
 
 ## Histories that miss the failure

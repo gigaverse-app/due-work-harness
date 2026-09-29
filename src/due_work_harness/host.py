@@ -126,6 +126,25 @@ class ReplyBreaker(Protocol):
     def __call__(self, lose_at: int | None) -> AbstractContextManager[Any]: ...
 
 
+class ReadCost(HarnessModel):
+    """What one read cost the database, from an ``EXPLAIN (ANALYZE, BUFFERS)`` plan."""
+
+    #: Shared buffers the whole read touched, hits and reads alike: a measure of work
+    #: that does not depend on how warm the cache was.
+    blocks: int
+    #: Rows the scans of the selection's own table produced or discarded, over every loop.
+    visited: float
+    #: Whether any scan of that table was sequential.
+    sequential: bool
+
+
+class ReadCosts(HarnessModel):
+    """A selection's read cost beside the cost of reading its whole table: the history it must not depend on."""
+
+    selection: ReadCost
+    full_table: ReadCost
+
+
 class SelectionInspector(Protocol):
     """
     Facts about a selection that only the database can answer.
@@ -154,6 +173,16 @@ class SelectionInspector(Protocol):
 
     def scan_counts(self, selection: object) -> tuple[float, float]:
         """Executing the selection: ``(rows returned, rows read and discarded by filters)``."""
+        ...
+
+    def read_costs(self, selection: object) -> ReadCosts:
+        """
+        Executing the selection under the database's normal planner settings: what it read.
+
+        Alongside it, what reading the selection's whole table reads, so a proof
+        can compare the two. Statistics are refreshed first, so the planner
+        chooses as it would in production.
+        """
         ...
 
     def statements_during(self, run: Callable[[], object]) -> list[str]:
