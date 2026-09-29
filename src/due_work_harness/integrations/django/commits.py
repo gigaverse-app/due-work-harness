@@ -5,11 +5,11 @@ This is the Django host's :class:`~due_work_harness.host.WorkerKiller`. Inside
 the context every commit on the calling thread's default connection is
 counted: an outermost ``COMMIT``, a ``COMMIT`` a statement issues itself, and
 every autocommit statement that wrote — including a ``SELECT`` that writes
-through a function, a zero-row ``UPDATE`` whose predicate does, or a ``DO``
-block, which
+through a function or a zero-row ``UPDATE`` whose predicate does, which
 :func:`~due_work_harness.integrations.django.writes.execute_reporting_autocommit_write`
 detects from PostgreSQL's transaction-id assignment rather than the statement's
-text. Observing never takes over a
+text. An anonymous ``DO`` block, which may commit itself, runs unwrapped and
+always counts. Observing never takes over a
 transaction someone else owns. A known gap: a write made by ``CALL`` is not
 counted, since a procedure may commit itself and so is never wrapped. Right after
 the chosen commit the worker dies: callbacks registered with

@@ -160,12 +160,37 @@ def test_a_write_in_a_do_block_counts_as_a_commit() -> None:
     assert worker.commits == 1
 
 
-def test_a_do_block_that_writes_nothing_is_not_a_commit() -> None:
+def test_a_do_block_that_commits_itself_runs_unchanged_and_counts() -> None:
+    # A DO block may COMMIT, which it cannot do inside a transaction block: it runs as written, and counts.
+    pk = _running()
+    table = ref.LifecycleAttempt._meta.db_table
+    with django_worker_killer(None) as worker, connection.cursor() as cursor:
+        cursor.execute(
+            f"DO $$ BEGIN UPDATE {table} SET status = 'retryable_failed' WHERE id = {pk}; COMMIT; "
+            f"UPDATE {table} SET status = 'complete' WHERE id = {pk}; END $$"
+        )
+    assert _status(pk) == Status.COMPLETE
+    assert worker.commits == 1
+
+
+def test_a_do_block_counts_as_a_commit_even_when_it_wrote_nothing() -> None:
+    # Unwrapped, a DO's writes cannot be seen, so it is counted conservatively: one crash point too many,
+    # never one missed.
     pk = _running()
     with django_worker_killer(None) as worker, connection.cursor() as cursor:
         cursor.execute("DO $$ BEGIN PERFORM 1; END $$")
     assert _status(pk) == Status.RUNNING
-    assert worker.commits == 0
+    assert worker.commits == 1
+
+
+def test_a_do_block_inside_the_callers_transaction_is_not_a_commit() -> None:
+    pk = _running()
+    table = ref.LifecycleAttempt._meta.db_table
+    with django_worker_killer(None) as worker:
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(f"DO $$ BEGIN UPDATE {table} SET status = 'complete' WHERE id = {pk}; END $$")
+        assert worker.commits == 1  # the atomic block's own COMMIT, not the DO
+    assert _status(pk) == Status.COMPLETE
 
 
 @pytest.mark.xfail(

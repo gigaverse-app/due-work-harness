@@ -21,12 +21,17 @@ from due_work_harness.models import HarnessModel
 _ROW_WRITES = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE", "COPY"})
 _CREATES_ROWS = frozenset({"INSERT", "MERGE", "COPY"})
 #: Statements that can write without their own status saying so, and can run in a
-#: transaction block: a function called from a ``SELECT``, a trigger or a predicate
-#: function called from a DML statement that then affects zero rows, an anonymous
-#: ``DO`` block (its status is ``DO`` whatever it wrote). A known gap: ``CALL`` can
-#: write the same way, but a procedure may commit itself, which it cannot do inside a
-#: transaction block, so it is not wrapped and a write it makes is not counted.
-_TRANSACTIONAL_STATEMENTS = frozenset({"SELECT", "WITH", "VALUES", "INSERT", "UPDATE", "DELETE", "MERGE", "DO"})
+#: transaction block: a function called from a ``SELECT``, or a trigger or a predicate
+#: function called from a DML statement that then affects zero rows. They run in a
+#: one-statement transaction and are asked whether they wrote.
+_TRANSACTIONAL_STATEMENTS = frozenset({"SELECT", "WITH", "VALUES", "INSERT", "UPDATE", "DELETE", "MERGE"})
+
+#: Statements that may commit themselves, so cannot be wrapped: an anonymous ``DO``
+#: block may ``COMMIT``, and its status is ``DO`` whatever it wrote. It runs as
+#: written and counts as a commit, conservatively: one crash point too many, never
+#: one missed. A known gap: ``CALL`` can commit itself too and is not counted, since
+#: counting every procedure call would add a crash point for every read-only one.
+_SELF_COMMITTING_STATEMENTS = frozenset({"DO"})
 
 
 class RowWrite(HarnessModel):
@@ -136,7 +141,10 @@ def execute_reporting_autocommit_write(
     if in_transaction or not connection.get_autocommit():
         result = execute(sql, params, many, context)
         return result, in_transaction and context["cursor"].statusmessage == "COMMIT"
-    if leading_keyword(sql) not in _TRANSACTIONAL_STATEMENTS:
+    keyword = leading_keyword(sql)
+    if keyword in _SELF_COMMITTING_STATEMENTS:
+        return execute(sql, params, many, context), True
+    if keyword not in _TRANSACTIONAL_STATEMENTS:
         result = execute(sql, params, many, context)
         return result, row_write(sql, context["cursor"]) is not None
     _run(database, "BEGIN")
