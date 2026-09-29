@@ -36,7 +36,12 @@ from django.test.utils import CaptureQueriesContext
 
 from due_work_harness.host import ReadCosts
 from due_work_harness.integrations.django.writes import require_postgresql
-from due_work_harness.integrations.postgres_plans import index_served_verdict, read_cost, scan_counts
+from due_work_harness.integrations.postgres_plans import (
+    index_served_verdict,
+    read_cost,
+    referenced_columns,
+    scan_counts,
+)
 from due_work_harness.models import HarnessModel
 
 
@@ -62,24 +67,34 @@ def explain_index_eligibility(queryset: QuerySet[Any]) -> dict[str, Any]:
     return plan
 
 
-def _verified_partial_indexes(alias: str, table: str, named: Collection[str]) -> frozenset[str]:
-    """The named indexes, once the catalog confirms each is a valid partial index on ``table``."""
+def _verified_partial_indexes(alias: str, table: str, named: Collection[str]) -> dict[str, frozenset[str]]:
+    """
+    The named indexes with the columns each predicate constrains, once the catalog confirms each is a valid
+    partial index on ``table``.
+    """
     if not named:
-        return frozenset()
+        return {}
     with connections[alias].cursor() as cursor:
         cursor.execute(
-            "SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+            "SELECT c.relname, pg_get_expr(i.indpred, i.indrelid) FROM pg_index i "
+            "JOIN pg_class c ON c.oid = i.indexrelid "
             "WHERE i.indrelid = %s::regclass AND i.indisvalid AND i.indpred IS NOT NULL",
             [connections[alias].ops.quote_name(table)],
         )
-        partial = {name for (name,) in cursor.fetchall()}
+        predicates = dict(cursor.fetchall())
+        cursor.execute(
+            "SELECT attname FROM pg_attribute WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped",
+            [connections[alias].ops.quote_name(table)],
+        )
+        columns = {name for (name,) in cursor.fetchall()}
+    partial = set(predicates)
     unverified = sorted(set(named) - partial)
     assert not unverified, (
         f"partial_indexes names {unverified}, which are not valid partial indexes on {table!r} "
         f"(partial ones are {sorted(partial)}). Naming a full index would excuse the whole-index read "
         f"the index-served proof exists to catch"
     )
-    return frozenset(named)
+    return {name: frozenset(referenced_columns(predicates[name], columns)) for name in named}
 
 
 def _mirrored_aliases() -> frozenset[str]:
@@ -107,9 +122,11 @@ class DjangoSelectionInspector(HarnessModel):
     name is only trusted after the catalog confirms it is a valid partial index
     on the selection's table; anything else fails the proof, since vouching for
     a full index would excuse the whole-index read the verdict exists to catch.
-    The name is a claim the plan cannot check: a Filter above the bitmap may
-    remove backlog (owed rows not due yet) or settled history, and the plan reads
-    the same for both. Back it with
+    The catalog's predicate is read too: a Filter above the index that re-tests a
+    column the predicate constrains means the predicate does not imply the
+    selection's condition there, and the name is refused. A Filter on other
+    columns may remove backlog (owed rows not due yet) or settled history, which
+    the plan cannot tell apart. Back the name with
     :func:`~due_work_harness.profiles.automatic_recovery.assert_selection_cost_does_not_grow_with_the_history`,
     which measures what the selection reads against the history.
     """

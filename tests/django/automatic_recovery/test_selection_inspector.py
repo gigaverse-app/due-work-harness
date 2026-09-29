@@ -363,20 +363,32 @@ def test_naming_an_index_that_does_not_exist_is_refused() -> None:
         _index_served_with("no_such_ix")
 
 
-def test_a_named_partial_index_whose_predicate_holds_for_the_history_fails_the_history_proof() -> None:
-    # Naming a partial index is a claim: the plan cannot tell the Filter above it removing backlog from it
-    # removing settled history. ``status IS NOT NULL`` holds for the history too. The index-served proof
-    # takes the claim; the retained-history proof, which measures what the selection reads, refuses it.
+@pytest.mark.parametrize(
+    "index",
+    ["(id) WHERE status IS NOT NULL", "(updated_at) WHERE status IS NOT NULL", "(updated_at) WHERE status <> 'zzz'"],
+)
+def test_a_named_partial_index_whose_predicate_the_filter_re_tests_is_refused(index: str) -> None:
+    # Each predicate constrains status and holds for the settled history too, so the plan filters status again.
     with connection.cursor() as cursor:
-        cursor.execute(f"CREATE INDEX lifecycle_attempt_weak_ix ON {_TABLE} (id) WHERE status IS NOT NULL")
-        cursor.execute("SET enable_indexscan = off")
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_weak_ix ON {_TABLE} {index}")
+        cursor.execute("SET enable_indexscan = off" if index.startswith("(id)") else "SELECT 1")
     try:
-        _index_served_with("lifecycle_attempt_weak_ix")
-        with pytest.raises(AssertionError, match=r"scans its table sequentially|visited \d+ rows|buffers against"):
-            _history_proof()
+        with pytest.raises(AssertionError, match=r"lifecycle_attempt_weak_ix.*constrains \['status'\]"):
+            _index_served_with("lifecycle_attempt_weak_ix")
     finally:
         with connection.cursor() as cursor:
             cursor.execute("RESET enable_indexscan")
+
+
+def test_a_time_index_whose_predicate_says_nothing_fails_the_history_proof() -> None:
+    # ``(updated_at) WHERE updated_at IS NOT NULL`` serves the plan as any index on the time bound does: an Index
+    # Cond narrows by time, which the index-served verdict accepts, named or not. Every settled row is old enough
+    # to pass that bound, so only the retained-history proof, which measures what the selection reads, refuses it.
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_time_ix ON {_TABLE} (updated_at) WHERE updated_at IS NOT NULL")
+    _index_served_with("lifecycle_attempt_time_ix")
+    with pytest.raises(AssertionError, match=r"scans its table sequentially|visited \d+ rows|buffers against"):
+        _history_proof()
 
 
 def test_a_named_partial_index_that_narrows_the_history_passes_the_history_proof(

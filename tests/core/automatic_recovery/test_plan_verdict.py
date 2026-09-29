@@ -272,14 +272,14 @@ def test_a_read_that_never_scans_the_table_says_nothing_about_it() -> None:
         read_cost({"Node Type": "Result"}, table=_TABLE)
 
 
-def test_a_named_partial_index_is_trusted_with_the_filter_above_it() -> None:
+def test_a_named_partial_index_is_trusted_with_a_filter_on_other_columns() -> None:
     """
-    A named partial index vouches for its bitmap, Filter or not: the plan cannot tell backlog from history.
+    A named partial index vouches for its bitmap when the Filter above it tests columns its predicate does not.
 
-    The Filter above ``(id) WHERE status IN (active)`` removes owed rows that are not due
-    yet (backlog), and the one above ``(id) WHERE status IS NOT NULL`` removes settled
-    history. The plan reads the same for both, so naming a partial index is a claim the
-    adopter backs with the retained-history proof, which does tell them apart.
+    ``(id) WHERE status IN (active)`` under a time-bounded selection: the Filter on
+    ``updated_at`` removes owed rows that are not due yet, backlog the predicate
+    rightly keeps. What the plan cannot show (how much settled history the index
+    holds) the retained-history proof measures.
     """
     plan = {
         "Node Type": "Bitmap Heap Scan",
@@ -289,7 +289,50 @@ def test_a_named_partial_index_is_trusted_with_the_filter_above_it() -> None:
         "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "active_ix"}],
     }
     assert_plan_is_index_served(
-        name="partial bitmap", plan=plan, table=_TABLE, predicate_indexes=frozenset({"active_ix"})
+        name="partial bitmap", plan=plan, table=_TABLE, predicate_indexes={"active_ix": frozenset({"status"})}
     )
     with pytest.raises(AssertionError, match="Recheck Cond .* is not evidence"):
         assert_plan_is_index_served(name="partial bitmap", plan=plan, table=_TABLE)
+
+
+@pytest.mark.parametrize(
+    "scan",
+    [
+        {
+            "Node Type": "Bitmap Heap Scan",
+            "Relation Name": _TABLE,
+            "Recheck Cond": "(status IS NOT NULL)",
+            "Filter": "(((status)::text = ANY ('{requested,running}'::text[])) AND (updated_at <= $1))",
+            "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "weak_ix"}],
+        },
+        {
+            "Node Type": "Index Scan",
+            "Relation Name": _TABLE,
+            "Index Name": "weak_ix",
+            "Index Cond": "(updated_at <= $1)",
+            "Filter": "((status)::text = ANY ('{requested,running}'::text[]))",
+        },
+    ],
+    ids=["bitmap", "index-scan"],
+)
+def test_a_named_partial_index_whose_filter_re_tests_its_predicate_is_refused(scan: dict[str, object]) -> None:
+    # The Filter re-tests status, which the predicate constrains: the predicate does not imply the selection's
+    # own condition there, so the index keeps rows the selection throws away (``status IS NOT NULL`` keeps the
+    # whole settled history).
+    with pytest.raises(AssertionError, match=r"weak_ix.*constrains \['status'\].*filters on them again"):
+        assert_plan_is_index_served(
+            name="weak partial", plan=scan, table=_TABLE, predicate_indexes={"weak_ix": frozenset({"status"})}
+        )
+
+
+def test_a_literal_in_the_filter_is_not_a_column() -> None:
+    plan = {
+        "Node Type": "Index Scan",
+        "Relation Name": _TABLE,
+        "Index Name": "active_ix",
+        "Index Cond": "(updated_at <= $1)",
+        "Filter": "((kind)::text = 'status')",
+    }
+    assert_plan_is_index_served(
+        name="literal", plan=plan, table=_TABLE, predicate_indexes={"active_ix": frozenset({"status"})}
+    )

@@ -19,7 +19,8 @@ Two readings are offered:
 """
 
 import json
-from collections.abc import Iterator
+import re
+from collections.abc import Collection, Iterator, Mapping
 from typing import Any
 
 from due_work_harness.host import ReadCost
@@ -39,21 +40,27 @@ def _rendered(plan: dict[str, Any]) -> str:
     return f"Plan:\n{json.dumps(plan, indent=2)}"
 
 
-def index_served_verdict(
-    plan: dict[str, Any], *, table: str, predicate_indexes: frozenset[str] = frozenset()
-) -> str | None:
+#: A partial index's name, with the columns its predicate constrains (read from the catalog).
+type PredicateIndexes = Mapping[str, Collection[str]] | Collection[str]
+
+
+def index_served_verdict(plan: dict[str, Any], *, table: str, predicate_indexes: PredicateIndexes = ()) -> str | None:
     """
     ``None`` when an index narrows every scan of ``table``, else why not, with the plan.
 
     The reasoning behind each rule is on :func:`assert_plan_is_index_served`.
-    ``predicate_indexes`` names partial indexes whose predicate a catalog-backed
-    caller checked against this query; a bitmap built from one of them needs no
-    ``Index Cond``, Filter above it or not. The plan cannot tell a Filter removing
-    backlog (owed rows not due yet) from one removing settled history, so a named
-    partial index is a claim the caller backs with
-    :func:`~due_work_harness.profiles.automatic_recovery.assert_selection_cost_does_not_grow_with_the_history`.
-    Names alone, or an arbitrary ``Recheck Cond``, never establish that guarantee.
+    ``predicate_indexes`` names partial indexes a catalog-backed caller verified,
+    each with the columns its predicate constrains; a bitmap built from one of
+    them needs no ``Index Cond``. A Filter above it may test other columns (the
+    time bound a predicate cannot hold, removing backlog), but not those: a
+    Filter that re-tests a column the predicate constrains means the predicate
+    does not imply the selection's condition there, and the index keeps rows the
+    selection throws away (``status IS NOT NULL`` keeps the whole settled
+    history). What the plan cannot show, how much history a legitimate index
+    holds, :func:`~due_work_harness.profiles.automatic_recovery.assert_selection_cost_does_not_grow_with_the_history`
+    measures. Names alone, or an arbitrary ``Recheck Cond``, never establish the guarantee.
     """
+    constrained = _constrained_columns(predicate_indexes)
     scans = [node for node in iter_plan_nodes(plan) if node.get("Relation Name") == table]
     if not scans:
         return (
@@ -62,6 +69,15 @@ def index_served_verdict(
         )
     for node in scans:
         node_type = node.get("Node Type", "")
+        if re_tested := _re_tested_predicate(node, constrained):
+            index, columns = re_tested
+            return (
+                f"the partial index {index!r} named as serving the selection constrains {sorted(columns)} in its "
+                f"predicate, and the scan of {table!r} filters on them again: the predicate does not imply the "
+                f"selection's own condition on those columns, so the index keeps rows the selection throws away "
+                f"(a predicate as wide as the settled history keeps all of it). Give the partial index the "
+                f"selection's condition on {sorted(columns)}.\n{_rendered(plan)}"
+            )
         if "Seq Scan" in node_type:
             return (
                 f"the due-work selection falls back to a sequential scan of {table!r} even with "
@@ -77,7 +93,7 @@ def index_served_verdict(
             # Every input is read to build AND/OR bitmaps: one selective branch
             # cannot vouch for another that walks its entire unrelated index.
             if not bitmap_scans or not all(
-                "Index Cond" in scan or scan.get("Index Name") in predicate_indexes for scan in bitmap_scans
+                "Index Cond" in scan or scan.get("Index Name") in constrained for scan in bitmap_scans
             ):
                 return (
                     f"the selection builds a bitmap over {table!r} from an index scan with no index "
@@ -106,8 +122,38 @@ def index_served_verdict(
     return None
 
 
+def _constrained_columns(predicate_indexes: PredicateIndexes) -> dict[str, frozenset[str]]:
+    if isinstance(predicate_indexes, Mapping):
+        return {name: frozenset(columns) for name, columns in predicate_indexes.items()}
+    return {name: frozenset() for name in predicate_indexes}
+
+
+def _re_tested_predicate(node: dict[str, Any], constrained: dict[str, frozenset[str]]) -> tuple[str, set[str]] | None:
+    """The named partial index behind this scan whose predicate's columns its Filter tests again, if any."""
+    if "Filter" not in node:
+        return None
+    indexes = [node.get("Index Name")] + [
+        scan.get("Index Name") for scan in iter_plan_nodes(node) if scan.get("Node Type") == "Bitmap Index Scan"
+    ]
+    for index in indexes:
+        if index in constrained and (columns := referenced_columns(node["Filter"], constrained[index])):
+            return index, columns
+    return None
+
+
+_LITERAL = re.compile(r"'(?:[^']|'')*'")
+_IDENTIFIER = re.compile(r'"([^"]+)"|\b([A-Za-z_][A-Za-z0-9_$]*)\b')
+
+
+def referenced_columns(expression: str, candidates: Collection[str]) -> set[str]:
+    """Which of ``candidates`` an expression PostgreSQL printed names, outside its string literals."""
+    text = _LITERAL.sub("''", expression)
+    names = {quoted or bare for quoted, bare in _IDENTIFIER.findall(text)}
+    return names & set(candidates)
+
+
 def assert_plan_is_index_served(
-    *, name: str, plan: dict[str, Any], table: str, predicate_indexes: frozenset[str] = frozenset()
+    *, name: str, plan: dict[str, Any], table: str, predicate_indexes: PredicateIndexes = ()
 ) -> None:
     """
     The plan-shape verdict behind profile A's invariant 5, on an already-captured plan.
