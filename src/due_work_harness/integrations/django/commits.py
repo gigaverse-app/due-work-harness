@@ -26,7 +26,11 @@ import pytest
 from django.db import DEFAULT_DB_ALIAS, connections
 from django.db.backends.base.base import BaseDatabaseWrapper
 
-from due_work_harness.integrations.django.writes import execute_reporting_autocommit_write, leading_keyword
+from due_work_harness.integrations.django.writes import (
+    execute_reporting_autocommit_write,
+    leading_keyword,
+    require_postgresql,
+)
 from due_work_harness.worker_death import WorkerDied
 
 
@@ -58,6 +62,7 @@ class DjangoWorker:
 @contextmanager
 def django_worker_killer(kill_after: int | None) -> Iterator[DjangoWorker]:
     """Count commits on this thread's default connection; die right after commit ``kill_after``."""
+    require_postgresql(DEFAULT_DB_ALIAS, "the commit counter", "it reads transaction-id assignment")
     target = connections[DEFAULT_DB_ALIAS]
     worker = DjangoWorker(target, kill_after)
     original_commit = type(target).commit

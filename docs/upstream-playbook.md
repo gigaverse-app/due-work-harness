@@ -62,6 +62,12 @@ commits together, what is published after the commit (`on_commit`, `.delay`, `ap
 **what recovers it if the process dies right after, or the broker refuses the publish**. The map that
 finds weaknesses is a recovery map: durable record, periodic recovery, none.
 
+Two commands give the agent a head start. `due-work-harness sites` lists every handoff with the function
+that makes it, and `due-work-harness in-transaction` lists the ones made inside `transaction.atomic()`,
+which a worker can run before the commit or after a rollback. Both are static and need a
+`[tool.due-work-harness]` table (a throwaway one in the fork is enough); a line is a candidate to
+read, not a finding, and the next step still confirms it.
+
 An agent does this well. [`upstream-templates/map-the-handoffs.md`](upstream-templates/map-the-handoffs.md)
 is the prompt: ranked candidates, each with the scenario, the code path, the visible cost, whether it is
 reported, and a sketch of a reproduction in their own test suite. Treat its output as hypotheses: the next
@@ -87,7 +93,9 @@ separate). Skip the directory on a Python older than the harness's, with a marke
    receiver where the run went wrong, and what it left behind.
 
 Add `--due-work-summary` to see every generated case with its outcome and each gap's reason. That output
-is the capture the PR shows.
+is the capture the PR shows. Recovery that is a management command is `management_command('name', after=...)`
+from `due_work_harness.integrations.django.commands`: it resolves the project's own command and runs it on
+the host's frozen clock, so the binding reaches production without a copy of the boilerplate.
 
 ## 5. Confirm each finding independently
 
@@ -106,7 +114,10 @@ Drop a candidate that you cannot reproduce, or that the project documents and de
 
 ## 6. Declare, pin, and mark the magic
 
-- **Findings.** Put a `Findings(delivered, {label: outcome})` on each history. The generated case holds the
+- **Findings.** Put a `Findings(delivered, {label: outcome})` on each history. Do not write the table by
+  hand: run once with `--due-work-record-findings` (without `-n`) and it prints every history's divergent
+  runs as a `Findings(...)` ready to paste, consecutive commit numbers folded into a comprehension. It is
+  what the code does today, so reading it is the review; nothing is pinned unread. The generated case holds the
   runs to that table and to the convergence verdict in one run; a declared gap is a strict xfail for the
   divergence alone, so a moved finding or a broken binding fails instead of passing as the known gap.
   Histories not listed must reach normal operation, so the table holds only the findings.
@@ -116,6 +127,10 @@ Drop a candidate that you cannot reproduce, or that the project documents and de
   reviewer looking for the tests finds nothing. Put a comment above it that says so: the decorator reads
   the contract and generates the cases, none is written by hand, which generated case found which issue,
   and that a declared gap is a strict xfail that fails the run once fixed. The PR description links to it.
+- **Observations that recovery erases.** If the project's cleanup deletes what you observe (pretix removes
+  sent mails from `OutgoingMail`), the histories agree because the evidence is gone, not because the work was
+  done. Observe something recovery leaves alone (the mail backend's outbox), and check by asking whether a
+  known-bad history could ever differ.
 - **A plain test.** Beside their related tests, in their style, one `expectedFailure` (or `xfail`) per
   finding that fails for the stated reason. Remove the marker once and read the failure: it must be the
   assertion you meant, not a setup error, and the assertion after it must not be masked by the one before.

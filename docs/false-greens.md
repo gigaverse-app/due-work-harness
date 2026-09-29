@@ -65,6 +65,13 @@ proof green, the proof was about to tell you something.
 | **The lost notification nobody re-checks** | readiness is signalled once; the signal is lost and no sweep ever looks again, or completion is faked without reaching the provider | recovery alone must reach the declared outcome, and the provider must be reached |
 | **The fallback on the wrong side of its boundary** | the periodic inspection fires a second early, never fires, or fires on every run because inspecting does not move its next inspection | `recheck_after` is probed one microsecond before and at the boundary by moving a clock; a second run without time passing must not execute again |
 
+## Observations that cannot fail
+
+- **The observation recovery erases.** A project's own cleanup (a periodic task that deletes sent mail, expired
+  rows, finished jobs) removes what the contract observes, so a history that lost the work and one that did it
+  look identical after recovery. Refused by review only: observe what the cleanup leaves, and before trusting a
+  green history ask what a run that lost the work would have shown.
+
 ## What only a reviewer can refuse
 
 - **A production reference that is not load-bearing.** The delegation tripwire

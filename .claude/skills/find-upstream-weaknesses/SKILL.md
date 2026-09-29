@@ -38,18 +38,22 @@ Work in a scratch directory, not in a checkout that matters. Track the steps as 
    pick one and say why; ask only if the choice needs the user's judgement (policy, risk to a relationship).
 2. **Set up.** Fork and clone; put Postgres/Redis in containers the way their CI does; **run their
    unmodified suite first** so a red baseline is known before it is blamed on you.
-3. **Map.** Run the prompt in
+3. **Map.** `due-work-harness sites` and `due-work-harness in-transaction` list the candidates first
+   (a throwaway `[tool.due-work-harness]` table in the fork is enough). Then run the prompt in
    [map-the-handoffs.md](../../../docs/upstream-templates/map-the-handoffs.md) through an agent (fill the
    placeholders from the scan). Keep the result as ranked hypotheses.
 4. **Adopt in the fork.** A branch such as `test/<what-breaks>`, a `tests/due_work/` directory named the way
    their runner collects it, a host (`django_host`, `redis_host`, or a new one), bindings that call the
    real code (a string command that reaches no project code is refused: pass the command class), a
    disposition for every profile with a reason, and one history per user-facing action whose observation
-   includes what users and external systems saw. Use `--due-work-summary` to read the run.
+   includes what users and external systems saw (not something the project's own cleanup deletes). A
+   management-command recovery is `management_command(name, after=...)`. Use `--due-work-summary` to read
+   the run.
 5. **Confirm each finding.** Reproduce the smallest version with a script that uses the project's own API
    and no harness. Test the neighbouring claim before you make it, check server or library versions, and
    search the tracker again. Drop what you cannot reproduce or what the project defends.
-6. **Declare and mark.** `Findings(delivered, {label: outcome})` on each history, `handoff_gaps` with the
+6. **Declare and mark.** `Findings(delivered, {label: outcome})` on each history (generate it with
+   `--due-work-record-findings`, read it, then paste), `handoff_gaps` with the
    issue link, an `expectedFailure` plain test that fails for the stated reason (remove the marker once and
    read the failure), and the *this is where the magic happens* comment above each decorated class.
 7. **Improve the harness.** If the probe needed something the harness lacks, or you wrote a helper twice,

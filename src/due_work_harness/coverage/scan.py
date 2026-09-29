@@ -48,7 +48,7 @@ from collections.abc import Mapping
 
 from due_work_harness.coverage.config import CoverageConfig
 from due_work_harness.coverage.declarations import Declarations, declaration_modules
-from due_work_harness.coverage.handoffs import production_sites, sites_by_function
+from due_work_harness.coverage.handoffs import production_sites, sites_by_function, sites_in_transaction
 from due_work_harness.coverage.project import Project
 from due_work_harness.coverage.report import MODULE_LEVEL, CoverageReport, Disposition, Site
 from due_work_harness.coverage.sites import kinds_for, names
@@ -61,6 +61,7 @@ __all__ = [
     "declaration_modules",
     "production_sites",
     "scan",
+    "sites_in_transaction",
     "unaccounted_baseline",
 ]
 

@@ -70,6 +70,9 @@ class SiteKind(HarnessModel):
     #: Methods that hand work off when referenced on the framework itself or on an object
     #: it returned (``django_rq.get_queue(...).enqueue``), for frameworks that take any callable.
     client_methods: frozenset[str] = frozenset()
+    #: Whether the queue can be a table in the caller's own database, so that a job deferred inside
+    #: ``transaction.atomic()`` commits or rolls back with the caller's data: the safe pattern, not a hazard.
+    can_join_transaction: bool = False
 
     def enabled_by(self, imported: str) -> bool:
         """Whether importing the dotted name ``imported`` enables this kind."""
@@ -90,6 +93,7 @@ PROCRASTINATE = SiteKind(
     packages=frozenset({"procrastinate"}),
     task_decorators=frozenset({"task"}),
     task_methods=frozenset({"defer", "defer_async"}),
+    can_join_transaction=True,  # its Django connector defers on Django's own connection
 )
 DBOS = SiteKind(
     name="dbos",
@@ -117,6 +121,7 @@ DJANGO_TASKS = SiteKind(
     task_decorators=frozenset({"task"}),
     task_decorator_modules=frozenset({"django.tasks", "django_tasks"}),
     task_methods=frozenset({"enqueue", "aenqueue"}),
+    can_join_transaction=True,  # the database backend writes the job row on Django's own connection
 )
 
 BUILT_IN: dict[str, SiteKind] = {

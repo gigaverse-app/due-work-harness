@@ -35,16 +35,9 @@ from django.db.models import Model, QuerySet
 from django.test.utils import CaptureQueriesContext
 
 from due_work_harness.host import ReadCosts
+from due_work_harness.integrations.django.writes import require_postgresql
 from due_work_harness.integrations.postgres_plans import index_served_verdict, read_cost, scan_counts
 from due_work_harness.models import HarnessModel
-
-
-def _require_postgresql(alias: str, reading: str) -> None:
-    vendor = connections[alias].vendor
-    assert vendor == "postgresql", (
-        f"{reading} reads PostgreSQL EXPLAIN plans, and the selection's database {alias!r} is {vendor!r}. "
-        f"Run this proof against PostgreSQL, or configure an inspector for this database"
-    )
 
 
 def _plan(explained: str | list[Any]) -> dict[str, Any]:
@@ -55,7 +48,7 @@ def _plan(explained: str | list[Any]) -> dict[str, Any]:
 
 def explain_index_eligibility(queryset: QuerySet[Any]) -> dict[str, Any]:
     """Probe index eligibility without executing the selected query or leaking settings."""
-    _require_postgresql(queryset.db, "the index-served proof")
+    require_postgresql(queryset.db, "the index-served proof", "it reads EXPLAIN plans")
     database = connections[queryset.db]
     # A successful nested atomic block releases a savepoint, not SET LOCAL.
     # Restore explicitly on success; rollback owns restoration on SQL failure.
@@ -146,12 +139,12 @@ class DjangoSelectionInspector(HarnessModel):
 
     def scan_counts(self, selection: object) -> tuple[float, float]:
         queryset = self._queryset(selection)
-        _require_postgresql(queryset.db, "the scan-ratio proof")
+        require_postgresql(queryset.db, "the scan-ratio proof", "it reads EXPLAIN plans")
         return scan_counts(_plan(queryset.explain(analyze=True, format="json")))
 
     def read_costs(self, selection: object) -> ReadCosts:
         queryset = self._queryset(selection)
-        _require_postgresql(queryset.db, "the retained-history proof")
+        require_postgresql(queryset.db, "the retained-history proof", "it reads EXPLAIN plans")
         table = queryset.model._meta.db_table
         with connections[queryset.db].cursor() as cursor:
             # The planner chooses from statistics: without fresh ones a table of
