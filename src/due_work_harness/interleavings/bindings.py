@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from typing import Annotated, Self
+from typing import Annotated, Generic, Self, TypeVar
 
 from pydantic import Field, InstanceOf, StrictInt, model_validator
 
@@ -16,9 +16,12 @@ from .ports import Transport
 # Version-1 retry traces encode aliases as comma-separated values. Reject empty
 # or ambiguous aliases at declaration time instead of breaking saved replay.
 _Alias = Annotated[str, Field(min_length=1, pattern=r"^[^,]+$")]
+HandleT = TypeVar("HandleT")
+ValueT = TypeVar("ValueT")
+ObservationT = TypeVar("ObservationT")
 
 
-class Intent[ValueT, ObservationT](HarnessModel):
+class Intent(HarnessModel, Generic[ValueT, ObservationT]):
     """Canonical command value paired with its reviewed outcome, never learned from the run."""
 
     value: ValueT = Field(description="Canonical application command input; passed unchanged to admit/change.")
@@ -27,7 +30,7 @@ class Intent[ValueT, ObservationT](HarnessModel):
     )
 
 
-class InFlightSession[HandleT, ValueT, ObservationT](HarnessModel):
+class InFlightSession(HarnessModel, Generic[HandleT, ValueT, ObservationT]):
     """
     Validated wiring for one in-flight history; the binding context owns mutable resources.
 
@@ -112,7 +115,7 @@ class EvidenceArrival(HarnessModel):
         return self.consume()
 
 
-class EvidenceExpectation[ObservationT](HarnessModel):
+class EvidenceExpectation(HarnessModel, Generic[ObservationT]):
     """One reviewed outcome and its exact external effects, independent of the observed run."""
 
     observation: ObservationT = Field(
@@ -126,7 +129,7 @@ class EvidenceExpectation[ObservationT](HarnessModel):
     )
 
 
-class EvidenceRetry[ObservationT](HarnessModel):
+class EvidenceRetry(HarnessModel, Generic[ObservationT]):
     """Optional real sender turn and the obligations that apply after it."""
 
     send: Callable[[Callable[[], None]], object] = Field(
@@ -140,7 +143,7 @@ class EvidenceRetry[ObservationT](HarnessModel):
     )
 
 
-class EvidenceSession[ObservationT](HarnessModel):
+class EvidenceSession(HarnessModel, Generic[ObservationT]):
     """
     Validated wiring for one evidence history, with reviewed outcomes for every reachable fact set.
 
@@ -241,7 +244,7 @@ class Scenario(HarnessModel, ABC):
         return self
 
 
-class InFlightConvergence[HandleT, ValueT, ObservationT](Scenario):
+class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
     """
     Profile E family generating held/lost/refused provider work against revisions or retirement.
 
@@ -323,7 +326,7 @@ class InFlightConvergence[HandleT, ValueT, ObservationT](Scenario):
         run_in_flight(self, history)
 
 
-class EvidenceConfluence[ObservationT](Scenario):
+class EvidenceConfluence(Scenario, Generic[ObservationT]):
     """
     Profile E family generating fact order, duplication, recovery, batching and optional retry histories.
 

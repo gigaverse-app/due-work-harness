@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import copy_context
 from threading import Thread
+from typing import TypeVar
 
 from ...binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from ...helpers import proof_context
@@ -11,6 +12,10 @@ from ..bindings import EvidenceArrival, EvidenceConfluence, EvidenceSession, InF
 from ..model import History, HistoryTrace, InterleavingFailure, require
 from ..model import Operation as Op
 from .causality import reachable_fact_sets
+
+H = TypeVar("H")
+V = TypeVar("V")
+ObservedT = TypeVar("ObservedT")
 
 
 def guard(scenario: Scenario, field: str, callback: Callable[..., object]) -> None:
@@ -55,7 +60,7 @@ def replay_history(scenario: Scenario, trace: HistoryTrace) -> None:
     scenario.run(trace.history)
 
 
-def run_in_flight[H, V, O](scenario: InFlightConvergence[H, V, O], history: History) -> None:
+def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: History) -> None:
     scenario.validate_definition()
     with proof_context(scenario.bind()) as session, traced(scenario, history) as position:
         assert set(session.intents) == set(scenario.intents), "session intents differ from collection metadata"
@@ -71,7 +76,7 @@ def run_in_flight[H, V, O](scenario: InFlightConvergence[H, V, O], history: Hist
         if session.retire:
             guard(scenario, "retire", session.retire)
         handles: dict[str, H] = {}
-        expected: dict[str, O] = {}
+        expected: dict[str, ObservedT] = {}
         identities: dict[str, str] = {}
 
         def recover() -> None:
@@ -211,7 +216,7 @@ def ordered_actors(
             raise errors[0]
 
 
-def validate_evidence_session[O](scenario: EvidenceConfluence[O], session: EvidenceSession[O]) -> None:
+def validate_evidence_session(scenario: EvidenceConfluence[ObservedT], session: EvidenceSession[ObservedT]) -> None:
     assert set(session.facts) == set(scenario.facts), "evidence metadata and runtime routes differ"
     # Validate ALL reachable obligations before preparing production state. An
     # early known behavioral failure must not conceal a missing later oracle.
@@ -235,7 +240,7 @@ def validate_evidence_session[O](scenario: EvidenceConfluence[O], session: Evide
         assert all(consumer == consumers[0] for consumer in consumers), "batched facts need one production consumer"
 
 
-def run_evidence[O](scenario: EvidenceConfluence[O], history: History) -> None:
+def run_evidence(scenario: EvidenceConfluence[ObservedT], history: History) -> None:
     scenario.validate_definition()
     with proof_context(scenario.bind()) as session, traced(scenario, history) as position:
         validate_evidence_session(scenario, session)

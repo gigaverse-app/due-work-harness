@@ -2,6 +2,7 @@
 
 from collections import Counter, deque
 from collections.abc import Callable
+from typing import TypeVar
 
 from pydantic import Field, InstanceOf
 
@@ -9,6 +10,8 @@ from due_work_harness.models import MutableHarnessModel
 
 from ..model import Fault
 from ..ports import PendingRequest
+
+T = TypeVar("T")
 
 
 class ProviderControl(MutableHarnessModel):
@@ -38,7 +41,7 @@ class ProviderControl(MutableHarnessModel):
         assert not self.armed, "previous injected boundary was never reached"
         self.armed.append((seam, fault))
 
-    def invoke[T](self, seam: str, identity: str, perform: Callable[[], T]) -> T:
+    def invoke(self, seam: str, identity: str, perform: Callable[[], T]) -> T:
         """Invoke an external fake effect under the armed fault; perform must never mutate application state."""
         key = (seam, identity)
         self.calls[key] += 1
