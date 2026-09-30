@@ -13,6 +13,7 @@ which pytest rewrites into a raise.
 import builtins
 import contextlib
 import functools
+import inspect
 from contextlib import suppress as quietly
 from typing import Any
 
@@ -206,6 +207,88 @@ def _probe_that_continues_before_its_reraise(proof: int) -> None:
             raise
 
 
+def _make_a_closure_probe() -> Any:
+    caught = AssertionError
+
+    def probe(proof: int) -> None:
+        try:
+            assert proof == 0
+        except caught:
+            return
+
+    return probe
+
+
+class _Holder:
+    Errors = (AssertionError,)
+
+    def probe(self, proof: int) -> None:
+        try:
+            assert proof == 0
+        except self.Errors:
+            return
+
+
+def _probe_that_catches_a_locally_imported_alias(proof: int) -> None:
+    from builtins import AssertionError as Caught  # noqa: A004 - the disguise under test
+
+    try:
+        assert proof == 0
+    except Caught:
+        return
+
+
+def _probe_that_catches_a_walrus_alias(proof: int) -> None:
+    if (caught := AssertionError) is not None:
+        try:
+            assert proof == 0
+        except caught:
+            return
+
+
+def _probe_that_catches_a_concatenated_tuple(proof: int) -> None:
+    errors = (ValueError,) + (AssertionError,)
+    try:
+        assert proof == 0
+    except errors:
+        return
+
+
+_ERRORS = {"assert": AssertionError}
+
+
+def _probe_that_catches_a_subscripted_type(proof: int) -> None:
+    try:
+        assert proof == 0
+    except _ERRORS["assert"]:
+        return
+
+
+def _probe_that_catches_through_a_default(proof: int, caught: type[BaseException] = AssertionError) -> None:
+    try:
+        assert proof == 0
+    except caught:
+        return
+
+
+def _probe_that_catches_pytest_skip(proof: int) -> None:
+    try:
+        assert proof == 0
+    except pytest.skip.Exception:  # Skipped is no AssertionError catcher
+        return
+
+
+class _NotAnAssertion(ValueError):
+    pass
+
+
+def _probe_that_catches_its_own_value_error(proof: int) -> None:
+    try:
+        assert proof == 0
+    except _NotAnAssertion:
+        return
+
+
 def _probe_that_catches_a_module_alias(proof: int) -> None:
     try:
         assert proof == 0
@@ -266,6 +349,15 @@ def _probe_that_expects_the_failure_through_an_aliased_import(proof: int) -> Non
         pytest.param(_probe_that_suppresses_through_an_aliased_import, True, id="aliased-suppress"),
         pytest.param(_probe_that_expects_the_failure_through_an_aliased_import, True, id="aliased-raises"),
         pytest.param(_probe_that_reraises_inside_a_swallowing_finally, True, id="reraise-under-break-in-finally"),
+        pytest.param(_make_a_closure_probe(), True, id="closure-alias"),
+        pytest.param(_Holder().probe, True, id="instance-attribute"),
+        pytest.param(_probe_that_catches_a_locally_imported_alias, True, id="local-import-alias"),
+        pytest.param(_probe_that_catches_a_walrus_alias, True, id="walrus-alias"),
+        pytest.param(_probe_that_catches_a_concatenated_tuple, True, id="concatenated-tuple"),
+        pytest.param(_probe_that_catches_a_subscripted_type, True, id="subscripted-type"),
+        pytest.param(_probe_that_catches_through_a_default, True, id="parameter-default"),
+        pytest.param(_probe_that_catches_pytest_skip, False, id="pytest-skip-exception"),
+        pytest.param(_probe_that_catches_its_own_value_error, False, id="value-error-subclass"),
         pytest.param(_probe_that_only_asserts, False, id="plain-assert"),
         pytest.param(_probe_that_asserts_and_swallows_something_else, False, id="except-other-exception"),
     ],
@@ -279,3 +371,17 @@ def test_wrapping_an_inverting_probe_in_a_partial_does_not_hide_it(probe: Any) -
     wrapped = functools.partial(functools.partial(probe))
     assert callable_code(wrapped) is probe.__code__
     assert authored_inversion_names(wrapped) == authored_inversion_names(probe) != set()
+
+
+def test_the_handler_that_swallows_is_named_by_its_line() -> None:
+    lines, _ = inspect.getsourcelines(_probe_that_catches_a_module_alias)
+    handler = next(index for index, line in enumerate(lines) if "except _MODULE_ALIAS" in line)
+    line = _probe_that_catches_a_module_alias.__code__.co_firstlineno + handler
+    assert f"except at test_inversion_tripwire.py:{line}" in authored_inversion_names(
+        _probe_that_catches_a_module_alias
+    )
+
+
+def test_a_probe_that_leaves_its_finally_is_named_by_the_finally_line() -> None:
+    names = authored_inversion_names(_probe_that_returns_from_finally)
+    assert any(name.startswith("finally at test_inversion_tripwire.py:") for name in names), names
