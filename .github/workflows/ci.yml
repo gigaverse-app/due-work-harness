@@ -162,20 +162,37 @@ jobs:
       - run: uv sync --locked --no-default-groups --extra django --group demos
       # procrastinate's demos ship only in its source tree, pinned by fetch_upstream.py.
       - run: uv pip install -e demos/.upstream/procrastinate
+      - name: Postgres without durability
+        run: demos/throwaway_postgres.sh
+      # The durations are the evidence for the next change to this job's speed.
       - name: procrastinate demo_django
         env:
           PGDATABASE: procrastinate_demo
-        run: uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings -rxX
+        run: >-
+          uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings
+          -rxX --durations=15
       - name: DBOS transactional-outbox
-        run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX
+        run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX --durations=15
+      # Migrating Wagtail's test database is most of its run, and depends only on the pinned packages
+      # (uv.lock) and the demo's settings: restored from the cached dump when the key matches.
+      - uses: actions/cache@v4
+        with:
+          path: demos/.ci-cache/wagtail_tasks.dump
+          key: wagtail-test-db-pg16-${{ hashFiles('uv.lock', 'demos/wagtail_tasks/settings.py', 'demos/cached_database.py') }}
+      - name: Wagtail's test database, migrated once
+        # As pytest-django creates a test database: every app's migrations, syncdb for the rest, no checks.
+        run: >-
+          uv run --no-sync python demos/cached_database.py test_wagtail_tasks --dump demos/.ci-cache/wagtail_tasks.dump
+          -- uv run --no-sync python -m django migrate --settings=demos.wagtail_tasks.settings
+          --run-syncdb --skip-checks --no-input --verbosity 0
       # Wagtail 8.0 on django-tasks-db, both from PyPI; the demo's own directory is pytest's rootdir.
       - name: Wagtail on django-tasks-db
         working-directory: demos/wagtail_tasks
         env:
           PGDATABASE: wagtail_tasks
-        run: uv run --no-sync --project ../.. pytest --create-db --due-work-verify
+        run: uv run --no-sync --project ../.. pytest --reuse-db --due-work-verify --durations=15
       - name: the README's demo GIF prints what the harness prints
-        run: uv run --no-sync pytest demos/test_readme_gif.py -p no:django
+        run: uv run --no-sync pytest demos/test_readme_gif.py -p no:django --durations=15
       # Each demo is an adopter: its handoffs are checked the way an adopter's CI checks them.
       - name: procrastinate demo_django, every handoff accounted for
         uses: ./check
