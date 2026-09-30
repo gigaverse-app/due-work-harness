@@ -412,6 +412,12 @@ def retention_of_transactions_checkouts() -> Retention:
     return _checkout_retention(charged_through_transactions)
 
 
+def confirmation_count(order: Order) -> int:
+    identity = to_global_id_or_none(order)
+    assert identity is not None, "a persisted order has a notification identity"
+    return current_shop().confirmations[identity]
+
+
 def confirmation_replay(prepare: Callable[[], Handle]) -> ReplaySafeEffect:
     # ARRANGE: complete a real paid checkout; observe the confirmation callback as a separate effect.
     # REAL PRODUCTION: Saleor's send_order_confirmation, with its real order payload and plugin manager.
@@ -422,6 +428,7 @@ def confirmation_replay(prepare: Callable[[], Handle]) -> ReplaySafeEffect:
     order = _order(handle[0])
     assert order is not None
     identity = to_global_id_or_none(order)
+    assert identity is not None, "a persisted order has a notification identity"
     current_shop().confirmations[identity] = 0
     return ReplaySafeEffect(
         name="Saleor order confirmation",
@@ -429,8 +436,8 @@ def confirmation_replay(prepare: Callable[[], Handle]) -> ReplaySafeEffect:
         execute=lambda target: send_order_confirmation(
             fetch_order_info(target), "https://www.example.com", get_plugins_manager(allow_replica=False)
         ),
-        observe=lambda target: current_shop().confirmations[to_global_id_or_none(target)],
-        execution_count_for=lambda target: current_shop().confirmations[to_global_id_or_none(target)],
+        observe=confirmation_count,
+        execution_count_for=confirmation_count,
     )
 
 

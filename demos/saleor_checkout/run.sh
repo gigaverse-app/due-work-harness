@@ -24,6 +24,19 @@ if ! git -C "$repo" describe --tags >/dev/null 2>&1; then
 fi
 uv pip install --quiet --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps -e "$repo"
 
+# Exploration is opt-in. Take its exact tooling versions from the harness lock,
+# without replacing any of Saleor's pinned runtime packages.
+for argument in "$@"; do
+  if [[ "$argument" == --due-work-explore* ]]; then
+    exploration_requirements="$(mktemp)"
+    (cd "$repo" && uv export --frozen --no-default-groups --extra exploration --no-emit-project --no-hashes) \
+      | sed -n -e '/^hypothesis==/p' -e '/^sortedcontainers==/p' > "$exploration_requirements"
+    uv pip install --quiet --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps -r "$exploration_requirements"
+    rm "$exploration_requirements"
+    break
+  fi
+done
+
 cd "$here"
 if [[ "${1:-}" == "--prepare-db" ]]; then
   # Migrate once and clone a database per xdist worker; then run the tests with -n N --reuse-db.
