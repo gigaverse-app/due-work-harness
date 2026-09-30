@@ -33,3 +33,12 @@ A rejected asyncio task/future belonging to the supplied runner is cancelled and
 drained before the binding raises, so it cannot resume when the next history
 uses that loop. Unrelated caller tasks and futures on other event loops remain
 caller-owned. This is not a whole-loop or whole-process termination guarantee.
+
+## Required adoption surface
+
+Bind this flow callable and schedule evidence through a `DueWorkContract` with
+a collected `@due_work_contract_suite(CONTRACT)` class. Put histories in
+`handoffs=` and claim only profiles for which production bindings exist.
+Calling the adapter in ordinary tests alone is incomplete domain adoption; see
+[required adoption shape](../ADOPTING.md#required-adoption-shape) for generated
+cases and report artifacts.
