@@ -196,6 +196,21 @@ def evidence(run: Runner = inline) -> Iterator[EvidenceSession[frozenset[str]]]:
                 catalog.db.close()
                 catalog.db = original
 
+        def retry(replay: Callable[[], None]) -> None:
+            request = catalog.request_provider_receipts
+
+            def at_provider() -> None:
+                # Inject old receipts at the external boundary, after production
+                # has admitted the new attempt. The application needs no test hook.
+                replay()
+                request()
+
+            catalog.request_provider_receipts = at_provider
+            try:
+                catalog.request_receipts()
+            finally:
+                catalog.request_provider_receipts = request
+
         names = ("alice", "bob", "carol")
         groups = [frozenset(group) for size in range(4) for group in combinations(names, size)]
         yield EvidenceSession(
@@ -208,7 +223,7 @@ def evidence(run: Runner = inline) -> Iterator[EvidenceSession[frozenset[str]]]:
             effects=lambda: {"request": provider.effects[("receipts", "request")]},
             actor_scope=actor_scope,
             retry=EvidenceRetry(
-                send=catalog.request_receipts,
+                send=retry,
                 expectations={
                     group: EvidenceExpectation(observation=group, effects={"request": 2}) for group in groups
                 },

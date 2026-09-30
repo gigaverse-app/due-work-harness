@@ -109,11 +109,10 @@ class Catalog:
         with self.db:
             self.db.executemany("INSERT OR IGNORE INTO receipts VALUES (?, ?)", list(self.receipts()))
 
-    def request_receipts(self, replay: Callable[[], None] = lambda: None) -> None:
+    def request_receipts(self) -> None:
         """Start a fresh sender turn without rewriting the previous turn's evidence."""
         with self.db:
             self.db.execute("INSERT INTO receipt_attempts DEFAULT VALUES")
-        replay()
         self.request_provider_receipts()
 
     def received(self, attempt: int = 1) -> frozenset[str]:
