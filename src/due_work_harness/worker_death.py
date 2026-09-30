@@ -1,3 +1,6 @@
+from collections.abc import Callable
+
+
 class WorkerDied(BaseException):
     """A worker died: nothing it would have done next happens. A BaseException, so ordinary error handling cannot swallow it."""
 
@@ -44,3 +47,19 @@ class CommitWorker:
     def refuse_if_dead(self) -> None:
         if self.dead:
             raise WorkerDied("the worker is dead; its connection sends nothing more")
+
+
+class LostCommitReplies:
+    """Count acknowledged commits and lose one reply using the adapter's driver error."""
+
+    def __init__(self, lose_at: int | None, failure: Callable[[int], Exception]) -> None:
+        self._lose_at = lose_at
+        self._failure = failure
+        self.count = 0
+        self.failure: Exception | None = None
+
+    def committed(self) -> None:
+        self.count += 1
+        if self.count == self._lose_at:
+            self.failure = self._failure(self.count)
+            raise self.failure
