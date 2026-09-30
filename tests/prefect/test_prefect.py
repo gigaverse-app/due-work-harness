@@ -83,8 +83,11 @@ def test_recurrence_checks_three_future_occurrences_even_at_an_exact_tick():
     )
     with asyncio.Runner() as runner, pytest.raises(AssertionError, match="recur"):
         assert_prefect_recurs(
-            deployment, record, start=datetime(2026, 9, 1, tzinfo=UTC),
-            within=timedelta(hours=1), runner=runner,
+            deployment,
+            record,
+            start=datetime(2026, 9, 1, tzinfo=UTC),
+            within=timedelta(hours=1),
+            runner=runner,
         )
 
 
@@ -92,6 +95,9 @@ def test_hourly_schedule_at_exact_tick_still_has_three_future_runs():
     deployment = RunnerDeployment.from_flow(record, name="hourly", cron="0 * * * *")
     with asyncio.Runner() as runner:
         assert_prefect_recurs(
-            deployment, record, start=datetime(2026, 9, 1, tzinfo=UTC),
-            within=timedelta(hours=1), runner=runner,
+            deployment,
+            record,
+            start=datetime(2026, 9, 1, tzinfo=UTC),
+            within=timedelta(hours=1),
+            runner=runner,
         )
