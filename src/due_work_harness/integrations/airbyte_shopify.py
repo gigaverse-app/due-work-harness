@@ -23,20 +23,21 @@ from typing import Any
 from unittest.mock import Mock
 
 from due_work_harness.crash_histories import Findings
-from due_work_harness.process_histories import ProcessHistory, fault_environment, fault_fires
+from due_work_harness.integrations.shopify import (
+    MISSING_RESULT_URL,
+    BulkOperationStatus,
+    ShopifyBulkDownload,
+    ShopifyBulkExchange,
+    ShopifyBulkOperation,
+)
+from due_work_harness.process_histories import ProcessHistory, fault_environment
 
-MISSING_RESULT_URL = "canceled without partial result URL"
 
-
-def _status_response(*, url: str | None, count: int, status: str) -> Any:
+def _status_response(operation: ShopifyBulkOperation) -> Any:
     return Mock(
         status_code=200,
         text="Shopify bulk status",
-        **{
-            "json.return_value": {
-                "data": {"node": {"status": status, "objectCount": str(count), "url": url, "partialDataUrl": None}}
-            }
-        },
+        **{"json.return_value": operation.graphql_response()},
     )
 
 
@@ -44,9 +45,8 @@ def _result_url(filename: str) -> str:
     return f"https://storage.googleapis.com/bulk?response-content-disposition=attachment%3B+filename%3D%22{filename}%22"
 
 
-def _download_response(record: Mapping[str, Any]) -> Any:
-    content = (json.dumps(record) + "\n").encode()
-    return Mock(status_code=200, **{"iter_content.return_value": iter((content,))})
+def _download_response(reply: ShopifyBulkDownload) -> Any:
+    return Mock(status_code=reply.status_code, **{"iter_content.return_value": iter((reply.body,))})
 
 
 def _stream(case: Mapping[str, Any]) -> Any:
@@ -79,29 +79,40 @@ def _child(directory: Path) -> int:
         first = next(slices)
         state = {stream.cursor_field: case["config"]["start_date"]}
         emitted: list[Any] = []
+        first_exchange = ShopifyBulkExchange(
+            operation=ShopifyBulkOperation(
+                status=BulkOperationStatus.CANCELED,
+                object_count=case["reported_count"],
+                partial_data_url=_result_url("first.jsonl"),
+            ),
+            records=(case["first_record"],),
+        )
+        later_exchange = ShopifyBulkExchange(
+            operation=ShopifyBulkOperation(
+                status=BulkOperationStatus.COMPLETED,
+                object_count=1,
+                url=_result_url("later.jsonl"),
+            ),
+            records=(case["later_record"],),
+        )
 
         def download(*, url: str, **_kwargs: Any) -> tuple[None, Any]:
             # EXTERNAL SEAM: only Shopify's result-storage HTTP response is supplied.
-            record = case["first_record"] if "first.jsonl" in url else case["later_record"]
-            return None, _download_response(record)
+            exchange = first_exchange if "first.jsonl" in url else later_exchange
+            return None, _download_response(exchange.download(url))
 
         manager.http_client.send_request = Mock(side_effect=download)
         manager._job_self_canceled = True
         manager._job_last_rec_count = case["reported_count"]
-        missing_url = fault_fires(MISSING_RESULT_URL)
+        canceled_operation = first_exchange.poll()
+        missing_url = canceled_operation.partial_data_url is None
 
         # REAL PRODUCTION: checkpoint collection, record composition, stream
         # cursor tracking and the next slice all belong to source_shopify.
-        manager._on_canceled_job(
-            _status_response(
-                url=None if missing_url else _result_url("first.jsonl"),
-                count=case["reported_count"],
-                status="CANCELED",
-            )
-        )
+        manager._on_canceled_job(_status_response(canceled_operation))
         state = _consume_result(stream, state, emitted)
         second = next(slices)
-        manager._on_completed_job(_status_response(url=_result_url("later.jsonl"), count=1, status="COMPLETED"))
+        manager._on_completed_job(_status_response(later_exchange.poll()))
         state = _consume_result(stream, state, emitted)
 
         # OBSERVE: the later result can advance state even if the first result

@@ -1,9 +1,11 @@
 # Airbyte Shopify bulk checkpoint integration
 
-`due_work_harness.integrations.airbyte_shopify.bulk_checkpoint_history` runs an
+The [Shopify API fixtures](shopify.md) are usable by any Python app. This
+Airbyte-specific binding, `due_work_harness.integrations.airbyte_shopify.bulk_checkpoint_history`, runs an
 Airbyte `source_shopify` bulk stream against two synthetic Shopify result URLs.
 It injects one external failure: a self-canceled bulk operation reports rows
-but returns neither `url` nor `partialDataUrl`. The helper runs the real job
+but returns neither `url` nor `partialDataUrl`. The control supplies a Shopify
+`partialDataUrl` for the canceled operation. The helper runs the real job
 manager, record reader, state update and `stream_slices` retry calculation in
 a child process. It returns a `ProcessHistory` for an adopter's
 `DueWorkContract.process_handoffs`.
