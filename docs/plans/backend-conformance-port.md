@@ -15,7 +15,7 @@ crash findings, process histories and verification guards.
       repeated attempts, xdist and explicit assessment debt.
 - [x] Migrate package exports, self-tests, examples, demos and adoption docs;
       preserve existing real failure detection and static enrollment checks.
-- [ ] Verify minimal core without frameworks/Hypothesis, optional exploration,
+- [x] Verify minimal core without frameworks/Hypothesis, optional exploration,
       relevant integrations, lint/types, wheel contents and CI.
 
 No backend application adapters or runtime policies are copied into the public
@@ -26,3 +26,9 @@ The port also pins three false-green boundaries found during verification:
 binding cleanup cannot suppress a verdict or its replay trace; a history binding
 cannot certify the wrong E family; and admission must close its own transaction
 before fault-fixture cleanup. Each was reproduced with a failing test before its fix.
+
+Local verification covers the framework-free core with and without exploration,
+Pydantic 2.11.0, Django/PostgreSQL, RQ/Redis and real Celery workers, the upstream
+Procrastinate demo, wheel-only imports, formatting and types. The PR's CI also
+runs MongoDB, aiokafka, Prefect, Saleor and the remaining demos. Exact run results
+and migration notes are maintained in the PR description.

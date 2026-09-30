@@ -31,6 +31,7 @@ remain explicit; new-feature contracts cannot waive gaps.
 
 ## Migrating an existing declaration
 
+This version requires Pydantic 2.11 or newer; the minimum is exercised in CI.
 The canonical names and enum values now follow the A–J vocabulary in the
 [profile table](README.md#ten-guarantees-profiles-aj). This is an API migration:
 
