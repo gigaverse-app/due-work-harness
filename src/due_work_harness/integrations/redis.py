@@ -143,7 +143,12 @@ class LostReplies(LostCommitReplies):
     def __init__(self, lose_at: int | None) -> None:
         from redis.exceptions import ConnectionError as RedisConnectionError
 
-        super().__init__(lose_at, lambda count: RedisConnectionError(f"Connection closed by server (the reply to commit {count} was lost; the write landed)"))
+        super().__init__(
+            lose_at,
+            lambda count: RedisConnectionError(
+                f"Connection closed by server (the reply to commit {count} was lost; the write landed)"
+            ),
+        )
 
 
 def redis_reply_breaker(client: Any) -> Callable[[int | None], AbstractContextManager[LostReplies]]:
