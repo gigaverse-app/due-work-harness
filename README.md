@@ -272,6 +272,7 @@ configure(django_host(production_packages={"myapp"}))
 | `[mongodb]` | `mongodb_host(client, production_packages)`: acknowledged writes and transaction commits, worker death and lost replies on PyMongo 4.9–4.17; pass `motor_client.delegate` for Motor. See [MongoDB boundaries](docs/mongodb.md). |
 | `[prefect]` | `prefect_flow_call(flow, runner)` completes the real flow body on one event loop; `assert_prefect_recurs` checks a declared deployment using Prefect’s schedule calculation. See [Prefect scope](docs/prefect.md). |
 | `[aiokafka]` | `AIOKafkaConsumer` only: worker death after acknowledgement and lost commit replies, tested with broker restart/replay. See [aiokafka scope](docs/aiokafka.md). |
+| Airbyte Shopify (adopter installs `source-shopify`) | `bulk_checkpoint_history()` runs a Shopify bulk stream against controlled result responses, then checks emitted records and the next retry slice after a missing partial result URL. See [Airbyte Shopify](docs/airbyte-shopify.md). |
 
 ## Finding weaknesses in a project of your own or someone else's
 
