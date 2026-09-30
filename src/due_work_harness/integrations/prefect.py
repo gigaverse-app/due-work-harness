@@ -17,6 +17,23 @@ from typing import Any
 from due_work_harness.models import DueWorkContractDesignError
 
 
+def _discard_deferred(result: Any, runner: asyncio.Runner) -> None:
+    """Release rejected work owned by this binding without cancelling unrelated caller tasks."""
+    if isinstance(result, asyncio.Future):
+        if result.get_loop() is runner.get_loop():
+            # Cancel before restarting the loop: the rejected task may already be runnable.
+            result.cancel()
+
+            async def drain() -> None:
+                await asyncio.gather(result, return_exceptions=True)
+
+            runner.run(drain())
+    elif inspect.iscoroutine(result) or inspect.isgenerator(result):
+        result.close()
+    elif inspect.isasyncgen(result):
+        runner.run(result.aclose())
+
+
 def prefect_flow_call(flow: Any, runner: asyncio.Runner) -> Callable[..., Any]:
     """A synchronous production binding that completes a real Prefect flow's body."""
     from prefect import Flow
@@ -30,10 +47,7 @@ def prefect_flow_call(flow: Any, runner: asyncio.Runner) -> Callable[..., Any]:
         if inspect.iscoroutine(result):
             result = runner.run(result)
         if inspect.isawaitable(result) or inspect.isgenerator(result) or inspect.isasyncgen(result):
-            if inspect.iscoroutine(result) or inspect.isgenerator(result):
-                result.close()
-            elif inspect.isasyncgen(result):
-                runner.run(result.aclose())
+            _discard_deferred(result, runner)
             raise DueWorkContractDesignError("flow body returned deferred work; bind a coroutine that awaits it")
         return result
 
