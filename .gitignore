@@ -7,3 +7,4 @@ __pycache__/
 *.egg-info/
 demos/.upstream/
 demos/dbos_transactional_outbox/.inbox.txt
+demos/.ci-cache/
