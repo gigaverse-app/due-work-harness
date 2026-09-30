@@ -8,6 +8,7 @@ a commit hook, a repeated notification. Agreement alone is not a pass: an inert
 recovery fails the positive control.
 """
 
+import inspect
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -19,6 +20,7 @@ from due_work_harness.crash_histories import (
     HandoffHistory,
     HistoriesDiverged,
     assert_crash_at_every_commit_converges,
+    assert_histories_converge,
     assert_pinned_outcomes,
 )
 from due_work_harness.host import Host, hosted
@@ -258,3 +260,8 @@ def test_a_group_with_a_death_raised_by_a_live_worker_is_refused(ledger_host: Ho
         assert_crash_at_every_commit_converges(
             ref.RETRY_DELIVERY, _retry(ref.fail_with_atomic_handoff_then_a_group_with_its_own_death)
         )
+
+
+def test_a_divergence_has_no_other_type_to_take() -> None:
+    # A gap's xfail accepts HistoriesDiverged alone; a caller-chosen type would let it accept anything.
+    assert "divergence" not in inspect.signature(assert_histories_converge).parameters

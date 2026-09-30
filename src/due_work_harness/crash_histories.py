@@ -802,9 +802,7 @@ def assert_normal_operation_repeats(name: str, delivered: HistoryRun, again: His
     )
 
 
-def assert_histories_converge(
-    name: str, runs: list[HistoryRun], *, divergence: type[AssertionError] = HistoriesDiverged
-) -> None:
+def assert_histories_converge(name: str, runs: list[HistoryRun]) -> None:
     """
     The differential verdict: every interrupted history reaches normal operation's outcome.
 
@@ -813,8 +811,8 @@ def assert_histories_converge(
     themselves and hand the runs here (see :mod:`due_work_harness.process_histories`);
     the verdict and its positive controls stay with the harness.
 
-    A divergence raises ``divergence``, :class:`HistoriesDiverged` by default, so
-    a gap's xfail can accept that alone; every other failure is a plain assertion.
+    A divergence raises :class:`HistoriesDiverged`, always, so a gap's xfail can
+    accept that alone; every other failure is a plain assertion.
     """
     delivered, interrupted = runs[0], runs[1:]
     assert delivered.after != delivered.before, (
@@ -826,7 +824,7 @@ def assert_histories_converge(
     assert not uninterrupted, f"{name}: these histories were never interrupted: {uninterrupted}"
     divergent = {run.label: run.after for run in interrupted if run.after != delivered.after}
     if divergent:
-        raise divergence(
+        raise HistoriesDiverged(
             f"{name}: normal operation reaches {delivered.after!r}, but these histories reach something else: "
             f"{divergent!r}. Work was lost or repeated. A loss is work handed off only by a message, a commit hook "
             f"or code after a commit that a dead worker never runs: commit the handoff with the state that owes "
