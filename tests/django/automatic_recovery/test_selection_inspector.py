@@ -352,6 +352,20 @@ def test_a_named_partial_index_serves_a_time_bounded_selection(bitmap_over_a_par
     _index_served_with(bitmap_over_a_partial_index)
 
 
+@pytest.mark.parametrize("analyzed", [False, True], ids=["default-statistics", "fresh-statistics"])
+def test_a_named_partial_index_serves_the_selection_whichever_scan_the_planner_picks(analyzed: bool) -> None:
+    # Without forcing a bitmap, the planner may walk the partial index and filter the time bound: a plain
+    # Index Scan with no Index Cond. The verdict accepts it for a named partial index, as it accepts the bitmap.
+    active = ", ".join(f"'{status}'" for status in ref.ACTIVE_STATUSES)
+    with connection.cursor() as cursor:
+        cursor.execute(f"CREATE INDEX lifecycle_attempt_active_ix ON {_TABLE} (id) WHERE status IN ({active})")
+        if analyzed:
+            cursor.execute(f"ANALYZE {_TABLE}")
+    with pytest.raises(AssertionError, match=r"no index condition|full scan by another name"):
+        _index_served_with()
+    _index_served_with("lifecycle_attempt_active_ix")
+
+
 def test_naming_an_index_that_is_not_partial_is_refused(bitmap_over_a_partial_index: str) -> None:
     with connection.cursor() as cursor:
         cursor.execute(f"CREATE INDEX lifecycle_attempt_full_ix ON {_TABLE} (id)")
@@ -436,7 +450,11 @@ def test_the_inspector_asks_the_bitmap_plan_when_the_first_walks_an_unrelated_in
     assert (verdict, asked) == (served, [False, True])
 
 
-def test_the_bitmap_only_probe_disables_plain_index_scans_and_restores_every_setting() -> None:
+_PLANNER_SETTINGS = ("enable_seqscan", "enable_indexscan", "enable_indexonlyscan")
+
+
+@pytest.mark.parametrize("starts_off", _PLANNER_SETTINGS)
+def test_the_bitmap_only_probe_disables_plain_index_scans_and_restores_every_setting(starts_off: str) -> None:
     _add_due_index()
     observed: dict[str, str] = {}
     original = QuerySet.explain
@@ -448,11 +466,18 @@ def test_the_bitmap_only_probe_disables_plain_index_scans_and_restores_every_set
                 observed[setting] = cursor.fetchone()[0]
         return original(queryset, *args, **kwargs)
 
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(QuerySet, "explain", explain)
-        plan = explain_index_eligibility(ref.due_for_recovery(), bitmap_only=True)
-    assert observed == {"enable_seqscan": "off", "enable_indexscan": "off", "enable_indexonlyscan": "off"}
+    settings = _PLANNER_SETTINGS
+    # Inside the caller's transaction, where a SET LOCAL left behind would outlive the probe; one setting
+    # starts off, so restoring means restoring each one's own value, and the other two catch a missed restore.
+    with transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute(f"SET LOCAL {starts_off} = off")
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(QuerySet, "explain", explain)
+            plan = explain_index_eligibility(ref.due_for_recovery(), bitmap_only=True)
+        after = {}
+        for setting in settings:
+            cursor.execute(f"SHOW {setting}")
+            after[setting] = cursor.fetchone()[0]
+    assert observed == dict.fromkeys(settings, "off")
     assert any(node.get("Node Type") == "Bitmap Index Scan" for node in iter_plan_nodes(plan))
-    with connection.cursor() as cursor:
-        cursor.execute("SHOW enable_indexscan")
-        assert cursor.fetchone()[0] == "on"
+    assert after == {setting: "off" if setting == starts_off else "on" for setting in settings}

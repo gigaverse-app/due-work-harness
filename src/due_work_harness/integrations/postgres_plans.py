@@ -112,6 +112,10 @@ def index_served_verdict(plan: dict[str, Any], *, table: str, predicate_indexes:
         # and that always shows up as a Filter.
         if "Filter" not in node:
             continue
+        # A named partial index narrows by its own predicate, as it does for a bitmap: the re-tested
+        # predicate is refused above, so the Filter left here drops only backlog the predicate cannot hold.
+        if node.get("Index Name") in constrained:
+            continue
         if not any(key in node for key in PRUNING_KEYS):
             return (
                 f"the selection reaches an index on {table!r} ({node_type}) but no index condition "
@@ -152,10 +156,17 @@ def referenced_columns(expression: str, candidates: Collection[str]) -> set[str]
     return names & set(candidates)
 
 
-#: A column compared by a range operator (not ``<>``), as PostgreSQL prints plan expressions.
-_RANGE_COMPARISON = re.compile(r"(\w+)\)?(?:::[\w ]+?)?\s*(?:<=|>=|<(?![>=])|(?<![<-])>(?!=))")
-#: A column compared by any operator an index condition prints.
-_COMPARISON = re.compile(r"(\w+)\)?(?:::[\w ]+?)?\s*(?:<=|>=|<>|=|<|>|~~)")
+#: A cast as PostgreSQL prints one, including its multi-word type names; removed before reading comparisons.
+_CAST = re.compile(r'::(?:"[^"]+"|[\w.]+)(?: (?:with|without) time zone| varying| precision)?(?:\[\])?')
+_OPERAND = r'"[^"]+"|[A-Za-z_][\w$]*'
+#: One range comparison, with the operand on either side. The lookarounds keep ``<>`` (not a range),
+#: ``<=``/``>=`` (matched whole) and the JSON arrow ``->`` from reading as ``<`` or ``>``. The optional
+#: ``(`` after the right operand marks a function call (``now()``), which is not a column.
+_RANGE = re.compile(
+    rf"(?P<left>{_OPERAND})?\)*\s*(?:<=|>=|<(?![>=])|(?<![<-])>(?!=))\s*\(*(?P<right>{_OPERAND})?(?P<call>\s*\()?"
+)
+#: Words PostgreSQL prints beside an operator that are not columns.
+_NOT_COLUMNS = frozenset({"ALL", "AND", "ANY", "ARRAY", "FALSE", "IS", "NOT", "NULL", "OR", "SOME", "TRUE"})
 
 
 def bitmap_overturns_the_walk(
@@ -167,35 +178,56 @@ def bitmap_overturns_the_walk(
     On a tiny table every index walk costs about the same, so with sequential
     scans off the planner may walk an unrelated index (a unique key) and filter
     the due-time bound, whichever statistics autovacuum left. Asked again with
-    plain index scans off too, it must build a bitmap, which needs an index
-    condition (or a named partial predicate) to narrow at all. The bitmap
-    overturns the walked verdict only when it passes the same verdict and its
-    index conditions cover every column the walked scan filtered by a range: a
-    bitmap over a state index that still filters the due time reads the whole
-    index, and is not narrowing. A walk that filters no range bound is not a
-    costing artifact, and is never overturned.
+    plain index scans off too, it must build a bitmap. The rule enforced: the
+    walked scan must filter at least one column by a range (otherwise it is not
+    a costing artifact and is never overturned); the bitmap plan must pass
+    :func:`index_served_verdict` with the same named partial indexes; and every
+    input the bitmap reads must narrow each of those range-bounded columns,
+    either by naming it in its ``Index Cond`` (outside string literals) or by
+    being a named partial index (whose Filter the verdict already checked).
+    Arms of a ``BitmapAnd`` narrow together; each arm of a ``BitmapOr`` is read
+    on its own, so each must narrow every bounded column itself. A bitmap over
+    a state index that still filters the due time reads the whole index, and
+    is not narrowing.
     """
-    bounded = _columns(_expressions(walked, table, "Filter"), _RANGE_COMPARISON)
+    bounded = _range_bounded_columns(_expressions(walked, table, "Filter"))
     if not bounded:
         return False
     if index_served_verdict(bitmap, table=table, predicate_indexes=predicate_indexes) is not None:
         return False
-    return bounded <= _columns(_expressions(bitmap, table, "Index Cond"), _COMPARISON)
+    constrained = _constrained_columns(predicate_indexes)
+    scans = [node for node in iter_plan_nodes(bitmap) if node.get("Relation Name") == table]
+    return all(bounded <= _narrowed(node, bounded, constrained) for node in scans)
+
+
+def _narrowed(node: dict[str, Any], bounded: set[str], constrained: Mapping[str, Collection[str]]) -> set[str]:
+    """Which of the ``bounded`` columns an index narrows for everything this scan or bitmap node reads."""
+    if node.get("Index Name") in constrained:
+        return set(bounded)
+    inputs = [child for child in node.get("Plans", ()) if child.get("Node Type") in _BITMAP_INPUTS]
+    arms = [_narrowed(child, bounded, constrained) for child in inputs]
+    if node.get("Node Type") == "BitmapOr":
+        return set.intersection(*arms) if arms else set()
+    return referenced_columns(str(node.get("Index Cond", "")), bounded).union(*arms)
+
+
+_BITMAP_INPUTS = frozenset({"Bitmap Index Scan", "BitmapAnd", "BitmapOr"})
 
 
 def _expressions(plan: dict[str, Any], table: str, key: str) -> list[str]:
-    """``key`` expressions of every scan on ``table``, and of the index scans feeding its bitmaps."""
-    found: list[str] = []
-    for node in iter_plan_nodes(plan):
-        if node.get("Relation Name") != table:
-            continue
-        feeding = [scan for scan in iter_plan_nodes(node) if scan.get("Node Type") == "Bitmap Index Scan"]
-        found.extend(str(candidate[key]) for candidate in [node, *feeding] if key in candidate)
+    """``key`` expressions of every scan on ``table``."""
+    return [str(node[key]) for node in iter_plan_nodes(plan) if node.get("Relation Name") == table and key in node]
+
+
+def _range_bounded_columns(expressions: list[str]) -> set[str]:
+    """The columns compared by a range operator, on either side, outside string literals and casts."""
+    found: set[str] = set()
+    for expression in expressions:
+        text = _CAST.sub("", _LITERAL.sub("''", expression))
+        for match in _RANGE.finditer(text):
+            operands = [match.group("left")] + ([] if match.group("call") else [match.group("right")])
+            found.update(operand.strip('"') for operand in operands if operand and operand.upper() not in _NOT_COLUMNS)
     return found
-
-
-def _columns(expressions: list[str], comparison: re.Pattern[str]) -> set[str]:
-    return {match.group(1) for expression in expressions for match in comparison.finditer(expression)}
 
 
 def assert_plan_is_index_served(
