@@ -204,3 +204,13 @@ def test_an_observation_that_differs_between_clean_runs_is_refused_not_a_diverge
     with pytest.raises(AssertionError, match="not deterministic") as raised:
         assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, history)
     assert not isinstance(raised.value, HistoriesDiverged)
+
+
+def test_an_assertion_inside_an_exception_group_after_an_injected_failure_is_never_absorbed(
+    replying_ledger_host: Host,
+) -> None:
+    with pytest.raises(ExceptionGroup) as raised:
+        assert_crash_at_every_commit_converges(
+            ref.COMPLETION_DELIVERY, _completion(ref.complete_grouping_its_assertion_on_error)
+        )
+    assert raised.value.subgroup(AssertionError) is not None

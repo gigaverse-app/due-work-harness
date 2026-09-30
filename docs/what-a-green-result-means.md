@@ -176,6 +176,29 @@ disposition, every gap is a *strict* xfail that trips when the gap is fixed, and
 a `KnownGap` is strongest with a `detect` probe that fails exactly while the gap
 exists.
 
+### What a crash history absorbs
+
+A transition interrupted on purpose raises things, and a history has to decide
+which of them are the interruption and which are defects. One rule, in this
+order, for every host:
+
+1. A seam's refusal (a deferred result the harness cannot observe honestly) is
+   raised, even when production swallowed it or wrapped it in its own error.
+2. A failed assertion, bare or inside an exception group, is raised: an
+   invariant failing is a defect whatever happened before it.
+3. After a simulated worker death, any other exception is absorbed: it was
+   raised on the way out (a connection close, a `finally`), which a dead
+   process never runs.
+4. After an injected failure (a failed after-commit callback or signal
+   receiver, a refused publication, a lost reply), an exception is absorbed
+   only when it is that failure or was raised while handling it or from it:
+   that is the application's own response, as a real request errors.
+5. Anything else fails the history.
+
+A divergence always raises `HistoriesDiverged`, and a declared handoff gap is a
+strict xfail for that alone; a broken binding, a failed positive control or an
+observation that differs between two clean runs is a plain `AssertionError`.
+
 ## Where the proofs came from
 
 Several proofs came from comparing hand-written background work with what a

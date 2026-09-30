@@ -404,6 +404,17 @@ def complete_asserting_on_error(attempt: int) -> None:
         raise AssertionError("the completion's reply must never be lost") from error
 
 
+def complete_grouping_its_assertion_on_error(attempt: int) -> None:
+    """The broken invariant again, reported inside an exception group, as a task group or except* would."""
+    LEDGER.update(attempt, progress="done")
+    try:
+        LEDGER.update(attempt, status=COMPLETE)
+    except LedgerConnectionError as error:
+        raise ExceptionGroup(
+            "completing the attempt", [AssertionError("the completion's reply must never be lost")]
+        ) from error
+
+
 def complete_checking_on_error(attempt: int) -> None:
     """The conforming shape: after an error, it reads back what landed before deciding."""
     LEDGER.update(attempt, progress="done")

@@ -69,6 +69,21 @@ worker, how it is lost, and how production recovers. A PostgreSQL job queue has
 no message separate from the database, so its delivery declares
 ``can_lose = False`` and the lost-notification history is not applicable.
 
+What a history does with an exception that reaches it from the transition,
+in this order (the same rule in every host):
+
+1. A seam's refusal (a deferred result it cannot observe) is raised, even when
+   production swallowed or wrapped it.
+2. A failed assertion, bare or inside an exception group, is raised: an
+   invariant failing is a defect, whatever happened before it.
+3. After a simulated worker death, any other exception is absorbed: it was
+   raised on the way out (a close, a ``finally``), which a dead process never runs.
+4. After an injected failure (a failed callback or receiver, a refused
+   publication, a lost reply), an exception is absorbed only when it is that
+   failure or was raised while handling it or from it: the application's own
+   response, as a real request errors.
+5. Anything else fails the history.
+
 What these histories do not claim:
 
 * The delivered outcome is whatever production does in normal operation;
@@ -564,8 +579,8 @@ def _run(
                     raise worker.refused from error
                 if worker.refused is not None:
                     raise
-                # An invariant failing, in production or in a proof, is never absorbed.
-                if isinstance(error, AssertionError):
+                # An invariant failing, in production or in a proof, is never absorbed, bare or grouped.
+                if _is_assertion_failure(error):
                     raise
                 # Raised on the way out of a dead worker (a close, a finally): a dead process runs none of it.
                 # Otherwise an injected failure reached the caller, as the framework and the application let
@@ -607,6 +622,13 @@ def _run(
         interrupted=interrupted or lose,
         **counts,
     )
+
+
+def _is_assertion_failure(error: BaseException) -> bool:
+    """A failed assertion, reported bare or inside an exception group."""
+    if isinstance(error, BaseExceptionGroup):
+        return error.subgroup(AssertionError) is not None
+    return isinstance(error, AssertionError)
 
 
 def _caused_by(error: BaseException, cause: BaseException) -> bool:
