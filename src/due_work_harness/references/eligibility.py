@@ -4,7 +4,7 @@ An independent in-memory scheduler, for testing the execution-eligibility proofs
 :class:`GateReference` owns one obligation that is blocked until something makes
 it eligible, with an optional periodic inspection as the fallback when the
 readiness notification is lost. It is the conforming implementation of what
-:class:`~due_work_harness.profiles.execution_eligibility.ExecutionGate` binds, in
+:class:`~due_work_harness.profiles.gated_execution.ExecutionGate` binds, in
 three shapes: an inspection that counts as an execution (the default), one
 observed apart (``separate_inspections``), and a clock that moves only in whole
 seconds (``whole_seconds``, conforming once its resolution is declared). Each
@@ -36,7 +36,7 @@ from typing import Literal
 from due_work_harness.helpers import undeclared
 from due_work_harness.models import MutableHarnessModel
 from due_work_harness.profiles.automatic_recovery import DueWorkSweep
-from due_work_harness.profiles.execution_eligibility import ExecutionGate
+from due_work_harness.profiles.gated_execution import ExecutionGate
 
 _INSPECTION = timedelta(seconds=30)
 

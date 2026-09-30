@@ -103,7 +103,7 @@ What these histories do not claim:
   external system after the death still runs, where a dead process's would not.
 * Deaths happen inside the transition. A worker that recovery delivers is not
   killed after its own external calls; prove its replay safety with
-  :class:`~due_work_harness.safety.replay_safe_execution.ReplaySafeEffect`, or
+  :class:`~due_work_harness.profiles.harmless_replay.ReplaySafeEffect`, or
   run whole processes with :mod:`due_work_harness.process_histories`.
 """
 

@@ -45,11 +45,10 @@ from due_work_harness import (
     KnownGap,
     MissingReclaim,
     NotApplicable,
+    NotAssessed,
     Profile,
     ReplaySafeEffect,
     Retention,
-    SafetyContract,
-    SafetyProfile,
     assert_provider_call_holds_no_transaction,
     due_work_contract_suite,
 )
@@ -279,27 +278,20 @@ def _profiles() -> dict[Profile, Disposition]:
         Profile.D: Claim(),
         Profile.E: NotApplicable(WHY_NO_CONVERGENCE),
         Profile.F: Decline(WHY_NOT_DERIVED),
+        Profile.G: NotAssessed(because="Product execution prerequisites have not been assessed."),
+        Profile.I: NotAssessed(because="Standalone partial admission rollback has not been assessed."),
     }
-
-
-def _safety(name: str) -> SafetyContract:
-    return SafetyContract(
-        name=name,
-        profiles={SafetyProfile.REPLAY_SAFE_EXECUTION: Claim(), SafetyProfile.BOUNDED_RETRY: Claim()},
-        replay=indexing_replay,
-        retry=indexing_retry,
-        transactional=True,
-    )
 
 
 DEMO_AS_SHIPPED = DueWorkContract(
     name="procrastinate demo_django: create book",
     adoption=Adoption.LEGACY,
     transactional=True,
-    profiles=_profiles(),
+    profiles={**(_profiles()), Profile.H: Claim(), Profile.J: Claim()},
     ownership=the_demos_ownership,
     retention=the_demos_retention,
-    safety=_safety("procrastinate demo_django: create book"),
+    replay=indexing_replay,
+    retry=indexing_retry,
     handoffs=(CREATE_BOOK,),
     handoff_delivery=WORKER,
     handoff_gaps={
@@ -342,10 +334,11 @@ DEMO_WITH_ITS_FIXES = DueWorkContract(
     adoption=Adoption.LEGACY,
     transactional=True,
     fixtures=("atomic_requests",),
-    profiles=_profiles(),
+    profiles={**(_profiles()), Profile.H: Claim(), Profile.J: Claim()},
     ownership=the_demos_ownership,
     retention=the_demos_retention,
-    safety=_safety("procrastinate demo_django: create book, with its fixes"),
+    replay=indexing_replay,
+    retry=indexing_retry,
     handoffs=(CREATE_BOOK,),
     handoff_delivery=WORKER,
     extras=(

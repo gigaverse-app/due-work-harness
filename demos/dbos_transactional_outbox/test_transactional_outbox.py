@@ -44,10 +44,9 @@ from due_work_harness import (
     KnownGap,
     LossIsAbsorbedElsewhere,
     NotApplicable,
+    NotAssessed,
     Profile,
     Retention,
-    SafetyContract,
-    SafetyProfile,
     due_work_contract_suite,
 )
 from due_work_harness.integrations.dbos import OUTSTANDING, launched, restart_until, wait_until, workflow_status
@@ -271,19 +270,17 @@ PLACE_ORDER_CONTRACT = DueWorkContract(
             "the obligation is the workflow DBOS enqueues in the order's own transaction, not a fact derived "
             "from orders"
         ),
+        Profile.H: KnownGap(
+            "the notification step is not idempotent: replaying it notifies the customer again (profile C "
+            "shows the replay happen)"
+        ),
+        Profile.J: Claim(),
+        Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
+        Profile.I: NotAssessed(
+            because="Standalone partial admission rollback have not been assessed for this adopter."
+        ),
     },
-    safety=SafetyContract(
-        name="DBOS transactional-outbox: place order",
-        adoption=Adoption.LEGACY,
-        profiles={
-            SafetyProfile.REPLAY_SAFE_EXECUTION: KnownGap(
-                "the notification step is not idempotent: replaying it notifies the customer again (profile C "
-                "shows the replay happen)"
-            ),
-            SafetyProfile.BOUNDED_RETRY: Claim(),
-        },
-        retry=the_notifications_retry,
-    ),
+    retry=the_notifications_retry,
     retention=the_demos_retention,
     # Placing an order survives a death before the notification: a process handoff of its own.
     process_handoffs=(DEATHS_BEFORE_THE_NOTIFICATION,),

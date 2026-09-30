@@ -1,16 +1,8 @@
-import sys
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
 from due_work_harness.host import Host, hosted
-
-# The stand-in production package lives outside ``tests/``: the binding
-# tripwires treat any path with a ``tests`` directory as test code.
-_SUPPORT = Path(__file__).resolve().parents[3] / "tests_support"
-if str(_SUPPORT) not in sys.path:
-    sys.path.insert(0, str(_SUPPORT))
 
 
 def pytest_configure(config: pytest.Config) -> None:

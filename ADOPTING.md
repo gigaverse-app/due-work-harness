@@ -9,7 +9,7 @@ the GitHub Actions below.
 
 Every due-work domain adoption **MUST** declare a `DueWorkContract` and expose a
 collected class decorated with `@due_work_contract_suite(CONTRACT)`. Declare all
-six lifecycle profiles and both safety profiles with truthful dispositions;
+ten profiles A–J with truthful dispositions;
 bind claimed profiles to production code. Put crash histories in `handoffs=` or
 `process_handoffs=` so the generated suite owns their execution and reporting.
 
@@ -28,6 +28,44 @@ suite classes, and run report in the PR. Report passes, declared gaps, declines,
 and exclusions separately; collection alone is not execution evidence. Do not
 invent a claim or misuse `Decline` to hide unfinished bindings. Legacy gaps must
 remain explicit; new-feature contracts cannot waive gaps.
+
+## Migrating an existing declaration
+
+This version requires Pydantic 2.11 or newer; the minimum is exercised in CI.
+The canonical names and enum values now follow the A–J vocabulary in the
+[profile table](README.md#ten-guarantees-profiles-aj). This is an API migration:
+
+- Move nested `safety.profiles` into `DueWorkContract.profiles`: old
+  `SafetyProfile.REPLAY_SAFE_EXECUTION` becomes `Profile.HARMLESS_REPLAY` (H),
+  and `SafetyProfile.BOUNDED_RETRY` becomes `Profile.JOB_RETRY_LIMITS` (J).
+  Move `replay=` and `retry=` onto the same `DueWorkContract`, preserving their
+  fixtures, real-commit requirement and legacy gap policy.
+- Add G and I decisions. Claim G when binding `eligibility=`; claim I when binding
+  named `admission=` commands. Use `NotAssessed(because="...")` when assessment
+  is unfinished. It produces a strict XFAIL until replaced with evidence or an
+  applicability decision. Existing H/J test IDs remain stable.
+- `SafetyContract` remains a standalone H/J-only view for independently scoped
+  effects, using `Profile.H` and `Profile.J`. It is no longer nested in a domain
+  contract. The implementations live in `profiles.harmless_replay` and
+  `profiles.job_retry_limits`; G lives in `profiles.gated_execution`.
+- E's four families are independently assessed. Existing bindings imply a claim
+  for their own family only. Unbound families generate assessment XFAILs; declare
+  `convergence_families={ConvergenceFamily.IN_FLIGHT: NotApplicable("reason")}`
+  only when that family truly cannot apply. Exact behavioral failures belong in
+  `Claim.gaps` or the scenario's history/invariant gaps, not blanket family waivers.
+
+`pytest --due-work-profile-report=profiles.json` records every expected behavioral
+case, which cases were collected and selected, and their setup/call/teardown
+outcomes. It supports xdist and never treats an XFAIL as a verified guarantee.
+This complements the static handoff scan and `--due-work-verify`; neither a
+collected declaration nor one passing test certifies a whole profile.
+
+See [interleavings](docs/interleavings.md) for generated competing-event tests,
+optional exploration and deterministic replay. Profile I's callbacks are documented
+in [`indivisible_admission.py`](src/due_work_harness/profiles/indivisible_admission.py):
+bind a real standalone command, independently observed product intent and work,
+an external-publication recorder, and a fault boundary reached after partial writes.
+The host must supply `in_transaction`; fault fixtures must not supply the transaction.
 
 ## 1. Install
 
@@ -153,7 +191,7 @@ calling adoption complete. See [the README](README.md) and
 
 If the work can be owed but *blocked* by a product decision (a dependency has
 not settled, an owner is still active), add an `ExecutionGate` to a contract
-that claims profile A: `DueWorkContract(..., eligibility=order_blocked_by_payment)`,
+that claims profiles A and G: `DueWorkContract(..., eligibility=order_blocked_by_payment)`,
 or a mapping of names to gates for several blockers. Its binding routes,
 recovery and selection call production; the harness proves the blocked work
 stays owed and untouched, and completes by recovery alone once eligible, with

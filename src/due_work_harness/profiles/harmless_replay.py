@@ -3,8 +3,8 @@ Reusable proof that blindly replaying one logical effect converges.
 
 This is the ``REPLAY_SAFE_EXECUTION`` safety profile. Every adopter
 explicitly claims, declines, marks not applicable, or records a known
-gap for it through :class:`~.contract.SafetyContract`; effects outside the
-six lifecycle profiles can declare the same safety contract directly. A
+gap for it in the flat domain contract, or a scoped :class:`~due_work_harness.contract.SafetyContract`; effects outside the
+full due-work domain contract can declare the same safety contract directly. A
 compatible claimant binds the production operation and an observation of its
 externally meaningful result.
 

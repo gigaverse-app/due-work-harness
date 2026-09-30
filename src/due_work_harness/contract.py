@@ -43,15 +43,12 @@ disposition for **every** profile — then one decorated class::
             Profile.DURABLE_RETENTION: NotApplicable("no retention pass exists"),
             Profile.EVENTUAL_CONVERGENCE: Claim(),
             Profile.FACT_DERIVED_OBLIGATIONS: Claim(),
+            Profile.GATED_EXECUTION: NotApplicable("No execution prerequisite exists."),
+            Profile.HARMLESS_REPLAY: Claim(),
+            Profile.INDIVISIBLE_ADMISSION: NotAssessed(because="Partial admission needs assessment."),
+            Profile.JOB_RETRY_LIMITS: NotApplicable("The task queue owns transport retries."),
         },
-        safety=SafetyContract(
-            name="document previews",
-            profiles={
-                SafetyProfile.REPLAY_SAFE_EXECUTION: Claim(),
-                SafetyProfile.BOUNDED_RETRY: NotApplicable("the task queue owns transport retry"),
-            },
-            replay=_replay_binding,
-        ),
+        replay=_replay_binding,
         snapshot=_snapshot_binding,      # profile E, worker half
         derivation=_derivation_binding,  # profile F
     )
@@ -80,6 +77,9 @@ Dispositions — silence is not one of them
 -----------------------------------------
 
 Every profile must be one of:
+
+* :class:`NotAssessed` — unfinished assessment, a strict XFAIL with a remediation
+  reason. It cannot carry a binding or count as executed behavioral evidence.
 
 * :class:`Claim` — the domain has this capability; its binding is required and
   every proof runs. ``gaps`` records per-invariant **legacy** defects as strict
@@ -146,7 +146,7 @@ from functools import wraps
 from typing import Any
 
 import pytest
-from pydantic import Field, SkipValidation
+from pydantic import Field, InstanceOf, SkipValidation
 
 from due_work_harness.binding import (
     assert_test_binding_delegates_to_production,
@@ -166,7 +166,10 @@ from due_work_harness.crash_histories import (
     HistoriesDiverged,
     assert_crash_at_every_commit_converges,
 )
+from due_work_harness.helpers import proof_context
 from due_work_harness.host import current_host
+from due_work_harness.interleavings.adapters import integration as interleaving_integration
+from due_work_harness.interleavings.bindings import EvidenceConfluence, InFlightConvergence
 from due_work_harness.models import MISSING, DueWorkContractDesignError, HarnessModel, with_positional
 from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
 from due_work_harness.profiles.automatic_recovery import (
@@ -182,6 +185,8 @@ from due_work_harness.profiles.bounded_ownership import (
     assert_claim_is_exclusive_across_connections,
     assert_ownership_bindings_are_production_bound,
 )
+from due_work_harness.profiles.catalog import SAFETY_PROFILES, ConvergenceFamily, Profile
+from due_work_harness.profiles.coverage import AssessmentState
 from due_work_harness.profiles.crash_ambiguity import (
     AMBIGUITY_PROOFS,
     AmbiguityAware,
@@ -198,48 +203,25 @@ from due_work_harness.profiles.eventual_convergence import (
     SupersededSnapshot,
     assert_convergence_bindings_are_production_bound,
 )
-from due_work_harness.profiles.execution_eligibility import (
-    ELIGIBILITY_PROOFS,
-    ExecutionGateBinding,
-    assert_gate_is_recovered_by_the_contract_sweep,
-)
 from due_work_harness.profiles.fact_derived_obligations import (
     STATE_DERIVED_PROOFS,
     StateDerived,
     assert_derivation_bindings_are_production_bound,
 )
-from due_work_harness.safety.bounded_retry import (
-    BOUNDED_RETRY_PROOFS,
-    BoundedRetry,
+from due_work_harness.profiles.gated_execution import (
+    ELIGIBILITY_PROOFS,
+    ExecutionGateBinding,
+    assert_gate_is_recovered_by_the_contract_sweep,
 )
-from due_work_harness.safety.replay_safe_execution import (
+from due_work_harness.profiles.harmless_replay import (
     REPLAY_SAFETY_PROOFS,
     ReplaySafeEffect,
 )
-
-
-class Profile(Enum):
-    """
-    The six lifecycle capability profiles of due work.
-
-    The letters A-F are the canonical members: generated test ids, reports and
-    iteration use them, so they stay stable. The descriptive names below are
-    aliases of the same members and read better in declarations.
-    """
-
-    A = "due-work recovery"
-    B = "fenced ownership"
-    C = "ambiguity-aware execution"
-    D = "retention"
-    E = "convergent writes"
-    F = "state-derived obligations"
-
-    AUTOMATIC_RECOVERY = "due-work recovery"
-    BOUNDED_OWNERSHIP = "fenced ownership"
-    CRASH_AMBIGUITY = "ambiguity-aware execution"
-    DURABLE_RETENTION = "retention"
-    EVENTUAL_CONVERGENCE = "convergent writes"
-    FACT_DERIVED_OBLIGATIONS = "state-derived obligations"
+from due_work_harness.profiles.indivisible_admission import ADMISSION_PROOFS, AdmissionAtomicity
+from due_work_harness.profiles.job_retry_limits import (
+    BOUNDED_RETRY_PROOFS,
+    BoundedRetry,
+)
 
 
 class Adoption(Enum):
@@ -254,13 +236,6 @@ class Adoption(Enum):
 
     NEW_FEATURE = "new feature"
     LEGACY = "legacy adoption"
-
-
-class SafetyProfile(Enum):
-    """The reusable execution-safety profiles every durable-work adopter assesses."""
-
-    REPLAY_SAFE_EXECUTION = "replay-safe execution"
-    BOUNDED_RETRY = "bounded retry"
 
 
 class DueWorkSource(HarnessModel):
@@ -386,8 +361,13 @@ class KnownGap(HarnessModel):
         super().__init__(**with_positional(data, because=because))
 
 
-Disposition = Claim | Decline | NotApplicable | KnownGap
+class NotAssessed(HarnessModel):
+    """Visible assessment debt, emitted as strict XFAIL until a guarantee is assessed."""
 
+    because: str = Field(min_length=1, description="Why this profile or proof family still needs assessment.")
+
+
+Disposition = Claim | Decline | NotApplicable | KnownGap | NotAssessed
 
 _ADOPTER_EVIDENCE_LABELS = (
     "# ARRANGE",
@@ -399,14 +379,13 @@ _ADOPTER_EVIDENCE_LABELS = (
 
 def _adopter_annotation_defect(owner: str, binding: Callable[..., Any]) -> str | None:
     """Require line-local review annotations that expose what is real and fake."""
-    unwrapped = inspect.unwrap(binding)
-    code = callable_code(unwrapped)
+    code = callable_code(binding)
     if code is None:
         return f"{owner} is not inspectable, so its adopter evidence annotations cannot be verified"
     if is_harness_owned(code):
         return None
     try:
-        source = inspect.getsource(unwrapped)
+        source = inspect.getsource(code)
     except (OSError, TypeError):
         return f"{owner} source is unavailable, so its adopter evidence annotations cannot be verified"
     missing = [label for label in _ADOPTER_EVIDENCE_LABELS if label not in source]
@@ -421,30 +400,11 @@ def _adopter_annotation_defect(owner: str, binding: Callable[..., Any]) -> str |
     )
 
 
-_SAFETY_PROFILE_BINDINGS: dict[SafetyProfile, tuple[str, ...]] = {
-    SafetyProfile.REPLAY_SAFE_EXECUTION: ("replay",),
-    SafetyProfile.BOUNDED_RETRY: ("retry",),
-}
-
-_SAFETY_BINDING_PROOFS: dict[str, tuple[Callable[[Any], None], ...]] = {
-    "replay": REPLAY_SAFETY_PROOFS,
-    "retry": BOUNDED_RETRY_PROOFS,
-}
-
-_UNWAIVABLE_SAFETY_PROOFS = frozenset(
-    {
-        "assert_replay_transition_is_production_bound",
-        "assert_retry_selection_is_production_bound",
-        "assert_retry_runner_is_production_bound",
-    }
-)
-
-
 class SafetyContract(HarnessModel):
     """Complete replay/retry assessment for one production effect."""
 
     name: str
-    profiles: Mapping[SafetyProfile, Disposition]
+    profiles: Mapping[Profile, Disposition]
     adoption: Adoption = Adoption.NEW_FEATURE
     replay: Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]] | None = None
     retry: Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]] | None = None
@@ -458,10 +418,6 @@ class SafetyContract(HarnessModel):
                 f"{self.name}: the safety contract declaration is incomplete or contradictory — "
                 "fix the declaration before any behavioral proof can mean anything:\n- " + "\n- ".join(errors)
             )
-
-
-def _bound_safety_fields(contract: SafetyContract, profile: SafetyProfile) -> list[str]:
-    return [name for name in _SAFETY_PROFILE_BINDINGS[profile] if getattr(contract, name) is not None]
 
 
 class ExtraProof(HarnessModel):
@@ -501,15 +457,18 @@ class ExtraProof(HarnessModel):
     no_production_callable_because: str | None = None
 
 
-#: Which contract fields bind which profile. Profile E has two independently
-#: claimable halves — see :mod:`due_work_harness.profiles.eventual_convergence`.
+#: One canonical mapping from guarantees to bindings; E has four independently assessed families.
 _PROFILE_BINDINGS: dict[Profile, tuple[str, ...]] = {
     Profile.AUTOMATIC_RECOVERY: ("sweep",),
     Profile.BOUNDED_OWNERSHIP: ("ownership",),
     Profile.CRASH_AMBIGUITY: ("ambiguity",),
     Profile.DURABLE_RETENTION: ("retention",),
-    Profile.EVENTUAL_CONVERGENCE: ("convergence", "snapshot"),
+    Profile.EVENTUAL_CONVERGENCE: ("convergence", "snapshot", "in_flight", "evidence_confluence"),
     Profile.FACT_DERIVED_OBLIGATIONS: ("derivation",),
+    Profile.G: ("eligibility",),
+    Profile.H: ("replay",),
+    Profile.I: ("admission",),
+    Profile.J: ("retry",),
 }
 
 #: The proofs each binding field is measured by. Each list opens with the
@@ -527,6 +486,12 @@ _BINDING_PROOFS: dict[str, tuple[Callable[[Any], None], ...]] = {
     "retention": RETENTION_PROOFS,
     "convergence": (assert_convergence_bindings_are_production_bound, *CONVERGENT_WRITE_PROOFS),
     "snapshot": SNAPSHOT_PROOFS,
+    "in_flight": (),  # Scenario owns generated histories, not a flat assertion tuple.
+    "evidence_confluence": (),
+    "eligibility": ELIGIBILITY_PROOFS,
+    "admission": ADMISSION_PROOFS,
+    "replay": REPLAY_SAFETY_PROOFS,
+    "retry": BOUNDED_RETRY_PROOFS,
     "derivation": (assert_derivation_bindings_are_production_bound, *STATE_DERIVED_PROOFS),
 }
 
@@ -584,6 +549,12 @@ UNWAIVABLE_PROOFS = frozenset(
         "assert_evidence_application_is_production_bound",
         "assert_convergence_bindings_are_production_bound",
         "assert_snapshot_transitions_are_production_bound",
+        # H/J use the same unwaivable binding-integrity policy as A–G.
+        "assert_replay_transition_is_production_bound",
+        "assert_retry_selection_is_production_bound",
+        "assert_retry_runner_is_production_bound",
+        "assert_gate_bindings_are_production_bound",
+        "assert_admission_is_production_bound",
         # Profile F.
         "assert_derived_transitions_are_production_bound",
         "assert_settlement_is_production_bound",
@@ -615,10 +586,19 @@ class DueWorkContract(HarnessModel):
     #: profile that would have revealed the defect.
     profiles: Mapping[Profile, Disposition]
 
-    #: Replay and retry are narrower execution-safety profiles, but silence is
-    #: still not valid. Keeping their complete declaration here means every
-    #: durable-work adopter must assess them even when both are declined.
-    safety: SafetyContract | None = None
+    #: Competing-event E families; each scenario owns its deterministic histories.
+    in_flight: Mapping[str, InstanceOf[InFlightConvergence]] = Field(default_factory=dict)
+    evidence_confluence: Mapping[str, InstanceOf[EvidenceConfluence]] = Field(default_factory=dict)
+    #: H: replay one logical operation and observe its external result.
+    replay: Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]] | None = None
+    #: J: drive transient failures until the production retry budget is exhausted.
+    retry: Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]] | None = None
+    #: I: standalone commands interrupted after partial product and obligation writes.
+    admission: Mapping[str, Callable[[], AdmissionAtomicity | AbstractContextManager[AdmissionAtomicity]]] = Field(
+        default_factory=dict
+    )
+    #: Independent E-family assessments. Unbound, undecided families generate strict XFAILs.
+    convergence_families: Mapping[ConvergenceFamily, Disposition] = Field(default_factory=dict)
 
     #: Which gap policy applies. The default, ``NEW_FEATURE``, forbids gap
     #: declarations entirely — a new feature must pass every claimed profile in
@@ -649,7 +629,7 @@ class DueWorkContract(HarnessModel):
     derivation: Callable[[], StateDerived | AbstractContextManager[StateDerived]] | None = None
 
     #: Optional execution gate: work that is owed but blocked by something the
-    #: product decides (see :mod:`due_work_harness.profiles.execution_eligibility`),
+    #: product decides (see :mod:`due_work_harness.profiles.gated_execution`),
     #: independent of tables and worker framework. One factory, or named
     #: factories for named blockers; each generated proof gets a fresh blocked
     #: example with its readiness notification lost. Requires profile A claimed
@@ -703,6 +683,9 @@ class DueWorkContract(HarnessModel):
     transactional: bool = False
 
     def model_post_init(self, _context: Any) -> None:
+        assert not self.in_flight.keys() & self.evidence_confluence.keys(), "duplicate interleaving scenario name"
+        for scenarios in (self.in_flight, self.evidence_confluence):
+            interleaving_integration.validate(scenarios, legacy=self.adoption == Adoption.LEGACY)
         errors = _design_errors(self)
         if errors:
             raise DueWorkContractDesignError(
@@ -712,8 +695,35 @@ class DueWorkContract(HarnessModel):
             )
 
 
-def _bound_fields(contract: DueWorkContract, profile: Profile) -> list[str]:
-    return [name for name in _PROFILE_BINDINGS[profile] if getattr(contract, name) is not None]
+def _bound_fields(contract: DueWorkContract | SafetyContract, profile: Profile) -> list[str]:
+    return [name for name in _PROFILE_BINDINGS[profile] if getattr(contract, name, None)]
+
+
+def _factories(contract: DueWorkContract | SafetyContract, field_name: str) -> Mapping[str, Callable[[], Any]]:
+    """Normalize singular/named bindings at the actual reflective declaration boundary."""
+    value = getattr(contract, field_name)
+    if field_name in ("in_flight", "evidence_confluence"):
+        return {name: scenario.bind for name, scenario in value.items()}
+    return value if isinstance(value, Mapping) else {"": value}
+
+
+def convergence_assessments(contract: DueWorkContract) -> Mapping[ConvergenceFamily, Disposition]:
+    """Return each E family's actual binding claim or an explicit visible coverage omission."""
+    result = {}
+    for family in ConvergenceFamily:
+        declared = contract.convergence_families.get(family)
+        bound = bool(getattr(contract, family.value))
+        if declared is not None:
+            result[family] = declared
+        elif bound:
+            result[family] = Claim()
+        elif isinstance(contract.profiles.get(Profile.E), Claim):
+            result[family] = NotAssessed(
+                because="No production binding or applicability decision is declared for this E family."
+            )
+        else:
+            result[family] = contract.profiles[Profile.E]
+    return result
 
 
 def _bespoke_assertion_defect(owner: str, kind: str, binding: Any) -> str | None:
@@ -792,85 +802,102 @@ def _decline_proof_defect(owner: str, binding: Any) -> str | None:
     )
 
 
-def _safety_design_errors(contract: SafetyContract) -> list[str]:
-    """Every way a replay/retry declaration can omit or contradict evidence."""
+def _profile_design_errors(contract: DueWorkContract | SafetyContract, scope: tuple[Profile, ...]) -> list[str]:
+    """One claim/decline/gap and binding-integrity policy for every guarantee and contract scope."""
     errors: list[str] = []
-    if not contract.name.strip():
-        errors.append("the safety contract has no name")
-
-    missing = [profile for profile in SafetyProfile if profile not in contract.profiles]
+    unknown = set(contract.profiles) - set(scope)
+    if unknown:
+        errors.append(f"profiles outside this contract scope: {unknown}")
+    missing = [profile for profile in scope if profile not in contract.profiles]
     if missing:
         errors.append(
-            "no disposition for safety profile(s) "
-            + ", ".join(profile.name for profile in missing)
-            + ". Silence is not a disposition — claim it, decline it with a reason, "
-            "mark it not applicable, or record it as a known gap"
+            f"no disposition for profile(s) {', '.join(p.name for p in missing)}. "
+            f"Silence is not a disposition — claim it, decline it with a reason, "
+            f"mark it not applicable, or record it as a known gap"
         )
 
-    for profile in SafetyProfile:
+    for profile in scope:
         disposition = contract.profiles.get(profile)
         if disposition is None:
             continue
-        bound = _bound_safety_fields(contract, profile)
+        bound = _bound_fields(contract, profile)
         if isinstance(disposition, Claim):
             if not bound:
+                fields = " or ".join(_PROFILE_BINDINGS[profile])
                 errors.append(
-                    f"safety profile {profile.name} ({profile.value}) is claimed but has no binding — "
-                    f"supply `{_SAFETY_PROFILE_BINDINGS[profile][0]}=`"
+                    f"profile {profile.name} ({profile.value}) is claimed but has no binding — supply `{fields}=`"
                 )
                 continue
-            valid = {proof.__name__ for field_name in bound for proof in _SAFETY_BINDING_PROOFS[field_name]}
+            valid = {proof.__name__ for name in bound for proof in _binding_proofs(name)}
+            if profile is Profile.G:
+                valid.add("assert_gate_is_recovered_by_the_contract_sweep")
+            if (
+                isinstance(contract, DueWorkContract)
+                and profile in (Profile.A, Profile.F)
+                and contract.sweep is not None
+                and contract.derivation is not None
+            ):
+                valid.add(_COHERENCE_PROOF_NAME)
             for gap_name, reason in disposition.gaps.items():
-                if gap_name in _UNWAIVABLE_SAFETY_PROOFS:
+                if gap_name in UNWAIVABLE_PROOFS:
                     errors.append(
-                        f"safety profile {profile.name}: gap {gap_name!r} names a "
-                        "binding-integrity proof, which cannot be waived"
+                        f"profile {profile.name}: gap {gap_name!r} names a "
+                        f"binding-integrity proof, which cannot be waived — an "
+                        f"xfail there would strict-xfail the defense itself and "
+                        f"leave every behavioral proof measuring whatever the "
+                        f"adapter says. Production-bind the field, or stop "
+                        f"claiming the profile"
                     )
                 elif gap_name not in valid:
-                    errors.append(f"safety profile {profile.name}: gap {gap_name!r} names no proof that will run")
+                    errors.append(
+                        f"profile {profile.name}: gap {gap_name!r} names no proof "
+                        f"that will run. If a proof was renamed, rename its gap "
+                        f"entry with it — dropping the mark would turn a "
+                        f"documented gap into an unexplained failure"
+                    )
                 if not reason.strip():
-                    errors.append(f"safety profile {profile.name}: gap {gap_name!r} has an empty reason")
+                    errors.append(f"profile {profile.name}: gap {gap_name!r} has an empty reason")
             for field_name in bound:
-                binding = getattr(contract, field_name)
-                assert binding is not None
-                defect = _adopter_annotation_defect(
-                    f"safety profile {profile.name} `{field_name}` binding",
-                    binding,
-                )
-                if defect:
-                    errors.append(defect)
+                for scenario_name, binding in _factories(contract, field_name).items():
+                    defect = _adopter_annotation_defect(
+                        f"profile {profile.name} `{field_name}` {scenario_name} binding", binding
+                    )
+                    if defect:
+                        errors.append(defect)
         else:
-            if not disposition.because.strip():
-                errors.append(f"safety profile {profile.name} is {type(disposition).__name__} with no reason")
+            because = disposition.because
+            if not because.strip():
+                errors.append(
+                    f"profile {profile.name} is {type(disposition).__name__} with no "
+                    f"reason. The reason is the substance — without it a decline is "
+                    f"indistinguishable from nobody having got to it"
+                )
             if bound:
                 errors.append(
-                    f"safety profile {profile.name} is {type(disposition).__name__} but `{', '.join(bound)}=` is bound"
+                    f"profile {profile.name} is {type(disposition).__name__} but "
+                    f"`{', '.join(bound)}=` is bound. A binding for a profile the "
+                    f"contract does not claim is a contradiction — either claim the "
+                    f"profile or drop the binding"
                 )
             if isinstance(disposition, KnownGap) and disposition.detect is not None:
                 defect = _bespoke_assertion_defect(
-                    f"safety profile {profile.name}",
-                    "the KnownGap detect probe",
-                    disposition.detect,
+                    f"profile {profile.name}", "the KnownGap detect probe", disposition.detect
                 )
                 if defect:
                     errors.append(defect)
             if isinstance(disposition, Decline) and disposition.prove is not None:
-                defect = _decline_proof_defect(f"safety profile {profile.name}", disposition.prove)
+                defect = _decline_proof_defect(f"profile {profile.name}", disposition.prove)
                 if defect:
                     errors.append(defect)
 
-    declared: list[str] = []
-    if contract.adoption is not Adoption.LEGACY:
-        for profile, disposition in contract.profiles.items():
-            if isinstance(disposition, Claim) and disposition.gaps:
-                declared.append(f"safety profile {profile.name} claims with {len(disposition.gaps)} gap(s)")
-            if isinstance(disposition, KnownGap):
-                declared.append(f"safety profile {profile.name} is a KnownGap")
-    if declared:
-        errors.append(
-            "adoption is NEW_FEATURE (the default), which forbids gap declarations, "
-            f"but the safety contract declares: {'; '.join(declared)}"
-        )
+    return errors
+
+
+def _safety_design_errors(contract: SafetyContract) -> list[str]:
+    errors = _profile_design_errors(contract, SAFETY_PROFILES)
+    if not contract.name.strip():
+        errors.append("the safety contract has no name")
+    errors.extend(_gap_policy_violations(contract))
     return errors
 
 
@@ -944,94 +971,17 @@ def _design_errors(contract: DueWorkContract) -> list[str]:
                 f"handoff {history.name!r} declares a gap, but its findings table has no divergent history, so "
                 f"the gap could never be the reason it fails. Pin what diverges, or drop the gap"
             )
-    if contract.safety is None:
-        errors.append(
-            "no safety contract declares REPLAY_SAFE_EXECUTION and BOUNDED_RETRY. "
-            "Every durable-work adopter must claim, decline, mark not applicable, "
-            "or record a known gap for both"
-        )
-    elif contract.safety.name != contract.name:
-        errors.append(
-            f"the safety contract is named {contract.safety.name!r}, not {contract.name!r}; "
-            "the declarations must describe the same domain"
-        )
-
-    missing = [profile for profile in Profile if profile not in contract.profiles]
-    if missing:
-        errors.append(
-            f"no disposition for profile(s) {', '.join(p.name for p in missing)}. "
-            f"Silence is not a disposition — claim it, decline it with a reason, "
-            f"mark it not applicable, or record it as a known gap"
-        )
-
-    for profile in Profile:
-        disposition = contract.profiles.get(profile)
-        if disposition is None:
+    for family, assessment in contract.convergence_families.items():
+        if not isinstance(family, ConvergenceFamily):
+            errors.append(f"unknown convergence family {family!r}")
             continue
-        bound = _bound_fields(contract, profile)
-        if isinstance(disposition, Claim):
-            if not bound:
-                fields = " or ".join(_PROFILE_BINDINGS[profile])
-                errors.append(
-                    f"profile {profile.name} ({profile.value}) is claimed but has no binding — supply `{fields}=`"
-                )
-                continue
-            valid = {proof.__name__ for name in bound for proof in _binding_proofs(name)}
-            if profile in (Profile.A, Profile.F) and contract.sweep is not None and contract.derivation is not None:
-                valid.add(_COHERENCE_PROOF_NAME)
-            for gap_name, reason in disposition.gaps.items():
-                if gap_name in UNWAIVABLE_PROOFS:
-                    errors.append(
-                        f"profile {profile.name}: gap {gap_name!r} names a "
-                        f"binding-integrity proof, which cannot be waived — an "
-                        f"xfail there would strict-xfail the defense itself and "
-                        f"leave every behavioral proof measuring whatever the "
-                        f"adapter says. Production-bind the field, or stop "
-                        f"claiming the profile"
-                    )
-                elif gap_name not in valid:
-                    errors.append(
-                        f"profile {profile.name}: gap {gap_name!r} names no proof "
-                        f"that will run. If a proof was renamed, rename its gap "
-                        f"entry with it — dropping the mark would turn a "
-                        f"documented gap into an unexplained failure"
-                    )
-                if not reason.strip():
-                    errors.append(f"profile {profile.name}: gap {gap_name!r} has an empty reason")
-            for field_name in bound:
-                binding = getattr(contract, field_name)
-                assert binding is not None
-                defect = _adopter_annotation_defect(
-                    f"profile {profile.name} `{field_name}` binding",
-                    binding,
-                )
-                if defect:
-                    errors.append(defect)
-        else:
-            because = disposition.because
-            if not because.strip():
-                errors.append(
-                    f"profile {profile.name} is {type(disposition).__name__} with no "
-                    f"reason. The reason is the substance — without it a decline is "
-                    f"indistinguishable from nobody having got to it"
-                )
-            if bound:
-                errors.append(
-                    f"profile {profile.name} is {type(disposition).__name__} but "
-                    f"`{', '.join(bound)}=` is bound. A binding for a profile the "
-                    f"contract does not claim is a contradiction — either claim the "
-                    f"profile or drop the binding"
-                )
-            if isinstance(disposition, KnownGap) and disposition.detect is not None:
-                defect = _bespoke_assertion_defect(
-                    f"profile {profile.name}", "the KnownGap detect probe", disposition.detect
-                )
-                if defect:
-                    errors.append(defect)
-            if isinstance(disposition, Decline) and disposition.prove is not None:
-                defect = _decline_proof_defect(f"profile {profile.name}", disposition.prove)
-                if defect:
-                    errors.append(defect)
+        if isinstance(assessment, Claim) != bool(getattr(contract, family.value)):
+            errors.append(f"convergence family {family.name} assessment contradicts its binding")
+        if not isinstance(assessment, Claim) and not assessment.because.strip():
+            errors.append(f"convergence family {family.name} needs an assessment reason")
+        if isinstance(assessment, KnownGap) or (isinstance(assessment, Claim) and assessment.gaps):
+            errors.append("E-family gaps belong to existing profile proof IDs or exact scenario history IDs")
+    errors.extend(_profile_design_errors(contract, tuple(Profile)))
 
     seen: set[str] = set()
     for extra in contract.extras:
@@ -1109,25 +1059,28 @@ def _extra_production_defects(extra: ExtraProof) -> list[str]:
     return []
 
 
-def _gap_policy_violations(contract: DueWorkContract) -> list[str]:
+def _gap_policy_violations(contract: DueWorkContract | SafetyContract) -> list[str]:
     """The encoded new-feature policy: no gap declarations outside legacy adoption."""
     if contract.adoption is Adoption.LEGACY:
         return []
     declared: list[str] = []
-    for profile in Profile:
+    for profile in contract.profiles:
         disposition = contract.profiles.get(profile)
         if isinstance(disposition, Claim) and disposition.gaps:
             declared.append(f"profile {profile.name} claims with {len(disposition.gaps)} gap(s)")
         if isinstance(disposition, KnownGap):
             declared.append(f"profile {profile.name} is a KnownGap")
-    declared.extend(f"extra proof {extra.name!r} declares a gap" for extra in contract.extras if extra.gap is not None)
-    declared.extend(f"handoff {name!r} declares a gap" for name in contract.handoff_gaps)
+    if isinstance(contract, DueWorkContract):
+        declared.extend(
+            f"extra proof {extra.name!r} declares a gap" for extra in contract.extras if extra.gap is not None
+        )
+        declared.extend(f"handoff {name!r} declares a gap" for name in contract.handoff_gaps)
     if not declared:
         return []
     return [
         f"adoption is NEW_FEATURE (the default), which forbids gap declarations, "
         f"but the contract declares: {'; '.join(declared)}. A new due-work "
-        f"feature must pass every claimed profile in the change that introduces it. Pass "
+        f"feature must pass every claimed profile in its own PR. Pass "
         f"`adoption=Adoption.LEGACY` ONLY when binding code that predates its "
         f"contract — that declaration is deliberately visible in the diff, so "
         f"waiving the policy is a reviewable act rather than a default"
@@ -1141,6 +1094,20 @@ class ContractCase(HarnessModel):
     run: Callable[[], None]
     fixtures: tuple[str, ...] = ()
 
+    #: Primary guarantee; bespoke extras have no inferred profile ownership.
+    profile: Profile | None = None
+    #: Binding or history family used to explain the case in coverage reports.
+    family: str = ""
+    #: Declaration rows stay visible but never count as passing behavioral proofs.
+    assessment: Disposition | None = None
+    #: Composition contributes this same execution to each related guarantee.
+    related_profiles: tuple[Profile, ...] = ()
+
+    @property
+    def assessment_only(self) -> bool:
+        """Assessment records never certify an executed behavioral guarantee."""
+        return self.assessment is not None
+
     def __repr__(self) -> str:
         return self.id
 
@@ -1150,7 +1117,7 @@ def _entered(factory: Callable[[], Any]) -> Iterator[Any]:
     """The binding a factory produces, entering it when it is a context manager."""
     built = factory()
     if isinstance(built, AbstractContextManager):
-        with built as binding:
+        with proof_context(built) as binding:
             yield binding
     else:
         yield built
@@ -1187,16 +1154,32 @@ def _coherence_runner(
     return run
 
 
-def _unclaimed_case(label: str, disposition: Disposition, transactional: bool, fixtures: tuple[str, ...]) -> Any:
+def _unclaimed_case(
+    label: str,
+    disposition: Decline | NotApplicable | KnownGap | NotAssessed,
+    transactional: bool,
+    fixtures: tuple[str, ...],
+) -> Any:
     """
     The visible case for a profile the contract does not claim.
 
     A decline's ``prove`` and a known gap's ``detect`` run against production,
-    so they get the contract's database marks like every other runtime proof: a
+    so they get the contract's database mode like every other runtime proof: a
     probe that needs real commits must not see an uncommitted test transaction,
     where its own arrangement is invisible to the production path it runs and a
     strict xfail would then pass for the wrong reason.
     """
+    if isinstance(disposition, NotAssessed):
+        reason = (
+            f"Not assessed: {disposition.because} Resolve by adopting the profile/family, "
+            "demonstrating a KnownGap, or establishing NotApplicable."
+        )
+        case = ContractCase(id=f"{label}-not_assessed", run=_documenting_failure(reason))
+        # Only this deliberate assessment failure is expected. Unrelated errors
+        # and accidental passes must still fail the suite.
+        return pytest.param(
+            case, id=case.id, marks=pytest.mark.xfail(strict=True, reason=reason, raises=pytest.fail.Exception)
+        )
     if isinstance(disposition, Decline):
         case = ContractCase(
             id=f"{label}-declined",
@@ -1207,13 +1190,12 @@ def _unclaimed_case(label: str, disposition: Disposition, transactional: bool, f
     if isinstance(disposition, NotApplicable):
         case = ContractCase(id=f"{label}-not_applicable", run=lambda: None)
         return pytest.param(case, id=case.id)
-    assert isinstance(disposition, KnownGap), f"{label}: a claim has no unclaimed case"
     case = ContractCase(
         id=f"{label}-known_gap",
         run=disposition.detect or _documenting_failure(disposition.because),
         fixtures=fixtures if disposition.detect else (),
     )
-    marks = [*_database_marks(transactional), pytest.mark.xfail(strict=True, reason=disposition.because)]
+    marks = _database_marks(transactional) + [pytest.mark.xfail(strict=True, reason=disposition.because)]
     return pytest.param(case, id=case.id, marks=marks)
 
 
@@ -1258,75 +1240,82 @@ def _documenting_failure(reason: str) -> Callable[[], None]:
     return run
 
 
-def safety_contract_cases(contract: SafetyContract) -> list[Any]:
-    """Generate one visible case for every replay/retry proof or disposition."""
+def _assessment_case(
+    contract: DueWorkContract | SafetyContract,
+    profile: Profile,
+    disposition: Decline | NotApplicable | KnownGap | NotAssessed,
+    *,
+    family: str = "",
+) -> Any:
+    """Generate one canonical assessment row, including independently unassessed E families."""
+    label = f"{profile.case_prefix}-{family}" if family else profile.case_prefix
+    row = _unclaimed_case(label, disposition, contract.transactional, contract.fixtures)
+    case = row.values[0].model_copy(update=dict(profile=profile, family=family, assessment=disposition))
+    return pytest.param(case, id=case.id, marks=row.marks)
+
+
+def _profile_cases(contract: DueWorkContract | SafetyContract, scope: tuple[Profile, ...]) -> list[Any]:
+    """Generate each declared flat proof exactly once with common fixtures and gap handling."""
     params: list[Any] = []
-    for profile in SafetyProfile:
+    for profile in scope:
         disposition = contract.profiles[profile]
-        if isinstance(disposition, Claim):
-            for field_name in _bound_safety_fields(contract, profile):
-                factory = getattr(contract, field_name)
-                for proof in _SAFETY_BINDING_PROOFS[field_name]:
-                    marks = _database_marks(contract.transactional)
+        if not isinstance(disposition, Claim):
+            params.append(_assessment_case(contract, profile, disposition))
+            continue
+        for field_name in _bound_fields(contract, profile):
+            for scenario_name, factory in _factories(contract, field_name).items():
+                for proof in _binding_proofs(field_name):
+                    base = "eligibility" if profile is Profile.G else profile.case_prefix
+                    prefix = f"{base}-{scenario_name}" if scenario_name else base
+                    case = ContractCase(
+                        id=f"{prefix}-{proof.__name__}",
+                        run=_proof_runner(factory, proof),
+                        profile=profile,
+                        family=field_name,
+                        fixtures=contract.fixtures,
+                    )
+                    marks = _database_marks(
+                        contract.transactional or profile is Profile.I or proof.__name__ in _TRANSACTIONAL_PROOFS
+                    )
                     reason = disposition.gaps.get(proof.__name__)
                     if reason is not None:
                         marks.append(pytest.mark.xfail(strict=True, reason=reason))
-                    case = ContractCase(
-                        id=f"{profile.name}-{proof.__name__}",
-                        run=_proof_runner(factory, proof),
-                        fixtures=contract.fixtures,
-                    )
                     params.append(pytest.param(case, id=case.id, marks=marks))
-        else:
-            params.append(_unclaimed_case(profile.name, disposition, contract.transactional, contract.fixtures))
     return params
 
 
-def contract_cases(contract: DueWorkContract) -> list[Any]:
-    """
-    Every test the contract's declaration implies, as ``pytest.param`` values.
+def safety_contract_cases(contract: SafetyContract) -> list[Any]:
+    """A scoped H/J view of the common profile case generator."""
+    return _profile_cases(contract, SAFETY_PROFILES)
 
-    One case per proof of each claimed profile (gaps as strict xfails), one
-    visible case per declined or not-applicable profile, one strict xfail per
-    known gap, and one case per extra. The ids are the report: reading the test
-    output for a domain answers "what is claimed, what passes, what is known
-    broken, and what was ruled out — and why".
-    """
-    params: list[Any] = []
-    for profile in Profile:
-        disposition = contract.profiles[profile]
-        if isinstance(disposition, Claim):
-            for field_name in _bound_fields(contract, profile):
-                factory = getattr(contract, field_name)
-                for proof in _binding_proofs(field_name):
-                    marks = _proof_marks(contract.transactional, proof.__name__)
-                    reason = disposition.gaps.get(proof.__name__)
-                    if reason is not None:
-                        marks.append(pytest.mark.xfail(strict=True, reason=reason))
-                    case = ContractCase(
-                        id=f"{profile.name}-{proof.__name__}",
-                        run=_proof_runner(factory, proof),
-                        fixtures=contract.fixtures,
-                    )
-                    params.append(pytest.param(case, id=case.id, marks=marks))
-        else:
-            params.append(_unclaimed_case(profile.name, disposition, contract.transactional, contract.fixtures))
+
+def contract_cases(contract: DueWorkContract) -> list[Any]:
+    """All A–J cases and cross-profile compositions, preserving legacy history identities."""
+    params = _profile_cases(contract, tuple(Profile))
+    if isinstance(contract.profiles[Profile.E], Claim):
+        # A passing sibling must not leave an unfinished E-family assessment silent.
+        for family, assessment in convergence_assessments(contract).items():
+            if isinstance(assessment, NotAssessed):
+                params.append(_assessment_case(contract, Profile.E, assessment, family=family.value))
     for name, binding in eligibility_bindings(contract).items():
         prefix = f"eligibility-{name}" if name else "eligibility"
-        for proof in ELIGIBILITY_PROOFS:
-            case = ContractCase(
-                id=f"{prefix}-{proof.__name__}",
-                run=_proof_runner(binding, proof),
-                fixtures=contract.fixtures,
-            )
-            params.append(pytest.param(case, id=case.id, marks=_database_marks(contract.transactional)))
         assert contract.sweep is not None, "DueWorkContract validation requires a sweep with eligibility"
         case = ContractCase(
             id=f"{prefix}-assert_gate_is_recovered_by_the_contract_sweep",
+            profile=Profile.G,
+            family="recovery-composition",
+            related_profiles=(Profile.A,),
             run=_gate_sweep_runner(binding, contract.sweep),
             fixtures=contract.fixtures,
         )
-        params.append(pytest.param(case, id=case.id, marks=_database_marks(contract.transactional)))
+        marks = _database_marks(contract.transactional)
+        disposition = contract.profiles[Profile.G]
+        assert isinstance(disposition, Claim)
+        if reason := disposition.gaps.get("assert_gate_is_recovered_by_the_contract_sweep"):
+            marks.append(pytest.mark.xfail(strict=True, reason=reason))
+        params.append(pytest.param(case, id=case.id, marks=marks))
+    params.extend(interleaving_integration.cases(contract.in_flight, contract.fixtures))
+    params.extend(interleaving_integration.cases(contract.evidence_confluence, contract.fixtures))
     params.extend(_coherence_cases(contract))
     params.extend(_handoff_cases(contract))
     for extra in contract.extras:
@@ -1377,6 +1366,8 @@ def _handoff_cases(contract: DueWorkContract) -> list[Any]:
         assert delivery is not None, "DueWorkContract validation requires handoff_delivery with handoffs"
         for history in contract.handoffs:
             case = ContractCase(
+                profile=Profile.A,
+                family="crash-histories",
                 id=f"handoff-{history.name}-assert_crash_at_every_commit_converges",
                 run=_handoff_runner(delivery, history),
                 fixtures=contract.fixtures,
@@ -1384,6 +1375,8 @@ def _handoff_cases(contract: DueWorkContract) -> list[Any]:
             params.append(pytest.param(case, id=case.id, marks=_database_marks(True) + _gap_mark(contract, history)))
     for history in contract.process_handoffs:
         case = ContractCase(
+            profile=Profile.A,
+            family="crash-histories",
             id=f"process-{history.name}-assert_process_deaths_converge",
             run=_process_runner(history),
             fixtures=contract.fixtures,
@@ -1421,6 +1414,9 @@ def _coherence_cases(contract: DueWorkContract) -> list[Any]:
     if reason is not None:
         marks.append(pytest.mark.xfail(strict=True, reason=reason))
     case = ContractCase(
+        profile=Profile.F,
+        family="recovery-composition",
+        related_profiles=(Profile.A,),
         id=f"AF-{_COHERENCE_PROOF_NAME}",
         run=_coherence_runner(contract.sweep, contract.derivation),
         fixtures=contract.fixtures,
@@ -1473,8 +1469,6 @@ def suite_cases(contract: DueWorkContract, *, covers: tuple[DueWorkSource, ...] 
     _validate_covered_recovery(contract, covers)
     params = contract_cases(contract)
     params.extend(_covered_recovery_cases(contract, covers))
-    assert contract.safety is not None, "DueWorkContract validation requires a safety contract"
-    params.extend(safety_contract_cases(contract.safety))
     return params
 
 
@@ -1504,7 +1498,11 @@ def due_work_contract_suite(
     def decorate(cls: type) -> type:
         cls.__due_work_contract__ = contract
         cls.__due_work_sources__ = covers
-        return _install_suite(cls, params, "test_due_work_contract", doc)
+        cls = _install_suite(cls, params, "test_due_work_contract", doc)
+        interleaving_integration.install_exploration(
+            cls, {**contract.in_flight, **contract.evidence_confluence}, contract.fixtures
+        )
+        return cls
 
     return decorate
 
@@ -1579,12 +1577,29 @@ def _covered_recovery_cases(contract: DueWorkContract, covers: tuple[DueWorkSour
             params.append(pytest.param(ContractCase(id=case_id, run=lambda: None), id=case_id))
             continue
         case = ContractCase(
+            profile=Profile.A,
+            family="publication",
             id=f"covers-{short}-assert_published_work_is_recoverable",
             run=_covered_recovery_runner(contract, source),
             fixtures=contract.fixtures,
         )
         params.append(pytest.param(case, id=case.id, marks=_database_marks(contract.transactional)))
     return params
+
+
+def disposition_label(disposition: Disposition) -> AssessmentState:
+    """Canonical report labels; no test outcome is inferred from an assessment decision."""
+    match disposition:
+        case Claim():
+            return "claimed"
+        case Decline():
+            return "declined"
+        case NotApplicable():
+            return "not applicable"
+        case KnownGap():
+            return "known gap"
+        case NotAssessed():
+            return "not assessed"
 
 
 def contract_report(contract: DueWorkContract) -> str:
@@ -1595,44 +1610,39 @@ def contract_report(contract: DueWorkContract) -> str:
     in CI output.
     """
     lines = [f"{contract.name} ({contract.adoption.value}):"]
+    plan = [parameter.values[0] for parameter in contract_cases(contract)]
     for profile in Profile:
         disposition = contract.profiles[profile]
-        label = f"Profile {profile.name} ({profile.value})"
+        label = f"Profile {profile.name} — {profile.title}"
         if isinstance(disposition, Claim):
-            proofs = [p for name in _bound_fields(contract, profile) for p in _binding_proofs(name)]
-            note = f"claimed — {len(proofs)} proofs"
-            if disposition.gaps:
-                note += f", {len(disposition.gaps)} known gap(s): {', '.join(sorted(disposition.gaps))}"
-            lines.append(f"  {label}: {note}")
-        elif isinstance(disposition, Decline):
-            lines.append(f"  {label}: declined — {disposition.because}")
-        elif isinstance(disposition, NotApplicable):
-            lines.append(f"  {label}: not applicable — {disposition.because}")
+            count = sum(
+                not case.assessment_only and (case.profile is profile or profile in case.related_profiles)
+                for case in plan
+            )
+            lines.append(
+                f"  {label}: claimed — {count} generated cases"
+                + (
+                    f", {len(disposition.gaps)} known gap(s): {', '.join(sorted(disposition.gaps))}"
+                    if disposition.gaps
+                    else ""
+                )
+            )
         else:
-            lines.append(f"  {label}: known gap — {disposition.because}")
-    assert contract.safety is not None, "DueWorkContract validation requires a safety contract"
-    for profile in SafetyProfile:
-        disposition = contract.safety.profiles[profile]
-        label = f"Safety {profile.name} ({profile.value})"
-        if isinstance(disposition, Claim):
-            proofs = [
-                proof
-                for name in _bound_safety_fields(contract.safety, profile)
-                for proof in _SAFETY_BINDING_PROOFS[name]
-            ]
-            note = f"claimed — {len(proofs)} proofs"
-            if disposition.gaps:
-                note += f", {len(disposition.gaps)} known gap(s): {', '.join(sorted(disposition.gaps))}"
-            lines.append(f"  {label}: {note}")
-        elif isinstance(disposition, Decline):
-            lines.append(f"  {label}: declined — {disposition.because}")
-        elif isinstance(disposition, NotApplicable):
-            lines.append(f"  {label}: not applicable — {disposition.because}")
-        else:
-            lines.append(f"  {label}: known gap — {disposition.because}")
-    for name in eligibility_bindings(contract):
-        label = f"Eligibility [{name}]" if name else "Eligibility"
-        lines.append(f"  {label}: claimed — {len(ELIGIBILITY_PROOFS) + 1} proofs, one against the contract sweep")
+            lines.append(f"  {label}: {disposition_label(disposition)} — {disposition.because}")
+        if profile is Profile.G:
+            lines.extend(f"    Eligibility [{name or 'default'}]: claimed" for name in eligibility_bindings(contract))
+        if profile is Profile.E:
+            for family, assessment in convergence_assessments(contract).items():
+                lines.append(
+                    f"    {family.name}: {type(assessment).__name__}"
+                    + (f" — {assessment.because}" if not isinstance(assessment, Claim) else "")
+                )
+            lines.extend(interleaving_integration.report(contract.in_flight))
+            lines.extend(interleaving_integration.report(contract.evidence_confluence))
+        if profile is Profile.A:
+            lines.extend(
+                f"    Handoff [{history.name}]: declared crash/recovery histories" for history in contract.handoffs
+            )
     for extra in contract.extras:
         note = f"known gap — {extra.gap}" if extra.gap else "applied"
         lines.append(f"  Extra {extra.name}: {note}")
