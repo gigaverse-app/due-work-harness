@@ -28,8 +28,12 @@ def prefect_flow_call(flow: Any, runner: asyncio.Runner) -> Callable[..., Any]:
     def invoke(*args: Any, **kwargs: Any) -> Any:
         result = flow.fn(*args, **kwargs)
         if inspect.iscoroutine(result):
-            return runner.run(result)
+            result = runner.run(result)
         if inspect.isawaitable(result) or inspect.isgenerator(result) or inspect.isasyncgen(result):
+            if inspect.iscoroutine(result) or inspect.isgenerator(result):
+                result.close()
+            elif inspect.isasyncgen(result):
+                runner.run(result.aclose())
             raise DueWorkContractDesignError("flow body returned deferred work; bind a coroutine that awaits it")
         return result
 
@@ -59,9 +63,9 @@ def assert_prefect_recurs(
     for entry in active:
         assert entry.schedule is not None, "active schedule has no recurrence rule"
         schedule = TypeAdapter(SCHEDULE_TYPES).validate_python(entry.schedule.model_dump())
-        dates.update(runner.run(schedule.get_dates(n=3, start=start, end=start + within * 3)))
-    following = sorted(date for date in dates if date > start)
-    assert len(following) >= 2, "the recovery schedule does not recur within its bound"
+        dates.update(runner.run(schedule.get_dates(n=4, start=start, end=start + within * 3)))
+    following = sorted(date for date in dates if date > start)[:3]
+    assert len(following) == 3, "the recovery schedule does not recur within its bound"
     previous = start
     for date in following:
         assert date - previous <= within, "the recovery schedule exceeds its declared interval"

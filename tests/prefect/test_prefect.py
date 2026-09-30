@@ -2,11 +2,13 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from prefect import flow
 from prefect.deployments.runner import RunnerDeployment
 
 from due_work_harness.binding import assert_binding_reaches_production
 from due_work_harness.host import Host, hosted
 from due_work_harness.integrations.prefect import assert_prefect_recurs, prefect_flow_call
+from due_work_harness.models import DueWorkContractDesignError
 from tests_support.prefect_app import other, record
 
 
@@ -54,3 +56,42 @@ def test_schedule_evidence_uses_prefects_deployment_and_date_rules(fault):
         else:
             with pytest.raises(AssertionError):
                 check()
+
+
+@pytest.mark.parametrize("async_body", [False, True])
+def test_binding_refuses_deferred_results_from_sync_and_async_bodies(async_body):
+    def deferred():
+        yield "unobserved work"
+
+    @flow
+    def sync_flow():
+        return deferred()
+
+    @flow
+    async def async_flow():
+        return deferred()
+
+    with asyncio.Runner() as runner:
+        with pytest.raises(DueWorkContractDesignError, match="deferred work"):
+            prefect_flow_call(async_flow if async_body else sync_flow, runner)()
+
+
+def test_recurrence_checks_three_future_occurrences_even_at_an_exact_tick():
+    # Only two future runs cannot establish the claimed three-run recurrence.
+    deployment = RunnerDeployment.from_flow(
+        record, name="finite", rrule="DTSTART:20260901T000000Z\nRRULE:FREQ=HOURLY;COUNT=3"
+    )
+    with asyncio.Runner() as runner, pytest.raises(AssertionError, match="recur"):
+        assert_prefect_recurs(
+            deployment, record, start=datetime(2026, 9, 1, tzinfo=UTC),
+            within=timedelta(hours=1), runner=runner,
+        )
+
+
+def test_hourly_schedule_at_exact_tick_still_has_three_future_runs():
+    deployment = RunnerDeployment.from_flow(record, name="hourly", cron="0 * * * *")
+    with asyncio.Runner() as runner:
+        assert_prefect_recurs(
+            deployment, record, start=datetime(2026, 9, 1, tzinfo=UTC),
+            within=timedelta(hours=1), runner=runner,
+        )
