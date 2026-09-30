@@ -737,13 +737,10 @@ def crash_histories(delivery: Delivery, history: HandoffHistory[Any, Any]) -> li
         f"{delivery.name}: handoff {history.name!r} — positive control failed: normal operation left the "
         f"observation unchanged ({delivered.before!r}), so no history could diverge"
     )
-    # A divergence is evidence only if normal operation reproduces itself: an observation that
-    # differs between two clean runs would make every history "diverge", and a known gap accept it.
-    again = _run(delivery, history, label="normal operation, again")
-    assert again.after == delivered.after, (
-        f"{delivery.name}: handoff {history.name!r} — normal operation observed {delivered.after!r}, then "
-        f"{again.after!r} on a second clean run. The observation is not deterministic, so no history can be "
-        f"compared with it. Leave out identifiers and timestamps that differ between runs"
+    assert_normal_operation_repeats(
+        f"{delivery.name}: handoff {history.name!r}",
+        delivered,
+        _run(delivery, history, label="normal operation, again"),
     )
     runs = [delivered]
     with delivery.session() as probe:
@@ -787,6 +784,22 @@ def crash_histories(delivery: Delivery, history: HandoffHistory[Any, Any]) -> li
             )
             runs.append(failed)
     return runs
+
+
+def assert_normal_operation_repeats(name: str, delivered: HistoryRun, again: HistoryRun) -> None:
+    """
+    A second clean run reaches the first one's outcome, before any interrupted history is compared with it.
+
+    A divergence is evidence only if normal operation reproduces itself: an
+    observation that differs between two clean runs (a per-run task id, a fresh
+    row's key, a timestamp) would make every history "diverge", and a declared
+    gap accept that. Refused as a plain assertion, never as a divergence.
+    """
+    assert again.after == delivered.after, (
+        f"{name} — normal operation observed {delivered.after!r}, then {again.after!r} on a second clean run. "
+        f"The observation is not deterministic, so no history can be compared with it. Leave out identifiers "
+        f"and timestamps that differ between runs"
+    )
 
 
 def assert_histories_converge(

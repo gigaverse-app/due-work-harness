@@ -57,6 +57,7 @@ from due_work_harness.crash_histories import (
     HistoryRun,
     assert_findings_hold,
     assert_histories_converge,
+    assert_normal_operation_repeats,
     assert_runs_match_table,
 )
 from due_work_harness.models import HarnessModel
@@ -152,7 +153,7 @@ def _run(history: ProcessHistory[Any, Any], point: str | None) -> HistoryRun:
 
 
 def process_histories(history: ProcessHistory[Any, Any]) -> list[HistoryRun]:
-    """Normal operation first, then one run per death point, then one per failure point."""
+    """Normal operation first (run twice: it must repeat), then one run per death point, then per failure point."""
     assert history.death_points or history.failure_points, (
         f"{history.name}: no death or failure points, so no history could be interrupted"
     )
@@ -168,6 +169,7 @@ def process_histories(history: ProcessHistory[Any, Any]) -> list[HistoryRun]:
         f"{history.name}: normal operation exited abnormally, so it cannot define the outcome. Fix the child "
         f"entry point before judging its deaths"
     )
+    assert_normal_operation_repeats(history.name, normal, _run(history, None))
     points = (*history.death_points, *history.failure_points)
     return [normal, *(_run(history, point) for point in points)]
 
