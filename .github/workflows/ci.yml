@@ -229,6 +229,8 @@ jobs:
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/saleor
+      # Absolute: run.sh works in the demo directory.
+      SALEOR_DATABASE_DUMP: ${{ github.workspace }}/demos/.ci-cache/saleor.dump
     steps:
       - uses: actions/checkout@v7
         with:
@@ -249,22 +251,22 @@ jobs:
         with:
           working-directory: demos/saleor_checkout
           package: ${{ github.workspace }}
-      # A throwaway test database needs no durability: every test flushes Saleor's ~250 tables,
-      # and skipping the fsyncs makes each flush several times faster.
       - name: Postgres without durability
-        run: >-
-          psql "${DATABASE_URL%/*}/postgres"
-          -c "ALTER SYSTEM SET fsync = off"
-          -c "ALTER SYSTEM SET synchronous_commit = off"
-          -c "ALTER SYSTEM SET full_page_writes = off"
-          -c "SELECT pg_reload_conf()"
+        run: demos/throwaway_postgres.sh
+      # Saleor's migrations depend only on its pin (in fetch_upstream.py): their result is cached as a
+      # dump, restored in seconds instead of migrating for two minutes.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.SALEOR_DATABASE_DUMP }}
+          key: saleor-test-db-pg16-${{ hashFiles('demos/fetch_upstream.py', 'demos/saleor_checkout/prepare_db.py', 'demos/cached_database.py') }}
       # One xdist worker per runner CPU. Four workers each migrating their own database took
       # 193 s apiece; migrating once and cloning a copy per worker costs one migration.
       - name: Saleor's test databases, migrated once
         run: demos/saleor_checkout/run.sh --prepare-db 4
-      # The durations are the evidence for the next change to this job's speed.
+      # The durations are the evidence for the next change to this job's speed. Work stealing lets an
+      # idle worker take queued cases from a busy one, so the long cases do not end up in one queue.
       - name: Saleor checkout
-        run: demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --reuse-db --durations=15
+        run: demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --dist worksteal --reuse-db --durations=15
 
   build:
     # The published wheel alone: it installs without any framework, imports, and ships py.typed.
