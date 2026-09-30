@@ -29,3 +29,11 @@ not supply query-plan, schedule, or transport evidence; configure those separate
 The real-server suite includes a transaction control, Motor thread control,
 lost acknowledgements, blocked cleanup and generated outbox histories. Removing
 provider deduplication makes the same generated history detect a duplicate effect.
+
+## Required adoption surface
+
+Use this host inside a `DueWorkContract` adoption with a collected
+`@due_work_contract_suite(CONTRACT)` class. The adapter supplies fault injection;
+it does not replace the contract or generate cases on its own. See
+[required adoption shape](../ADOPTING.md#required-adoption-shape) for declarations
+and generated test/report evidence.
