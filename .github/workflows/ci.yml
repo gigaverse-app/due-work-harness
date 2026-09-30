@@ -172,7 +172,6 @@ jobs:
             demos/**/profiles-*.json
           if-no-files-found: error
 
-
   mongodb:
     runs-on: ubuntu-latest
     env:
@@ -244,7 +243,6 @@ jobs:
             profiles-*.json
             demos/**/profiles-*.json
           if-no-files-found: error
-
 
   demos:
     runs-on: ubuntu-latest
@@ -338,7 +336,6 @@ jobs:
             demos/**/profiles-*.json
           if-no-files-found: error
 
-
   saleor:
     # Saleor's checkout, unmodified, in Saleor's own environment built from its uv.lock.
     runs-on: ubuntu-latest
@@ -404,7 +401,6 @@ jobs:
             profiles-*.json
             demos/**/profiles-*.json
           if-no-files-found: error
-
 
   build:
     # The published wheel alone: it installs without any framework, imports, and ships py.typed.

@@ -7,7 +7,7 @@ must exercise them through actual application and framework boundaries.
 - [x] Bind applicable G/I and E families; explain genuinely inapplicable shapes.
 - [x] Exercise generated histories, optional exploration and replay on a real adopter.
 - [x] Run profile reports in CI and guard against forgotten assessment debt.
-- [ ] Validate real services, existing findings, lint, types and isolated core.
+- [x] Validate real services, existing findings, lint, types and isolated core.
 
 The acceptance criterion is executed production behavior and independent observations,
 not merely replacing NotAssessed with green declarations. Framework worker contracts

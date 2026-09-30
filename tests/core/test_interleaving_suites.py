@@ -72,3 +72,19 @@ def test_assessment_gate_accepts_explicit_family_decisions(pytester: pytest.Pyte
     pytester.makepyfile("from due_work_harness.profiles.catalog import ConvergenceFamily\n" + source)
     result = pytester.runpytest_subprocess("-q", "--due-work-require-assessed")
     assert result.ret == pytest.ExitCode.OK
+
+
+def test_assessment_gate_also_covers_standalone_safety_suites(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile("""
+from due_work_harness import NotApplicable, NotAssessed, Profile, SafetyContract, safety_contract_suite
+contract = SafetyContract(name="safety", profiles={
+    Profile.H: NotAssessed(because="The task's external effect has not been evaluated."),
+    Profile.J: NotApplicable("The task is never retried."),
+})
+@safety_contract_suite(contract)
+class TestSafety:
+    pass
+""")
+    result = pytester.runpytest_subprocess("-q", "--due-work-require-assessed")
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(["*safety*H*not assessed*"])
