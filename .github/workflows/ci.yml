@@ -148,6 +148,7 @@ jobs:
           docker run -d --name due-work-mongodb -p 27017:27017 mongo:7 --replSet dwh --bind_ip_all
           for attempt in $(seq 1 30); do
             if docker exec due-work-mongodb mongosh --quiet --eval 'rs.initiate({_id:"dwh",members:[{_id:0,host:"localhost:27017"}]})'; then break; fi
+            if [ "$attempt" -eq 30 ]; then exit 1; fi
             sleep 1
           done
       - run: uv run --no-sync pytest tests/mongodb -q
