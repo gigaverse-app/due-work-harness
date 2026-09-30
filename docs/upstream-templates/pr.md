@@ -6,6 +6,12 @@ This adds the failing tests for #{issue} and the
 [due-work-harness](https://github.com/gigaverse-app/due-work-harness) contract that found them, running
 against {the project's code}. It adds no fix; the fixes are yours to shape.
 
+### Required contract declaration
+
+[`{contract path}`]({permalink}): the actual `DueWorkContract`, including every
+lifecycle and safety disposition and the histories bound to production.
+Standalone assertions or a helper merely named `contract` do not fill this slot.
+
 ### Where the magic happens
 
 [`{path}` lines {a}–{b}]({permalink at the pushed commit}):
@@ -23,7 +29,10 @@ supplies}; the guarantees and their proofs come from the harness.
 {Which generated case found which issue. Each is declared as a gap, so it is reported as a strict XFAIL: the
 day it is fixed it passes, and the strict marker fails the run until the declaration is removed.}
 
-What it generates, from `{command} --due-work-summary`:
+Generated cases are collected by pytest; no generated Python files are required.
+Link a CI JUnit artifact produced with `--junitxml` when a result file is needed.
+
+What it generates and executes, from `{command} --due-work-summary`:
 
 ```
 {paste the summary}
