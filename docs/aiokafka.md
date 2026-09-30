@@ -13,7 +13,8 @@ accepting a one-based offset-commit number, or `None` to count only.
 
 The consumer sends its real commit to the broker. After acknowledgement the
 first adapter raises `WorkerDied` and fences later `getone`, `getmany` and `commit`
-calls on that consumer. The second raises aiokafka's `RequestTimedOutError` while
+calls on that consumer. A fetch already waiting also refuses to deliver its result
+after the worker dies. Empty offset commits do not count as durable writes. The second raises aiokafka's `RequestTimedOutError` while
 the worker remains alive. Restart a consumer with the same group and inspect the
 broker's committed offsets/replayed records; do not reconstruct replay in a fake.
 
@@ -31,4 +32,4 @@ fence unrelated clients or external side effects.
 
 The broker tests compare uncommitted, normally committed, worker-death and
 lost-reply histories. A restarted consumer repeats the first record only in the
-uncommitted control. They run against a real single-node broker on localhost.
+uncommitted and database-death controls. They run against a real single-node broker on localhost.

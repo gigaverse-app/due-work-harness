@@ -13,7 +13,7 @@ from contextlib import AbstractContextManager, contextmanager
 from typing import Any
 
 from due_work_harness.models import DueWorkContractDesignError
-from due_work_harness.worker_death import CommitWorker
+from due_work_harness.worker_death import CommitWorker, LostCommitReplies
 
 
 @contextmanager
@@ -27,18 +27,30 @@ def _watching(consumer: Any, before: Callable[[], None], committed: Callable[[],
     original_getone = consumer.getone
     original_getmany = consumer.getmany
 
-    async def commit(*args: Any, **kwargs: Any) -> None:
+    async def commit(offsets: Any = None) -> None:
         before()
-        await original_commit(*args, **kwargs)
-        committed()
+        # Resolve the same snapshot as AIOKafkaConsumer.commit before its first await.
+        # An empty mapping makes the coordinator return without writing any offsets.
+        committed_offsets = offsets
+        if offsets is None:
+            subscription = consumer._subscription.subscription
+            if subscription is not None and subscription.assignment is not None:
+                committed_offsets = subscription.assignment.all_consumed_offsets()
+        await original_commit(offsets)
+        if committed_offsets:
+            committed()
 
     async def getone(*args: Any, **kwargs: Any) -> Any:
         before()
-        return await original_getone(*args, **kwargs)
+        result = await original_getone(*args, **kwargs)
+        before()
+        return result
 
     async def getmany(*args: Any, **kwargs: Any) -> Any:
         before()
-        return await original_getmany(*args, **kwargs)
+        result = await original_getmany(*args, **kwargs)
+        before()
+        return result
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(consumer, "commit", commit)
@@ -66,21 +78,15 @@ def aiokafka_worker_killer(consumer: Any) -> Callable[[int | None], AbstractCont
     return killer
 
 
-class AIOKafkaLostOffsetReplies:
-    """Count offset acknowledgements; the chosen one raises the driver's timeout after landing."""
+class AIOKafkaLostOffsetReplies(LostCommitReplies):
+    """Lose an acknowledged offset reply using aiokafka's timeout exception."""
 
     def __init__(self, lose_at: int | None) -> None:
-        self._lose_at = lose_at
-        self.count = 0
-        self.failure: Exception | None = None
-
-    def committed(self) -> None:
         from aiokafka.errors import RequestTimedOutError
 
-        self.count += 1
-        if self.count == self._lose_at:
-            self.failure = RequestTimedOutError("Kafka offset commit landed but its reply was lost")
-            raise self.failure
+        super().__init__(
+            lose_at, lambda count: RequestTimedOutError(f"Kafka offset commit {count} landed but its reply was lost")
+        )
 
 
 def aiokafka_offset_reply_breaker(

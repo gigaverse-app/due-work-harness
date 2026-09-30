@@ -95,3 +95,64 @@ def test_auto_commit_cannot_bypass_injected_offset_boundary():
             await consumer.stop()
 
     asyncio.run(history())
+
+
+@pytest.mark.parametrize("explicit_empty", [False, True])
+def test_empty_offset_commit_is_not_a_durable_boundary(explicit_empty):
+    async def history():
+        consumer = AIOKafkaConsumer(bootstrap_servers=BROKER, group_id=f"empty-{uuid4().hex}", enable_auto_commit=False)
+        consumer.assign([TopicPartition(f"empty-{uuid4().hex}", 0)])
+        await consumer.start()
+        try:
+            with aiokafka_worker_killer(consumer)(1) as worker:
+                if explicit_empty:
+                    # The public driver refuses {}; preserve that error without inventing a commit.
+                    with pytest.raises(ValueError):
+                        await consumer.commit({})
+                else:
+                    await consumer.commit()
+                assert worker.commits == 0
+        finally:
+            await consumer.stop()
+
+    asyncio.run(history())
+
+
+@pytest.mark.parametrize("fetch", ["getone", "getmany"])
+def test_fetch_waiting_when_worker_dies_cannot_deliver_later_records(fetch):
+    async def history():
+        topic = f"fenced-{uuid4().hex}"
+        producer = AIOKafkaProducer(bootstrap_servers=BROKER)
+        await producer.start()
+        consumer = AIOKafkaConsumer(
+            bootstrap_servers=BROKER,
+            group_id=f"fenced-{uuid4().hex}",
+            enable_auto_commit=False,
+            auto_offset_reset="earliest",
+        )
+        consumer.assign([TopicPartition(topic, 0)])
+        try:
+            await producer.send_and_wait(topic, b"before", partition=0)
+            await consumer.start()
+            assert (await asyncio.wait_for(consumer.getone(), 10)).value == b"before"
+            worker = CommitWorker(None)
+            with aiokafka_fenced(consumer, worker):
+                operation = consumer.getone() if fetch == "getone" else consumer.getmany(timeout_ms=10000)
+                pending = asyncio.create_task(operation)
+                try:
+                    await asyncio.sleep(0)  # Fetch enters its await before the simulated database death.
+                    assert not pending.done()
+                    with pytest.raises(WorkerDied):
+                        worker.kill_now("database worker died while fetch was waiting")
+                    await producer.send_and_wait(topic, b"after", partition=0)
+                    with pytest.raises(WorkerDied):
+                        await asyncio.wait_for(pending, 10)
+                finally:
+                    if not pending.done():
+                        pending.cancel()
+                        await asyncio.gather(pending, return_exceptions=True)
+        finally:
+            await consumer.stop()
+            await producer.stop()
+
+    asyncio.run(history())
