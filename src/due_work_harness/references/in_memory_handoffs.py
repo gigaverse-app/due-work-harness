@@ -198,6 +198,35 @@ def fail_with_atomic_handoff(attempt: int) -> None:
         _create_successor(attempt)
 
 
+def fail_with_atomic_handoff_checking_in_cleanup(attempt: int) -> None:
+    """The atomic handoff, with a cleanup that asserts it finished: a dead process never runs that check."""
+    finished = False
+    try:
+        fail_with_atomic_handoff(attempt)
+        finished = True
+    finally:
+        assert finished, "the handoff did not finish"
+
+
+def fail_with_atomic_handoff_in_a_task_group(attempt: int) -> None:
+    """The atomic handoff run as a task: a death inside it reaches the caller as a group."""
+
+    async def fail() -> None:
+        fail_with_atomic_handoff(attempt)
+
+    async def run() -> None:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(fail())
+
+    asyncio.run(run())
+
+
+def fail_with_atomic_handoff_then_a_group_with_its_own_death(attempt: int) -> None:
+    """A live worker raising a death of its own in a group: no simulated death, so nothing to absorb."""
+    fail_with_atomic_handoff(attempt)
+    raise BaseExceptionGroup("tasks", [WorkerDied("not the simulated death")])
+
+
 def fail_with_split_handoff(attempt: int) -> None:
     """The failure commits, then the successor commits separately."""
     LEDGER.update(attempt, status=RETRYABLE_FAILED)
@@ -404,6 +433,17 @@ def complete_asserting_on_error(attempt: int) -> None:
         raise AssertionError("the completion's reply must never be lost") from error
 
 
+def complete_grouping_its_assertion_on_error(attempt: int) -> None:
+    """The broken invariant again, reported inside an exception group, as a task group or except* would."""
+    LEDGER.update(attempt, progress="done")
+    try:
+        LEDGER.update(attempt, status=COMPLETE)
+    except LedgerConnectionError as error:
+        raise ExceptionGroup(
+            "completing the attempt", [AssertionError("the completion's reply must never be lost")]
+        ) from error
+
+
 def complete_checking_on_error(attempt: int) -> None:
     """The conforming shape: after an error, it reads back what landed before deciding."""
     LEDGER.update(attempt, progress="done")
@@ -412,6 +452,54 @@ def complete_checking_on_error(attempt: int) -> None:
     except LedgerConnectionError:
         if LEDGER.get(attempt)["status"] != COMPLETE:
             LEDGER.update(attempt, status=FAILED)
+
+
+class CompletionUnconfirmed(Exception):  # noqa: N818 - named for what the worker knows
+    """The application's own error for a completion whose reply never arrived."""
+
+
+def complete_in_a_task_group_checking_on_error(attempt: int) -> None:
+    """Completes as a task: the lost reply reaches the caller inside the task group's ExceptionGroup."""
+    LEDGER.update(attempt, progress="done")
+
+    async def complete() -> None:
+        LEDGER.update(attempt, status=COMPLETE)
+
+    async def run() -> None:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(complete())
+
+    asyncio.run(run())
+
+
+def complete_translating_a_lost_reply(attempt: int) -> None:
+    """Replaces the driver's error with its own, deliberately (``from None``)."""
+    LEDGER.update(attempt, progress="done")
+    try:
+        LEDGER.update(attempt, status=COMPLETE)
+    except LedgerConnectionError:
+        raise CompletionUnconfirmed("the completion's reply never arrived") from None
+
+
+def complete_raising_unchained_on_error(attempt: int) -> None:
+    """A handler bug: a new error raised while handling the lost reply, chained only implicitly."""
+    LEDGER.update(attempt, progress="done")
+    try:
+        LEDGER.update(attempt, status=COMPLETE)
+    except LedgerConnectionError:
+        raise CompletionUnconfirmed("the completion's reply never arrived")  # noqa: B904 - the bug under test
+
+
+def complete_raising_unlinked_after_error(attempt: int) -> None:
+    """Raises after the lost reply was handled, linked to it by nothing."""
+    LEDGER.update(attempt, progress="done")
+    lost = False
+    try:
+        LEDGER.update(attempt, status=COMPLETE)
+    except LedgerConnectionError:
+        lost = True
+    if lost:
+        raise CompletionUnconfirmed("the completion's reply never arrived")
 
 
 def attempt_status(attempt: int) -> str:

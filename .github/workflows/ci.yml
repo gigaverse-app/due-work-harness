@@ -81,8 +81,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --locked --no-default-groups --extra django --extra celery
-      - run: uv run --no-sync pytest tests/django --ds=tests.django.settings
+      # pytest-django gives each xdist worker its own test database.
+      - run: uv sync --locked --no-default-groups --extra django --extra celery --group xdist
+      - run: uv run --no-sync pytest tests/django --ds=tests.django.settings -n 4
 
   # The same suite on psycopg2, which Django uses when psycopg 3 is not installed: pretix and many older
   # projects run on it, and the host's autocommit-write probe once assumed psycopg 3.
@@ -107,9 +108,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --locked --no-default-groups --extra django --extra celery
+      - run: uv sync --locked --no-default-groups --extra django --extra celery --group xdist
       - run: uv pip uninstall psycopg psycopg-binary && uv pip install psycopg2-binary
-      - run: uv run --no-sync pytest tests/django --ds=tests.django.settings
+      - run: uv run --no-sync pytest tests/django --ds=tests.django.settings -n 4
 
   # Redis-backed queues, and Celery's real worker as a child process on a Redis broker.
   redis:
@@ -127,8 +128,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --locked --no-default-groups --extra rq --extra celery
-      - run: uv run --no-sync pytest tests/rq tests/celery_worker -p no:django -rxX
+      - run: uv sync --locked --no-default-groups --extra rq --extra celery --group xdist
+      # Each xdist worker takes its own four Redis databases (tests/redis_databases.py), so cases that
+      # empty theirs cannot wipe another worker's; four workers use all 16 of the service's databases.
+      - run: uv run --no-sync pytest tests/rq tests/celery_worker -p no:django -rxX -n 4 --durations=10
 
   demos:
     runs-on: ubuntu-latest
@@ -159,20 +162,37 @@ jobs:
       - run: uv sync --locked --no-default-groups --extra django --group demos
       # procrastinate's demos ship only in its source tree, pinned by fetch_upstream.py.
       - run: uv pip install -e demos/.upstream/procrastinate
+      - name: Postgres without durability
+        run: demos/throwaway_postgres.sh
+      # The durations are the evidence for the next change to this job's speed.
       - name: procrastinate demo_django
         env:
           PGDATABASE: procrastinate_demo
-        run: uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings -rxX
+        run: >-
+          uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings
+          -rxX --durations=15
       - name: DBOS transactional-outbox
-        run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX
+        run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX --durations=15
+      # Migrating Wagtail's test database is most of its run, and depends only on the pinned packages
+      # (uv.lock) and the demo's settings: restored from the cached dump when the key matches.
+      - uses: actions/cache@v4
+        with:
+          path: demos/.ci-cache/wagtail_tasks.dump
+          key: wagtail-test-db-pg16-${{ hashFiles('uv.lock', 'demos/wagtail_tasks/settings.py', 'demos/cached_database.py') }}
+      - name: Wagtail's test database, migrated once
+        # As pytest-django creates a test database: every app's migrations, syncdb for the rest, no checks.
+        run: >-
+          uv run --no-sync python demos/cached_database.py test_wagtail_tasks --dump demos/.ci-cache/wagtail_tasks.dump
+          -- uv run --no-sync python -m django migrate --settings=demos.wagtail_tasks.settings
+          --run-syncdb --skip-checks --no-input --verbosity 0
       # Wagtail 8.0 on django-tasks-db, both from PyPI; the demo's own directory is pytest's rootdir.
       - name: Wagtail on django-tasks-db
         working-directory: demos/wagtail_tasks
         env:
           PGDATABASE: wagtail_tasks
-        run: uv run --no-sync --project ../.. pytest --create-db --due-work-verify
+        run: uv run --no-sync --project ../.. pytest --reuse-db --due-work-verify --durations=15
       - name: the README's demo GIF prints what the harness prints
-        run: uv run --no-sync pytest demos/test_readme_gif.py -p no:django
+        run: uv run --no-sync pytest demos/test_readme_gif.py -p no:django --durations=15
       # Each demo is an adopter: its handoffs are checked the way an adopter's CI checks them.
       - name: procrastinate demo_django, every handoff accounted for
         uses: ./check
@@ -203,6 +223,8 @@ jobs:
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/saleor
+      # Absolute: run.sh works in the demo directory.
+      SALEOR_DATABASE_DUMP: ${{ github.workspace }}/demos/.ci-cache/saleor.dump
     steps:
       - uses: actions/checkout@v7
         with:
@@ -223,20 +245,21 @@ jobs:
         with:
           working-directory: demos/saleor_checkout
           package: ${{ github.workspace }}
-      # A throwaway test database needs no durability: every test flushes Saleor's ~250 tables,
-      # and skipping the fsyncs makes each flush several times faster.
       - name: Postgres without durability
-        run: >-
-          psql "${DATABASE_URL%/*}/postgres"
-          -c "ALTER SYSTEM SET fsync = off"
-          -c "ALTER SYSTEM SET synchronous_commit = off"
-          -c "ALTER SYSTEM SET full_page_writes = off"
-          -c "SELECT pg_reload_conf()"
+        run: demos/throwaway_postgres.sh
+      # Saleor's migrations depend only on its pin (in fetch_upstream.py): their result is cached as a
+      # dump, restored in seconds instead of migrating for two minutes.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.SALEOR_DATABASE_DUMP }}
+          key: saleor-test-db-pg16-${{ hashFiles('demos/fetch_upstream.py', 'demos/saleor_checkout/prepare_db.py', 'demos/cached_database.py') }}
       # One xdist worker per runner CPU. Four workers each migrating their own database took
       # 193 s apiece; migrating once and cloning a copy per worker costs one migration.
       - name: Saleor's test databases, migrated once
         run: demos/saleor_checkout/run.sh --prepare-db 4
-      # The durations are the evidence for the next change to this job's speed.
+      # The durations are the evidence for the next change to this job's speed. --dist worksteal was
+      # tried: pytest took 75 s and 80 s, inside the 66 to 91 s this step takes with the default on the
+      # same code, as runners vary. No gain was measurable, so the default stays.
       - name: Saleor checkout
         run: demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --reuse-db --durations=15
 

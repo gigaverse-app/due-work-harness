@@ -18,6 +18,7 @@ Never import this module in an adopter: binding it measures the reference.
 
 import asyncio
 import functools
+import gc
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import timedelta
@@ -207,6 +208,25 @@ def fail_attempt_through_a_function_then_hand_off(pk: int) -> None:
     with connection.cursor() as cursor:
         cursor.execute(f"SELECT {FAIL_ATTEMPT_FUNCTION}(%s)", [pk])
     _create_successor(LifecycleAttempt.objects.get(pk=pk))
+
+
+def fail_attempt_through_async_to_sync(pk: int) -> None:
+    """The atomic handoff, reached from sync code through async_to_sync, as an async service layer would."""
+    from asgiref.sync import async_to_sync, sync_to_async
+
+    async def fail() -> None:
+        await sync_to_async(fail_attempt_with_atomic_handoff)(pk)
+
+    async_to_sync(fail)()
+
+
+def fail_attempt_through_async_to_sync_collecting_on_the_way_out(pk: int) -> None:
+    """The same, with a young collection while the error unwinds, as allocation in a close or a log would cause."""
+    try:
+        fail_attempt_through_async_to_sync(pk)
+    finally:
+        # Anything the in-flight error keeps alive survives this, and is promoted past generation 0.
+        gc.collect(generation=0)
 
 
 @transaction.atomic

@@ -176,6 +176,37 @@ disposition, every gap is a *strict* xfail that trips when the gap is fixed, and
 a `KnownGap` is strongest with a `detect` probe that fails exactly while the gap
 exists.
 
+### What a crash history absorbs
+
+A transition interrupted on purpose raises things, and a history has to decide
+which of them are the interruption and which are defects. One rule, in this
+order, for every host:
+
+1. A seam's refusal (a deferred result the harness cannot observe honestly) is
+   raised, even when production swallowed it or wrapped it in its own error.
+2. After a simulated worker death, everything is absorbed, a failed assertion
+   included: it was raised on the way out (a connection close, a `finally`, a
+   cleanup's check), which a dead process never runs. A death raised inside a
+   task group arrives as a group holding `WorkerDied`, and is the death.
+3. Otherwise a failed assertion, bare or anywhere inside an exception group,
+   is raised: an invariant failing is a defect whatever happened before it.
+4. After an injected failure (a failed after-commit callback or signal
+   receiver, a refused publication, a lost reply), an exception is absorbed
+   when it is that failure, is raised from it (`raise ... from error`), is a
+   deliberate translation of it (`raise ... from None` in its handler), or is
+   a group made only of such exceptions: that is the application's own
+   response, as a real request errors.
+5. Anything else fails the history. An error raised inside the failure's
+   handler without `from` is linked to it only implicitly and is usually a bug
+   in the handler; it, and an error not linked at all, carry a note saying to
+   chain it if it is a deliberate response.
+
+The Gigaverse backend's copy of the harness applies the same rule.
+
+A divergence always raises `HistoriesDiverged`, and a declared handoff gap is a
+strict xfail for that alone; a broken binding, a failed positive control or an
+observation that differs between two clean runs is a plain `AssertionError`.
+
 ## Where the proofs came from
 
 Several proofs came from comparing hand-written background work with what a

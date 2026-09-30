@@ -29,15 +29,19 @@ and make the adapter forward to it.
 """
 
 import ast
+import builtins
+import contextlib
 import dis
 import functools
 import inspect
 import sys
 import textwrap
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from pathlib import Path
-from types import CodeType, ModuleType
+from types import CodeType, FunctionType, MethodType, ModuleType
 from typing import Any
+
+import pytest
 
 from due_work_harness.host import production_packages
 
@@ -90,44 +94,282 @@ INVOCATION_AUTHORING_OPERATIONS = SELECTION_AUTHORING_OPERATIONS | TRANSITION_AU
 #: bindings it feeds are production-bound. A test-side ``pytest.raises`` around
 #: a shared proof can "prove" anything by feeding the proof a synthetic
 #: implementation and celebrating the failure. ``AssertionError`` counts only
-#: where an ``except`` clause matches it: *raising* it is what every ``assert``
-#: does once pytest rewrites the test module, so its bare name proves nothing.
+#: where a handler catches it (naming it, ``Exception`` or ``BaseException``, or
+#: a bare ``except``; see :func:`_swallowing_handlers`): *raising* it is what
+#: every ``assert`` does once pytest rewrites the test module, so its bare name
+#: proves nothing. ``suppress`` and ``raises`` count under any imported name.
+#:
+#: Not covered, so a determined probe can still swallow a proof: a context
+#: manager of its own whose ``__exit__`` returns True, a callback pushed onto an
+#: ``ExitStack`` that does, a thread or ``sys.excepthook``-style handler that
+#: runs the proof and drops its error, and anything else that decides at run
+#: time. Neither is suppress or pytest.raises called with a type that cannot
+#: catch an assertion told apart: ``suppress(FileNotFoundError)`` is flagged. The
+#: tripwire catches the shapes an author reaches for while writing a probe; the
+#: backstop is review, and ``DisprovenCapability`` as the one sanctioned inversion.
 ASSERTION_INVERSION_NAMES = frozenset({"raises", "AssertionError", "suppress"})
 
 
-def _catches_assertion_error(code: CodeType) -> bool:
-    """
-    Whether ``code`` (or a function nested in it) matches ``AssertionError`` in an ``except`` clause.
+#: The first of these after a load of ``AssertionError`` decides it: a match is an ``except``
+#: clause (``except*`` included), a raise is what pytest's rewritten ``assert`` compiles to.
+_EXCEPTION_MATCH_OR_RAISE = frozenset({"CHECK_EXC_MATCH", "CHECK_EG_MATCH", "RAISE_VARARGS"})
 
-    From each load of the name, the first of ``CHECK_EXC_MATCH`` (the clause's
-    type test, reached through any tuple of types) and ``RAISE_VARARGS`` (a
-    ``raise``, which pytest's rewritten asserts compile to) decides.
-    """
-    instructions = list(dis.get_instructions(code))
-    for index, instruction in enumerate(instructions):
-        if instruction.argval != "AssertionError" or not instruction.opname.startswith("LOAD_"):
-            continue
-        following = (later.opname for later in instructions[index + 1 :])
-        if (
-            next((name for name in following if name in ("CHECK_EXC_MATCH", "RAISE_VARARGS")), None)
-            == "CHECK_EXC_MATCH"
-        ):
-            return True
-    return any(isinstance(constant, CodeType) and _catches_assertion_error(constant) for constant in code.co_consts)
+#: The objects behind the inversion names, so an aliased import (``suppress as quietly``) is seen too.
+_INVERTING_OBJECTS: dict[str, object] = {"suppress": contextlib.suppress, "raises": pytest.raises}
+
+#: What static reading returns for a value it cannot determine without running the probe.
+_UNRESOLVED = object()
 
 
-def _inversion_names(code: CodeType) -> set[str]:
-    names = set(code.co_names)
+def _nested_code(code: CodeType) -> Iterator[CodeType]:
+    """``code`` and every function, lambda and comprehension defined inside it, at any depth."""
+    yield code
     for constant in code.co_consts:
         if isinstance(constant, CodeType):
-            names |= set(constant.co_names)
+            yield from _nested_code(constant)
+
+
+def _catches_assertion_error_in_bytecode(code: CodeType) -> bool:
+    """
+    The fallback when the source cannot say: ``AssertionError`` loaded and then tested by an ``except`` clause.
+
+    It sees only the literal name ``AssertionError``: a handler whose type is
+    computed (a call, a name the source never binds) and that catches through
+    ``Exception``, ``BaseException`` or an alias is invisible to it. It runs only
+    for handlers the static reading could not resolve, and for code without
+    source, so it can add a finding but never clears one.
+    """
+    for nested in _nested_code(code):
+        instructions = list(dis.get_instructions(nested))
+        for index, instruction in enumerate(instructions):
+            if instruction.argval != "AssertionError" or not instruction.opname.startswith("LOAD_"):
+                continue
+            following = (later.opname for later in instructions[index + 1 :])
+            decider = next((name for name in following if name in _EXCEPTION_MATCH_OR_RAISE), None)
+            if decider in ("CHECK_EXC_MATCH", "CHECK_EG_MATCH"):
+                return True
+    return False
+
+
+def _verdict(verdicts: Iterable[bool | None]) -> bool | None:
+    """True when any catches, else None when any is unknown, else False; nothing to judge is unknown."""
+    found = list(verdicts)
+    if any(found):
+        return True
+    return None if None in found or not found else False
+
+
+def _value_catches_assertion_error(value: object) -> bool | None:
+    """Whether an ``except`` naming ``value`` catches ``AssertionError``; None when ``value`` is not a handler type."""
+    if isinstance(value, tuple):
+        return _verdict(_value_catches_assertion_error(element) for element in value)
+    if isinstance(value, type) and issubclass(value, BaseException):
+        return issubclass(AssertionError, value)
+    return None
+
+
+def _imported(module: str, name: str | None = None) -> object:
+    """An already-imported module, or a name in one, read without importing or running anything."""
+    found = sys.modules.get(module)
+    if found is None or name is None:
+        return _UNRESOLVED if found is None else found
+    value = inspect.getattr_static(found, name, _UNRESOLVED)
+    return sys.modules.get(f"{module}.{name}", _UNRESOLVED) if value is _UNRESOLVED else value
+
+
+def _bindings(node: ast.AST) -> Iterator[tuple[str, ast.expr | object]]:
+    """The names one statement or expression binds, each with what it binds it to."""
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            yield from _paired(target, node.value)
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+        # ``errors += (AssertionError,)`` may make ``errors`` catch; the addend alone decides that.
+        yield from _paired(node.target, node.value)
+    elif isinstance(node, ast.NamedExpr):
+        yield node.target.id, node.value
+    elif isinstance(node, ast.Import):
+        for alias in node.names:
+            if alias.asname:
+                yield alias.asname, _imported(alias.name)
+            else:
+                yield alias.name.partition(".")[0], _imported(alias.name.partition(".")[0])
+    elif isinstance(node, ast.ImportFrom):
+        for alias in node.names:
+            if alias.name != "*":
+                found = _imported(node.module, alias.name) if node.module and not node.level else _UNRESOLVED
+                yield alias.asname or alias.name, found
+    elif isinstance(node, (ast.For, ast.AsyncFor, ast.withitem)):
+        target = node.target if isinstance(node, (ast.For, ast.AsyncFor)) else node.optional_vars
+        for name in ast.walk(target) if target is not None else ():
+            if isinstance(name, ast.Name):
+                yield name.id, _UNRESOLVED
+
+
+def _paired(target: ast.expr, value: ast.expr) -> Iterator[tuple[str, ast.expr | object]]:
+    if isinstance(target, ast.Name):
+        yield target.id, value
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        pairs = isinstance(value, (ast.Tuple, ast.List)) and len(value.elts) == len(target.elts)
+        for index, element in enumerate(target.elts):
+            yield from _paired(element, value.elts[index]) if pairs else _unknown(element)  # type: ignore[attr-defined]
+
+
+def _unknown(target: ast.expr) -> Iterator[tuple[str, object]]:
+    for name in ast.walk(target):
+        if isinstance(name, ast.Name):
+            yield name.id, _UNRESOLVED
+
+
+class _StaticScope:
+    """
+    What the names in one probe's source can be bound to, read without running it.
+
+    The namespace is what the code resolves at run time: builtins, its module's
+    globals, its closure, its parameters' defaults and a bound method's ``self``.
+    Every assignment, walrus, import and loop target in the source is added on
+    top, in every nested scope and whatever the order: a name bound to a
+    catching type anywhere counts as catching everywhere it is used. The
+    over-approximation errs toward flagging, which a probe's author answers by
+    moving the inversion root-side (``DisprovenCapability``); erring the other
+    way would let a swallowed proof through.
+    """
+
+    def __init__(self, tree: ast.Module, namespace: Mapping[str, object]) -> None:
+        self._namespace = namespace
+        self._bound: dict[str, list[ast.expr | object]] = {}
+        for node in ast.walk(tree):
+            for name, value in _bindings(node):
+                self._bound.setdefault(name, []).append(value)
+        self._resolving: set[str] = set()
+
+    def catches(self, expression: ast.expr) -> bool | None:
+        """True when a handler of this type catches ``AssertionError``, False when not, None when unknown."""
+        if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
+            return _verdict(self.catches(element) for element in expression.elts)
+        if isinstance(expression, ast.Starred):
+            return self.catches(expression.value)
+        if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
+            return _verdict((self.catches(expression.left), self.catches(expression.right)))
+        if isinstance(expression, ast.Name):
+            with self._candidates(expression.id) as candidates:
+                return _verdict(
+                    self.catches(value) if isinstance(value, ast.expr) else _value_catches_assertion_error(value)
+                    for value in candidates
+                )
+        return _verdict(_value_catches_assertion_error(value) for value in self.resolve(expression))
+
+    def resolve(self, expression: ast.expr) -> list[object]:
+        """Every value the expression may evaluate to, :data:`_UNRESOLVED` where static reading cannot tell."""
+        if isinstance(expression, ast.Constant):
+            return [expression.value]
+        if isinstance(expression, ast.Name):
+            with self._candidates(expression.id) as candidates:
+                return [
+                    found
+                    for value in candidates
+                    for found in (self.resolve(value) if isinstance(value, ast.expr) else [value])
+                ]
+        if isinstance(expression, ast.Attribute):
+            # Read without running a descriptor or ``__getattr__``: a property is not a handler type.
+            return [
+                _UNRESOLVED if base is _UNRESOLVED else inspect.getattr_static(base, expression.attr, _UNRESOLVED)
+                for base in self.resolve(expression.value)
+            ]
+        if isinstance(expression, ast.Subscript) and isinstance(expression.slice, ast.Constant):
+            return [_item(base, expression.slice.value) for base in self.resolve(expression.value)]
+        if isinstance(expression, (ast.Tuple, ast.List)):
+            elements = [self.resolve(element) for element in expression.elts]
+            return [tuple(e[0] for e in elements)] if all(len(e) == 1 for e in elements) else [_UNRESOLVED]
+        return [_UNRESOLVED]
+
+    @contextlib.contextmanager
+    def _candidates(self, name: str) -> Iterator[list[ast.expr | object]]:
+        """What ``name`` may be bound to, with the name held while they are read (a self-reference is unknown)."""
+        if name in self._resolving:
+            # ``errors = errors + (...)``: the earlier value is whatever else binds the name.
+            yield [_UNRESOLVED]
+        elif name in self._bound:
+            self._resolving.add(name)
+            try:
+                yield self._bound[name]
+            finally:
+                self._resolving.discard(name)
+        else:
+            yield [self._namespace[name]] if name in self._namespace else [_UNRESOLVED]
+
+
+def _item(container: object, key: object) -> object:
+    if isinstance(container, (dict, tuple, list)):
+        try:
+            return container[key]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError):
+            return _UNRESOLVED
+    return _UNRESOLVED
+
+
+def _swallowing_handlers(code: CodeType, tree: ast.Module | None, namespace: Mapping[str, object]) -> list[int]:
+    """
+    The source lines of handlers in ``code`` (or code nested in it, at any depth) that swallow ``AssertionError``.
+
+    A handler swallows when it is a bare ``except``, or an ``except``/``except*``
+    whose type catches ``AssertionError`` (``AssertionError``, ``Exception`` or
+    ``BaseException``, through any alias :class:`_StaticScope` can read), and it
+    does not end in a bare ``raise`` with nothing leaving it earlier. Raising
+    ``AssertionError`` is what every ``assert`` does once pytest rewrites the
+    module, so the bare name proves nothing. When a handler's type cannot be
+    read statically, and for code without source, the bytecode decides; its
+    finding has no line (0).
+    """
+    if tree is None:
+        return [0] if _catches_assertion_error_in_bytecode(code) else []
+    scope = _StaticScope(tree, namespace)
+    swallowing: list[int] = []
+    unresolved = False
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Try, ast.TryStar)):
+            continue
+        for handler in node.handlers:
+            if _re_raises(handler):
+                continue
+            verdict = True if handler.type is None else scope.catches(handler.type)
+            if verdict:
+                swallowing.append(_line(code, handler))
+            unresolved = unresolved or verdict is None
+    if not swallowing and unresolved and _catches_assertion_error_in_bytecode(code):
+        return [0]
+    return sorted(swallowing)
+
+
+def _line(code: CodeType, node: ast.stmt | ast.ExceptHandler) -> int:
+    """The file line of a node in the dedented source parsed from ``code``."""
+    return code.co_firstlineno + node.lineno - 1
+
+
+def _site(kind: str, code: CodeType, line: int) -> str:
+    return f"{kind} at {Path(code.co_filename).name}:{line}" if line else f"{kind} in {code.co_qualname}"
+
+
+def _inversion_names(code: CodeType, namespace: Mapping[str, object]) -> set[str]:
+    """
+    The inversions a probe's code makes, each named as a reviewer can find it.
+
+    ``co_names`` holds attribute names too, so ``contextlib.suppress`` counts by
+    name as well as by object; a module that rebinds ``suppress`` to something
+    harmless is still flagged, the safe direction.
+    """
+    names = {name for nested in _nested_code(code) for name in nested.co_names}
     found = names & (ASSERTION_INVERSION_NAMES - {"AssertionError"})
+    found |= {
+        name
+        for name, inverter in _INVERTING_OBJECTS.items()
+        if any(namespace.get(bound) is inverter for bound in names)
+    }
     tree = _source_tree(code)
-    leaves_finally = tree is not None and _leaves_a_finally_early(tree)
-    if leaves_finally:
-        found.add("finally")
-    if _catches_assertion_error(code) and (leaves_finally or tree is None or not _every_handler_re_raises(tree)):
-        found.add("AssertionError")
+    if tree is not None and (escapes := _finally_escapes(tree)):
+        # A return, break or continue leaving a finally discards the exception in flight, whatever was caught.
+        found |= {"finally", "AssertionError"} | {_site("finally", code, _line(code, node)) for node in escapes}
+    elif swallowing := _swallowing_handlers(code, tree, namespace):
+        found |= {"AssertionError"} | {_site("except", code, line) for line in swallowing}
     return found
 
 
@@ -138,25 +380,75 @@ def _source_tree(code: CodeType) -> ast.Module | None:
         return None
 
 
-def _every_handler_re_raises(tree: ast.Module) -> bool:
+def _function_of(binding: Callable[..., Any]) -> FunctionType | None:
     """
-    Whether every ``except`` handler in the source ends in a bare ``raise`` and cannot leave another way.
+    The Python function behind a binding, or None when there is none.
 
-    A handler that annotates an assertion (``add_note``) or logs it and then
-    re-raises it inverts nothing: the assertion reaches the case as itself. The
-    bytecode says an ``AssertionError`` is matched; the source says what the
-    handler does with it. Every handler is held to it, whatever it matches, so
-    an aliased ``AssertionError`` cannot slip through a handler that swallows.
-    Without source, nothing is exonerated; with a ``finally`` that leaves early
-    (see :func:`_leaves_a_finally_early`), neither is the re-raise.
+    The one reading of a binding's shape every tripwire shares: through
+    ``functools.partial`` layers, bound methods, decorators that set
+    ``__wrapped__``, a Celery task's ``run``, and a callable instance's ``__call__``.
     """
-    handlers = [node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)]
-    return bool(handlers) and all(_re_raises(handler) for handler in handlers)
+    body = _body(binding)
+    function = getattr(body, "__func__", body)
+    if callable(function):
+        # A method's function may itself be decorated.
+        function = inspect.unwrap(function)
+        function = getattr(function, "__func__", function)
+    if inspect.isfunction(function):
+        return function
+    call = getattr(type(binding), "__call__", None)  # noqa: B004 - reads the class attribute, not callability
+    call = getattr(call, "__func__", call)
+    return call if inspect.isfunction(call) else None
 
 
-def _leaves_a_finally_early(tree: ast.Module) -> bool:
+def _body(binding: Callable[..., Any]) -> object:
     """
-    Whether some ``finally`` block can leave by ``return``, ``break`` or ``continue``.
+    What a binding runs when called, before any ``__call__`` of the object itself: a function or a bound method.
+
+    Unwrapping can land on a bound method: a Celery ``shared_task(bind=True)``
+    proxy's ``__wrapped__`` is its task's bound ``run``, and the proxy's own
+    ``__call__`` only forwards to it. A class-based Celery task is an instance
+    whose ``__call__`` runs its ``run``. Celery is recognised only when something
+    already imported it, so the core stays framework-free.
+    """
+    while isinstance(binding, functools.partial):
+        binding = binding.func
+    body: object = binding
+    if callable(body) and not isinstance(body, MethodType):
+        body = inspect.unwrap(body)
+    celery_task = sys.modules.get("celery.app.task")
+    if celery_task is not None and not inspect.isfunction(body) and not isinstance(body, MethodType):
+        task_class: type[Any] = celery_task.Task
+        if isinstance(body, task_class):
+            task: Any = body  # a Celery task: its class was read from sys.modules at run time
+            body = task.run
+    return body
+
+
+def _namespace(binding: Callable[..., Any]) -> Mapping[str, object]:
+    """
+    The names a binding's code resolves at run time, as far as they are known without running it.
+
+    Builtins, then the module's globals, the closure's cells, the parameters'
+    defaults, and for a bound method its ``self`` (so ``self.Errors`` resolves).
+    """
+    function = _function_of(binding)
+    if function is None:
+        return vars(builtins)
+    namespace: dict[str, object] = {**vars(builtins), **function.__globals__}
+    with contextlib.suppress(ValueError):  # a cell not yet filled
+        namespace.update(inspect.getclosurevars(function).nonlocals)
+    parameters = list(inspect.signature(function).parameters.values())
+    namespace.update({p.name: p.default for p in parameters if p.default is not inspect.Parameter.empty})
+    body = _body(binding)
+    if isinstance(body, MethodType) and parameters:
+        namespace[parameters[0].name] = body.__self__
+    return namespace
+
+
+def _finally_escapes(tree: ast.Module) -> list[ast.stmt]:
+    """
+    The statements in ``finally`` blocks that can leave them by ``return``, ``break`` or ``continue``.
 
     Leaving a ``finally`` that way discards the exception propagating through
     it, an assertion included, whatever the handlers above it did. Counted: a
@@ -164,12 +456,13 @@ def _leaves_a_finally_early(tree: ast.Module) -> bool:
     a loop that is itself in the block. Nested functions, lambdas and classes
     are their own scope and are not counted.
     """
-    return any(
-        _escapes(statement, in_loop=False)
+    return [
+        statement
         for node in ast.walk(tree)
         if isinstance(node, (ast.Try, ast.TryStar))
         for statement in node.finalbody
-    )
+        if _escapes(statement, in_loop=False)
+    ]
 
 
 def _escapes(node: ast.AST, *, in_loop: bool) -> bool:
@@ -188,8 +481,9 @@ def _escapes(node: ast.AST, *, in_loop: bool) -> bool:
 
 
 def _re_raises(handler: ast.ExceptHandler) -> bool:
+    """Whether every way out of the handler is its closing bare ``raise``: no return, break or continue first."""
     last = handler.body[-1]
-    leaves = any(isinstance(node, (ast.Return, ast.Break, ast.Continue)) for node in ast.walk(handler))
+    leaves = any(_escapes(statement, in_loop=False) for statement in handler.body)
     return isinstance(last, ast.Raise) and last.exc is None and not leaves
 
 
@@ -198,15 +492,8 @@ def callable_code(binding: Callable[..., Any]) -> CodeType | None:
     The code object behind a binding: a function, a bound method, a wrapped callable,
     a ``functools.partial`` (whose code is the wrapped function's) or a callable instance.
     """
-    if isinstance(binding, functools.partial):
-        return callable_code(binding.func)
-    function = getattr(binding, "__func__", binding)
-    if callable(function):
-        function = inspect.unwrap(function)
-    code = getattr(function, "__code__", None)
-    if code is None:
-        code = getattr(getattr(type(binding), "__call__", None), "__code__", None)  # noqa: B004 - reads the class attribute, not callability
-    return code
+    function = _function_of(binding)
+    return function.__code__ if function is not None else None
 
 
 def is_test_path(path: Path) -> bool:
@@ -239,10 +526,8 @@ def is_test_authored(binding: Callable[..., Any]) -> bool | None:
 
 
 def _nested_test_callables(binding: Callable[..., Any]) -> Collection[Callable[..., Any]]:
-    function = getattr(binding, "__func__", binding)
-    if callable(function):
-        function = inspect.unwrap(function)
-    if not inspect.isfunction(function):
+    function = _function_of(binding)
+    if function is None:
         return ()
     closure = inspect.getclosurevars(function)
     referenced = (*closure.nonlocals.values(), *closure.globals.values())
@@ -351,14 +636,9 @@ def _is_production_file(path: Path) -> bool:
 
 def _referenced_values(binding: Callable[..., Any]) -> tuple[Any, ...]:
     """Every global/closure value the callable actually references."""
-    function = getattr(binding, "__func__", binding)
-    if callable(function):
-        function = inspect.unwrap(function)
-    if not inspect.isfunction(function):
-        call = getattr(type(binding), "__call__", None)  # noqa: B004 - reads the class attribute, not callability
-        function = getattr(call, "__func__", call)
-        if not inspect.isfunction(function):
-            return ()
+    function = _function_of(binding)
+    if function is None:
+        return ()
     try:
         closure = inspect.getclosurevars(function)
     except (TypeError, ValueError):
@@ -570,7 +850,7 @@ def authored_inversion_names(binding: Callable[..., Any], *, seen: set[int] | No
     if code is None or not is_test_code(code) or is_harness_owned(code):
         return set()
 
-    inverted = _inversion_names(code)
+    inverted = _inversion_names(code, _namespace(binding))
     for nested in _nested_test_callables(binding):
         inverted.update(authored_inversion_names(nested, seen=seen))
     return inverted

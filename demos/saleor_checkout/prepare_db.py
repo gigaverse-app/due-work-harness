@@ -8,11 +8,12 @@ through PostgreSQL's template databases costs one migration; the test run then
 passes ``--reuse-db``, and each worker finds its database ready.
 
 Run with Saleor's interpreter, as ``run.sh --prepare-db N`` does, with
-``DATABASE_URL`` set as for the tests.
+``DATABASE_URL`` set as for the tests. With ``SALEOR_DATABASE_DUMP`` set, the
+migrated database is restored from that dump when it exists and written to it
+when not (see ``demos/cached_database.py``); CI caches it on Saleor's pin.
 """
 
 import os
-import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -20,11 +21,10 @@ from urllib.parse import urlsplit
 import psycopg
 from psycopg import sql
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cached_database import migrated_database, with_database  # noqa: E402 - the demos directory, added above
+
 SALEOR = Path(__file__).resolve().parents[1] / ".upstream" / "saleor"
-
-
-def _with_database(url: str, name: str) -> str:
-    return urlsplit(url)._replace(path=f"/{name}").geturl()
 
 
 def main(workers: int) -> None:
@@ -34,29 +34,23 @@ def main(workers: int) -> None:
     migrated = f"test_{name}_migrated"
     clones = [f"test_{name}_gw{worker}" for worker in range(workers)]
 
-    with psycopg.connect(_with_database(url, "postgres"), autocommit=True) as server:
-        server.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(migrated)))
-        server.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(migrated)))
-
+    dump = os.environ.get("SALEOR_DATABASE_DUMP")
     # Saleor's own migrations, under its test settings, exactly as pytest-django would run them.
-    subprocess.run(
+    os.environ["DJANGO_SETTINGS_MODULE"] = "saleor.tests.settings"
+    made = migrated_database(
+        migrated,
         [sys.executable, "manage.py", "migrate", "--no-input", "--verbosity", "0"],
+        dump=Path(dump) if dump else None,
         cwd=SALEOR,
-        env={
-            **os.environ,
-            "DATABASE_URL": _with_database(url, migrated),
-            "DJANGO_SETTINGS_MODULE": "saleor.tests.settings",
-        },
-        check=True,
     )
 
-    with psycopg.connect(_with_database(url, "postgres"), autocommit=True) as server:
+    with psycopg.connect(with_database(url, "postgres"), autocommit=True) as server:
         for clone in clones:
             server.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(clone)))
             server.execute(
                 sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(sql.Identifier(clone), sql.Identifier(migrated))
             )
-    print(f"migrated {migrated} once; cloned it into {', '.join(clones)}")
+    print(f"{made}; cloned it into {', '.join(clones)}")
 
 
 if __name__ == "__main__":

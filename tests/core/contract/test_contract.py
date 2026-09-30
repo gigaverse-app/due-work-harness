@@ -45,6 +45,7 @@ from due_work_harness.contract import (
     due_work_contract_suite,
     safety_contract_cases,
     scheduled_selection_cases,
+    suite_cases,
 )
 from due_work_harness.crash_histories import CallableDelivery, Findings, HandoffHistory, HistoriesDiverged
 from due_work_harness.gap_probes import (
@@ -1130,8 +1131,19 @@ def _run_reference_cases(mode: str, *selection: str) -> tuple[dict[str, int], st
 
 
 def _generated_case_count() -> int:
+    return len(suite_cases(REFERENCE_CONTRACT))
+
+
+def test_suite_cases_are_exactly_what_pytest_collects_from_the_generated_suite() -> None:
+    # The oracle is a child pytest session's own collection of the decorated class, not the decorator's
+    # arguments: the public list an adopter counts or filters must be what actually runs, in the same order.
+    _, output, code = _run_reference_cases("conforming", "--collect-only")
+    assert code == pytest.ExitCode.OK, output
+    collected = re.findall(r"::test_due_work_contract\[(.+)\]$", output, flags=re.MULTILINE)
+    assert collected == [param.id for param in suite_cases(REFERENCE_CONTRACT)], output
     assert REFERENCE_CONTRACT.safety is not None
-    return len(contract_cases(REFERENCE_CONTRACT)) + len(safety_contract_cases(REFERENCE_CONTRACT.safety))
+    safety = [param.id for param in safety_contract_cases(REFERENCE_CONTRACT.safety)]
+    assert safety and collected[-len(safety) :] == safety
 
 
 def test_the_conforming_reference_suite_passes_every_generated_case() -> None:
@@ -1206,7 +1218,8 @@ def test_each_handoff_history_is_one_transactional_case_and_a_legacy_gap_is_a_st
     }
     retry_marks = {mark.name: mark for mark in cases["handoff-retry-assert_crash_at_every_commit_converges"].marks}
     assert retry_marks["database"].kwargs == {"transaction": True}
-    assert retry_marks["xfail"].kwargs == {"strict": True, "reason": WHY}
+    # A gap accepts only a divergence, findings or not: a broken binding or positive control fails as itself.
+    assert retry_marks["xfail"].kwargs == {"strict": True, "reason": WHY, "raises": HistoriesDiverged}
     fan_out_marks = {mark.name for mark in cases["handoff-fan-out-assert_crash_at_every_commit_converges"].marks}
     assert fan_out_marks == {"database"}
 
@@ -1330,10 +1343,31 @@ def test_process_and_in_process_handoff_names_share_one_namespace() -> None:
         )
 
 
-def test_a_history_without_findings_still_diverges_with_a_plain_assertion(ledger_host: Host) -> None:
-    with pytest.raises(AssertionError) as raised:
-        _split_case(None).values[0].run()
-    assert type(raised.value) is AssertionError
+def test_a_history_without_findings_diverges_as_a_divergence(ledger_host: Host) -> None:
+    case = _split_case(None)
+    assert {mark.name: mark for mark in case.marks}["xfail"].kwargs["raises"] is HistoriesDiverged
+    with pytest.raises(HistoriesDiverged, match=r"'worker died after commit 1': \('retryable_failed', \(\)\)"):
+        case.values[0].run()
+
+
+def test_a_gapped_history_whose_transition_changes_nothing_fails_as_itself(ledger_host: Host) -> None:
+    # The positive control is not the known gap: a strict xfail for HistoriesDiverged must not absorb it.
+    history = HandoffHistory(
+        name="retryable failure",
+        arrange=in_memory_handoffs.running_attempt,
+        transition=in_memory_handoffs.reconcile,
+        observe=in_memory_handoffs.attempt_and_successors,
+    )
+    contract = _contract(
+        handoffs=(history,),
+        handoff_delivery=in_memory_handoffs.RETRY_DELIVERY,
+        handoff_gaps={"retryable failure": WHY},
+        adoption=Adoption.LEGACY,
+    )
+    case = _params_by_id(contract_cases(contract))["handoff-retryable failure-assert_crash_at_every_commit_converges"]
+    with pytest.raises(AssertionError, match="positive control failed") as raised:
+        case.values[0].run()
+    assert not isinstance(raised.value, HistoriesDiverged)
 
 
 # Execution eligibility.

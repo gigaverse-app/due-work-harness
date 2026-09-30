@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from due_work_harness.crash_histories import HistoriesDiverged
 from due_work_harness.process_histories import (
     ProcessHistory,
     assert_pinned_process_outcomes,
@@ -126,3 +127,13 @@ def test_a_child_dies_where_it_is_told(point: str | None, status: int, output: s
         [sys.executable, "-c", CHILD], env={**os.environ, **fault_environment(point)}, capture_output=True, text=True
     )
     assert (child.returncode, child.stdout) == (status, output)
+
+
+def test_an_observation_that_differs_between_clean_runs_is_refused_not_a_divergence(ledger_host: object) -> None:
+    # A per-run identifier (a task id, a fresh row) makes every history "diverge"; a known gap must not accept that.
+    history = _history(("before_send",)).model_copy(
+        update={"observe": lambda attempt: (attempt, *ref.status_and_notifications(attempt))}
+    )
+    with pytest.raises(AssertionError, match="not deterministic") as raised:
+        assert_process_deaths_converge(history)
+    assert not isinstance(raised.value, HistoriesDiverged)

@@ -124,9 +124,9 @@ def test_placing_an_order_survives_any_death():
 A failure names the history that went wrong and what it left behind:
 
 ```text
-AssertionError: orders: handoff 'place order': normal operation reaches ('SENT', 1), but these
-histories reach something else: {'worker died after external call 1': ('SENT', 2)}. Work was lost
-or repeated. ...
+due_work_harness.HistoriesDiverged: orders: handoff 'place order': normal operation reaches
+('SENT', 1), but these histories reach something else: {'worker died after external call 1':
+('SENT', 2)}. Work was lost or repeated. ...
 ```
 
 That's the duplicate email, caught in a test instead of in a support ticket.

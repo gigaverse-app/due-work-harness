@@ -12,6 +12,7 @@ import pytest
 from due_work_harness.host import ReadCost
 from due_work_harness.integrations.postgres_plans import (
     assert_plan_is_index_served,
+    bitmap_overturns_the_walk,
     index_served_verdict,
     iter_plan_nodes,
     read_cost,
@@ -336,3 +337,162 @@ def test_a_literal_in_the_filter_is_not_a_column() -> None:
     assert_plan_is_index_served(
         name="literal", plan=plan, table=_TABLE, predicate_indexes={"active_ix": frozenset({"status"})}
     )
+
+
+# On a tiny table every index walk costs about the same, so with sequential scans off the planner
+# may walk an unrelated index (a unique key) and filter the due-time bound. The bitmap-only plan
+# then decides: a bitmap needs an index condition, or a named partial predicate, to narrow at all.
+
+_WALKS_AN_UNRELATED_INDEX = _index_scan(Filter="((state = 'ready') AND (available_at <= $1))")
+_BITMAP_OVER_THE_DUE_INDEX = {
+    "Node Type": "Bitmap Heap Scan",
+    "Relation Name": _TABLE,
+    "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "due_ix", "Index Cond": "(available_at <= $1)"}],
+}
+_BITMAP_OVER_A_STATE_INDEX_READING_EVERY_STATE = {
+    "Node Type": "Bitmap Heap Scan",
+    "Relation Name": _TABLE,
+    "Recheck Cond": "(state = ANY ('{ready,queued,claimed,retryable,unknown}'::text[]))",
+    "Filter": "(available_at <= $1)",
+    "Plans": [
+        {
+            "Node Type": "Bitmap Index Scan",
+            "Index Name": "state_ix",
+            "Index Cond": "(state = ANY ('{ready,queued,claimed,retryable,unknown}'::text[]))",
+        }
+    ],
+}
+_BITMAP_WITHOUT_AN_INDEX_CONDITION = {
+    "Node Type": "Bitmap Heap Scan",
+    "Relation Name": _TABLE,
+    "Recheck Cond": "(state = 'ready')",
+    "Filter": "(available_at <= $1)",
+    "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "some_index"}],
+}
+
+
+@pytest.mark.parametrize(
+    ("bitmap", "overturns"),
+    [
+        (_BITMAP_OVER_THE_DUE_INDEX, True),
+        (_WALKS_AN_UNRELATED_INDEX, False),
+        # A bitmap is not narrowing by being a bitmap: this one reads the whole state index and
+        # still filters the due-time bound the walked scan filtered.
+        (_BITMAP_OVER_A_STATE_INDEX_READING_EVERY_STATE, False),
+        (_BITMAP_WITHOUT_AN_INDEX_CONDITION, False),
+    ],
+    ids=["a-narrowing-index-exists", "no-narrowing-index", "bitmap-leaves-the-due-bound-unindexed", "no-index-cond"],
+)
+def test_a_tiny_table_walking_an_unrelated_index_is_judged_by_the_bitmap_plan(
+    bitmap: dict[str, object], overturns: bool
+) -> None:
+    assert index_served_verdict(_WALKS_AN_UNRELATED_INDEX, table=_TABLE) is not None
+    assert bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, bitmap, table=_TABLE) is overturns
+
+
+def test_a_walk_that_filters_no_range_bound_is_not_overturned() -> None:
+    # Only a range bound on a tiny table makes the walk a costing artifact; an equality filter is no excuse.
+    walked = _index_scan(Filter="(state = 'ready')")
+    bitmap = {
+        "Node Type": "Bitmap Heap Scan",
+        "Relation Name": _TABLE,
+        "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "state_ix", "Index Cond": "(state = 'ready')"}],
+    }
+    assert bitmap_overturns_the_walk(walked, bitmap, table=_TABLE) is False
+
+
+def test_the_bitmap_is_judged_with_the_named_partial_indexes() -> None:
+    # A named partial index needs no Index Cond, for the verdict and the fallback alike; it must be named.
+    bitmap = {
+        "Node Type": "Bitmap Heap Scan",
+        "Relation Name": _TABLE,
+        "Plans": [
+            {"Node Type": "Bitmap Index Scan", "Index Name": "ready_due_ix", "Index Cond": "(available_at <= $1)"}
+        ],
+    }
+    named = {"ready_due_ix": frozenset({"state"})}
+    assert bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, bitmap, table=_TABLE, predicate_indexes=named)
+    unbounded = {**bitmap, "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "ready_due_ix"}]}
+    assert bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, unbounded, table=_TABLE, predicate_indexes=named)
+    assert not bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, unbounded, table=_TABLE)
+
+
+def test_a_plain_scan_on_a_named_partial_index_passes_when_its_filter_leaves_the_predicate_alone() -> None:
+    # The partial index holds only the owed states; the Filter drops the backlog not yet due. Same rule as a
+    # bitmap over a named partial index: the Filter must not re-test a column the predicate constrains.
+    named = {"owed_ix": frozenset({"status"})}
+    backlog = _index_scan(**{"Index Name": "owed_ix", "Filter": "(updated_at <= $1)"})
+    assert index_served_verdict(backlog, table=_TABLE, predicate_indexes=named) is None
+    assert index_served_verdict(backlog, table=_TABLE) is not None
+    re_tested = _index_scan(**{"Index Name": "owed_ix", "Filter": "((status = 'ready') AND (updated_at <= $1))"})
+    assert "filters on them again" in (index_served_verdict(re_tested, table=_TABLE, predicate_indexes=named) or "")
+
+
+def _bitmap(*inputs: dict[str, object], combine: str | None = None, **heap: object) -> dict[str, object]:
+    plans = [{"Node Type": combine, "Plans": list(inputs)}] if combine else list(inputs)
+    return {"Node Type": "Bitmap Heap Scan", "Relation Name": _TABLE, "Plans": plans, **heap}
+
+
+def _input(index: str, cond: str | None = None) -> dict[str, object]:
+    return {"Node Type": "Bitmap Index Scan", "Index Name": index, **({"Index Cond": cond} if cond else {})}
+
+
+@pytest.mark.parametrize(
+    ("bitmap", "overturns"),
+    [
+        # Each arm of an OR is read on its own: the state arm reads every ready row and still filters the due time.
+        (
+            _bitmap(
+                _input("due_ix", "(available_at <= $1)"),
+                _input("state_ix", "(state = 'ready')"),
+                combine="BitmapOr",
+                Filter="(available_at <= $1)",
+            ),
+            False,
+        ),
+        (
+            _bitmap(
+                _input("due_ix", "(available_at <= $1)"),
+                _input("due_state_ix", "((state = 'ready') AND (available_at <= $1))"),
+                combine="BitmapOr",
+            ),
+            True,
+        ),
+        # An AND is narrowed by every arm together.
+        (
+            _bitmap(
+                _input("due_ix", "(available_at <= $1)"), _input("state_ix", "(state = 'ready')"), combine="BitmapAnd"
+            ),
+            True,
+        ),
+        # A column named inside a string literal is not indexed.
+        (_bitmap(_input("kind_ix", "(kind = 'available_at <= soon')"), Filter="(available_at <= $1)"), False),
+    ],
+    ids=["or-arm-leaves-the-bound", "or-arms-each-bound", "and-arms-together", "literal-is-not-a-column"],
+)
+def test_every_arm_the_bitmap_reads_must_narrow_the_bound(bitmap: dict[str, object], overturns: bool) -> None:
+    assert bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, bitmap, table=_TABLE) is overturns
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "('2026-01-01 00:00:00+00'::timestamp with time zone >= available_at)",
+        "(available_at <= (now() - '00:05:00'::interval))",
+        "((available_at)::timestamp without time zone <= $1)",
+    ],
+    ids=["literal-on-the-left", "function-on-the-right", "cast-column"],
+)
+def test_the_range_bounded_column_is_read_on_either_side_of_its_operator(bound: str) -> None:
+    walked = _index_scan(Filter=f"((state = 'ready') AND {bound})")
+    assert bitmap_overturns_the_walk(walked, _BITMAP_OVER_THE_DUE_INDEX, table=_TABLE)
+    assert not bitmap_overturns_the_walk(walked, _BITMAP_OVER_A_STATE_INDEX_READING_EVERY_STATE, table=_TABLE)
+
+
+def test_a_bitmap_only_of_named_partial_indexes_overturns_the_walk() -> None:
+    # The verdict accepts it (the predicate narrows; the Filter drops only backlog), so the fallback must too.
+    named = {"owed_ix": frozenset({"state"})}
+    bitmap = _bitmap(_input("owed_ix"), Filter="(available_at <= $1)")
+    assert index_served_verdict(bitmap, table=_TABLE, predicate_indexes=named) is None
+    assert bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, bitmap, table=_TABLE, predicate_indexes=named)
+    assert not bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, bitmap, table=_TABLE)

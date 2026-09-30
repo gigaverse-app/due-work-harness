@@ -1,6 +1,6 @@
-import os
-
 from redis import Redis
 
-#: The self-tests' Redis database, emptied around every case: REDIS_URL, or database 14 on localhost.
-CONNECTION = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/14"))
+from tests.redis_databases import redis_url
+
+#: The self-tests' Redis database, emptied around every case; one per xdist worker.
+CONNECTION = Redis.from_url(redis_url("rq"))

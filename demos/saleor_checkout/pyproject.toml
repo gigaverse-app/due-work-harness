@@ -18,7 +18,7 @@ project-includes = ["."]
 project-excludes = ["**/__pycache__/**"]
 python-version = "3.12"
 python-platform = "linux"
-search-path = [".", "../.upstream/saleor", "../../src"]
+search-path = [".", "..", "../.upstream/saleor", "../../src"]
 
 # The demo as an adopter configures the coverage check: `due-work-harness check --root demos/saleor_checkout`.
 [tool.due-work-harness]

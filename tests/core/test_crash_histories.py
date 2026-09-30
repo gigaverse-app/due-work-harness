@@ -8,6 +8,7 @@ a commit hook, a repeated notification. Agreement alone is not a pass: an inert
 recovery fails the positive control.
 """
 
+import inspect
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -17,7 +18,9 @@ from due_work_harness.crash_histories import (
     CallableDelivery,
     ExternalCall,
     HandoffHistory,
+    HistoriesDiverged,
     assert_crash_at_every_commit_converges,
+    assert_histories_converge,
     assert_pinned_outcomes,
 )
 from due_work_harness.host import Host, hosted
@@ -179,3 +182,86 @@ def test_an_ordinary_error_raised_on_the_way_out_of_a_dead_worker_is_absorbed(le
     # history goes on to its verdict instead of erroring.
     with pytest.raises(AssertionError, match=r"'worker died after commit 1': \('retryable_failed', \(\)\)"):
         assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, _retry(ref.fail_with_split_handoff_in_a_session))
+
+
+def test_a_transition_that_changes_nothing_fails_the_positive_control_not_as_a_divergence(ledger_host: Host) -> None:
+    history = HandoffHistory(
+        name="heartbeat", arrange=ref.running_attempt, transition=ref.reconcile, observe=ref.attempt_and_successors
+    )
+    with pytest.raises(AssertionError, match="positive control failed") as raised:
+        assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, history)
+    assert not isinstance(raised.value, HistoriesDiverged)
+
+
+def test_a_divergence_is_always_a_histories_diverged(ledger_host: Host) -> None:
+    with pytest.raises(HistoriesDiverged, match=r"'worker died after commit 1'"):
+        assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, _retry(ref.fail_with_split_handoff))
+
+
+def test_an_observation_that_differs_between_clean_runs_is_refused_not_a_divergence(ledger_host: Host) -> None:
+    # The per-run identifier makes every history "diverge"; a known gap must not accept that.
+    history = _retry(ref.fail_with_atomic_handoff).model_copy(
+        update={"observe": lambda attempt: (attempt, *ref.attempt_and_successors(attempt))}
+    )
+    with pytest.raises(AssertionError, match="not deterministic") as raised:
+        assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, history)
+    assert not isinstance(raised.value, HistoriesDiverged)
+
+
+def test_an_assertion_inside_an_exception_group_after_an_injected_failure_is_never_absorbed(
+    replying_ledger_host: Host,
+) -> None:
+    with pytest.raises(ExceptionGroup) as raised:
+        assert_crash_at_every_commit_converges(
+            ref.COMPLETION_DELIVERY, _completion(ref.complete_grouping_its_assertion_on_error)
+        )
+    assert raised.value.subgroup(AssertionError) is not None
+
+
+def test_an_assertion_on_the_way_out_of_a_dead_worker_is_absorbed(ledger_host: Host) -> None:
+    # The cleanup's check fails only because the worker died under it; a dead process runs no cleanup.
+    assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, _retry(ref.fail_with_atomic_handoff_checking_in_cleanup))
+
+
+def test_a_death_inside_a_task_group_is_the_death(ledger_host: Host) -> None:
+    assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, _retry(ref.fail_with_atomic_handoff_in_a_task_group))
+
+
+def test_a_task_group_reporting_the_injected_failure_is_absorbed(replying_ledger_host: Host) -> None:
+    assert_crash_at_every_commit_converges(
+        ref.COMPLETION_DELIVERY, _completion(ref.complete_in_a_task_group_checking_on_error)
+    )
+
+
+def test_a_deliberate_translation_of_the_injected_failure_is_absorbed(replying_ledger_host: Host) -> None:
+    assert_crash_at_every_commit_converges(ref.COMPLETION_DELIVERY, _completion(ref.complete_translating_a_lost_reply))
+
+
+@pytest.mark.parametrize(
+    ("transition", "note"),
+    [
+        (ref.complete_raising_unchained_on_error, "while handling the injected failure"),
+        (ref.complete_raising_unlinked_after_error, "after the injected failure"),
+    ],
+    ids=["implicit-context-only", "unlinked"],
+)
+def test_an_error_not_chained_from_the_injected_failure_fails_the_history_with_a_note(
+    replying_ledger_host: Host, transition: Callable[[int], Any], note: str
+) -> None:
+    with pytest.raises(ref.CompletionUnconfirmed) as raised:
+        assert_crash_at_every_commit_converges(ref.COMPLETION_DELIVERY, _completion(transition))
+    notes = "\n".join(getattr(raised.value, "__notes__", ()))
+    assert note in notes, notes
+    assert "raise it from the failure" in notes, notes
+
+
+def test_a_group_with_a_death_raised_by_a_live_worker_is_refused(ledger_host: Host) -> None:
+    with pytest.raises(AssertionError, match="WorkerDied escaped from something other than the simulated death"):
+        assert_crash_at_every_commit_converges(
+            ref.RETRY_DELIVERY, _retry(ref.fail_with_atomic_handoff_then_a_group_with_its_own_death)
+        )
+
+
+def test_a_divergence_has_no_other_type_to_take() -> None:
+    # A gap's xfail accepts HistoriesDiverged alone; a caller-chosen type would let it accept anything.
+    assert "divergence" not in inspect.signature(assert_histories_converge).parameters
