@@ -25,7 +25,6 @@ from due_work_harness.contract import (
     NotApplicable,
     Profile,
     SafetyContract,
-    SafetyProfile,
 )
 from due_work_harness.references.in_memory import (
     assert_self_test_probe_fires,
@@ -92,7 +91,7 @@ def dispositions(**overrides: Any) -> dict[Profile, Any]:
 
 
 def safety_contract(name: str = "self-test contract") -> SafetyContract:
-    return SafetyContract(name=name, profiles={profile: NotApplicable(WHY) for profile in SafetyProfile})
+    return SafetyContract(name=name, profiles={profile: NotApplicable(WHY) for profile in (Profile.H, Profile.J)})
 
 
 #: A conforming contract the child-pytest specimens run end to end: profiles E
@@ -106,8 +105,11 @@ REFERENCE_CONTRACT = DueWorkContract(
         Profile.D: NotApplicable("self-test: nothing prunes"),
         Profile.E: Claim(),
         Profile.F: Claim(),
+        Profile.H: NotApplicable("Self-test has no external operation to replay."),
+        Profile.J: NotApplicable("Self-test has no retry execution budget."),
+        Profile.G: NotApplicable("Self-test has no execution gate."),
+        Profile.I: NotApplicable("Self-test has no admission command."),
     },
-    safety=safety_contract("in-memory reference"),
     snapshot=snapshot_binding,
     derivation=derivation_binding,
     extras=(

@@ -91,10 +91,9 @@ from due_work_harness import (
     HandoffHistory,
     KnownGap,
     NotApplicable,
+    NotAssessed,
     Profile,
     Retention,
-    SafetyContract,
-    SafetyProfile,
     assert_pinned_outcomes,
     due_work_contract_suite,
     due_work_database,
@@ -442,17 +441,15 @@ CHECKOUT_AS_SHIPPED = DueWorkContract(
             "no product state records that an order is still to be confirmed, so no recovery can derive the "
             "obligation the lost callback held"
         ),
+        Profile.H: Decline(
+            "nothing in Saleor replays a lost confirmation (profile A), so there is no replay to make safe"
+        ),
+        Profile.J: NotApplicable("the post-commit callbacks are not retried"),
+        Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
+        Profile.I: NotAssessed(
+            because="Standalone partial admission rollback have not been assessed for this adopter."
+        ),
     },
-    safety=SafetyContract(
-        name="saleor checkout",
-        adoption=Adoption.LEGACY,
-        profiles={
-            SafetyProfile.REPLAY_SAFE_EXECUTION: Decline(
-                "nothing in Saleor replays a lost confirmation (profile A), so there is no replay to make safe"
-            ),
-            SafetyProfile.BOUNDED_RETRY: NotApplicable("the post-commit callbacks are not retried"),
-        },
-    ),
     retention=retention_of_payments_api_checkouts,
     handoffs=(COMPLETE_CHECKOUT,),
     handoff_delivery=SALEOR,
@@ -683,8 +680,6 @@ CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
     transactional=True,
     fixtures=("saleor_shop", "automatic_completion"),
     profiles={
-        # Saleor's selection is built inline in its tick, so the sweep observes the query the
-        # tick evaluates instead of restating it (selection_built_by).
         Profile.A: Claim(
             gaps={
                 "assert_in_flight_work_is_not_duplicated": (
@@ -708,16 +703,13 @@ CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
         Profile.F: Decline(
             "the obligation is the fully paid checkout itself, which automatic completion selects from product state"
         ),
+        Profile.H: Decline("completing an already completed checkout returns its existing order"),
+        Profile.J: NotApplicable("automatic completion retries on the beat schedule, unbounded"),
+        Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
+        Profile.I: NotAssessed(
+            because="Standalone partial admission rollback have not been assessed for this adopter."
+        ),
     },
-    safety=SafetyContract(
-        name="saleor checkout, Transactions API with automatic completion",
-        profiles={
-            SafetyProfile.REPLAY_SAFE_EXECUTION: Decline(
-                "completing an already completed checkout returns its existing order"
-            ),
-            SafetyProfile.BOUNDED_RETRY: NotApplicable("automatic completion retries on the beat schedule, unbounded"),
-        },
-    ),
     sweep=automatic_completion_sweep,
     retention=retention_of_transactions_checkouts,
     handoffs=(COMPLETE_PAID_CHECKOUT,),

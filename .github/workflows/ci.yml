@@ -60,6 +60,16 @@ jobs:
       - run: uv run --no-sync python scripts/check_core_is_framework_free.py
       - run: uv run --no-sync pytest tests/core
 
+  exploration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked --no-default-groups --extra exploration --group xdist
+      - run: uv run --no-sync pytest tests/core
+
   django:
     runs-on: ubuntu-latest
     services:

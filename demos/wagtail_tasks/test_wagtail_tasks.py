@@ -52,9 +52,8 @@ from due_work_harness import (
     HandoffHistory,
     KnownGap,
     NotApplicable,
+    NotAssessed,
     Profile,
-    SafetyContract,
-    SafetyProfile,
     due_work_contract_suite,
 )
 from due_work_harness.crash_histories import ExternalCall
@@ -175,15 +174,13 @@ WAGTAIL_MEDIA = DueWorkContract(
             "no product state records that a file is still to be deleted once its row is gone, so no recovery "
             "can derive the obligation"
         ),
+        Profile.H: NotApplicable("a repeated deletion deletes nothing"),
+        Profile.J: NotApplicable(WHY_NO_RETRY),
+        Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
+        Profile.I: NotAssessed(
+            because="Standalone partial admission rollback have not been assessed for this adopter."
+        ),
     },
-    safety=SafetyContract(
-        name="wagtail: deleting an image or a document",
-        adoption=Adoption.LEGACY,
-        profiles={
-            SafetyProfile.REPLAY_SAFE_EXECUTION: NotApplicable("a repeated deletion deletes nothing"),
-            SafetyProfile.BOUNDED_RETRY: NotApplicable(WHY_NO_RETRY),
-        },
-    ),
     handoffs=(DELETE_IMAGE, DELETE_DOCUMENT),
     handoff_delivery=WORKER,
     handoff_gaps={
@@ -285,15 +282,13 @@ WAGTAIL_PUBLISHING = DueWorkContract(
             "no product state records that a published page is still to be purged, so no recovery can derive "
             "the obligation"
         ),
+        Profile.H: NotApplicable("a repeated purge purges nothing new"),
+        Profile.J: NotApplicable(f"{RUNS_ONCE}, so a CDN error fails the purge"),
+        Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
+        Profile.I: NotAssessed(
+            because="Standalone partial admission rollback have not been assessed for this adopter."
+        ),
     },
-    safety=SafetyContract(
-        name="wagtail: publishing a page behind a CDN",
-        adoption=Adoption.LEGACY,
-        profiles={
-            SafetyProfile.REPLAY_SAFE_EXECUTION: NotApplicable("a repeated purge purges nothing new"),
-            SafetyProfile.BOUNDED_RETRY: NotApplicable(f"{RUNS_ONCE}, so a CDN error fails the purge"),
-        },
-    ),
     handoffs=(PUBLISH_PAGE,),
     handoff_delivery=WORKER,
     handoff_gaps={

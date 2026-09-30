@@ -28,6 +28,7 @@ classifiers = [
 dependencies = ["pytest>=8", "pydantic>=2.9"]
 
 [project.optional-dependencies]
+exploration = ["hypothesis>=6.112"]
 django = ["django>=4.2", "pytest-django>=4.8", "psycopg[binary]>=3.1", "time-machine>=2.10"]
 celery = ["celery>=5.3"]
 procrastinate = ["procrastinate>=3.0"]

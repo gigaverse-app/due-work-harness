@@ -50,9 +50,8 @@ from due_work_harness.contract import (
     Decline,
     DueWorkContract,
     NotApplicable,
+    NotAssessed,
     Profile,
-    SafetyContract,
-    SafetyProfile,
 )
 from due_work_harness.crash_histories import Findings
 from due_work_harness.helpers import wait_until
@@ -219,19 +218,18 @@ def worker_contract(
             Profile.D: NotApplicable(RESULTS_ARE_NOT_OWED),
             Profile.E: settled_by_one_worker("delivery"),
             Profile.F: the_obligation_is_the("message"),
+            Profile.H: replay_safety_is_the_functions(
+                "task", "Celery", runs_again="with task_acks_late, a redelivery after its worker was lost"
+            ),
+            Profile.J: Decline(
+                "a task's retries are its own (self.retry, autoretry_for); a redelivery after a lost worker is "
+                "not counted as one"
+            ),
+            Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
+            Profile.I: NotAssessed(
+                because="Standalone partial admission rollback have not been assessed for this adopter."
+            ),
         },
-        safety=SafetyContract(
-            name=name,
-            profiles={
-                SafetyProfile.REPLAY_SAFE_EXECUTION: replay_safety_is_the_functions(
-                    "task", "Celery", runs_again="with task_acks_late, a redelivery after its worker was lost"
-                ),
-                SafetyProfile.BOUNDED_RETRY: Decline(
-                    "a task's retries are its own (self.retry, autoretry_for); a redelivery after a lost worker is "
-                    "not counted as one"
-                ),
-            },
-        ),
         process_handoffs=(history,),
         handoff_gaps={history.name: gap} if gap is not None else {},
         fixtures=fixtures,

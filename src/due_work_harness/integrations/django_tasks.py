@@ -35,9 +35,8 @@ from due_work_harness.contract import (
     ExtraProof,
     KnownGap,
     NotApplicable,
+    NotAssessed,
     Profile,
-    SafetyContract,
-    SafetyProfile,
 )
 from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, Findings, HandoffHistory
 from due_work_harness.gap_probes import MissingReclaim
@@ -239,15 +238,13 @@ def worker_contract(
             Profile.D: Claim(),
             Profile.E: task_queues.settled_by_one_worker("task"),
             Profile.F: task_queues.the_obligation_is_the("task row"),
+            Profile.H: NotApplicable("django-tasks-db never replays a task"),
+            Profile.J: NotApplicable(RUNS_ONCE),
+            Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
+            Profile.I: NotAssessed(
+                because="Standalone partial admission rollback have not been assessed for this adopter."
+            ),
         },
-        safety=SafetyContract(
-            name=name,
-            adoption=Adoption.LEGACY,
-            profiles={
-                SafetyProfile.REPLAY_SAFE_EXECUTION: NotApplicable("django-tasks-db never replays a task"),
-                SafetyProfile.BOUNDED_RETRY: NotApplicable(RUNS_ONCE),
-            },
-        ),
         retention=lambda: retention(enqueue=enqueue, min_age_days=min_age_days),
         handoffs=(history,),
         handoff_delivery=delivery or CallableDelivery(name=f"{name}: db_worker", recover=db_worker_once()),

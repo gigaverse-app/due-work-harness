@@ -20,7 +20,7 @@ import pydantic
 import pytest
 
 from due_work_harness.models import DueWorkContractDesignError
-from due_work_harness.profiles.execution_eligibility import (
+from due_work_harness.profiles.gated_execution import (
     ELIGIBILITY_PROOFS,
     ExecutionGate,
     assert_blocked_gate_preserves_intent,

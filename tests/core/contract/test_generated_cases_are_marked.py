@@ -2,7 +2,7 @@
 
 from due_work_harness import due_work_contract_suite, safety_contract_suite
 
-from .declarations import REFERENCE_CONTRACT
+from .declarations import REFERENCE_CONTRACT, safety_contract
 
 
 def _marks(cls: type, name: str) -> set[str]:
@@ -14,9 +14,7 @@ def test_contract_and_safety_suites_are_marked_due_work() -> None:
     class TestReference:
         pass
 
-    assert REFERENCE_CONTRACT.safety is not None
-
-    @safety_contract_suite(REFERENCE_CONTRACT.safety)
+    @safety_contract_suite(safety_contract())
     class TestReferenceSafety:
         pass
 

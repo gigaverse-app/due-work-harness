@@ -2,15 +2,15 @@
 
 import pytest
 
-from due_work_harness.references.in_memory import (
-    InMemoryReplayEffect,
-    reference_replay_safety_binding,
-)
-from due_work_harness.safety.replay_safe_execution import (
+from due_work_harness.profiles.harmless_replay import (
     assert_first_execution_has_visible_effect,
     assert_replay_converges,
     assert_replay_safety_contract,
     assert_replay_transition_is_production_bound,
+)
+from due_work_harness.references.in_memory import (
+    InMemoryReplayEffect,
+    reference_replay_safety_binding,
 )
 
 

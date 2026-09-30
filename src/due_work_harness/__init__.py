@@ -35,6 +35,7 @@ from due_work_harness.contract import (
     Adoption,
     Claim,
     ContractCase,
+    ConvergenceFamily,
     Decline,
     DueWorkContract,
     DueWorkContractDesignError,
@@ -42,9 +43,9 @@ from due_work_harness.contract import (
     ExtraProof,
     KnownGap,
     NotApplicable,
+    NotAssessed,
     Profile,
     SafetyContract,
-    SafetyProfile,
     ScheduledSelection,
     contract_cases,
     contract_report,
@@ -121,27 +122,30 @@ from due_work_harness.profiles.eventual_convergence import (
     assert_superseded_snapshot_contract,
     assert_superseded_snapshot_does_not_write,
 )
-from due_work_harness.profiles.execution_eligibility import (
-    ELIGIBILITY_PROOFS,
-    ExecutionGate,
-)
 from due_work_harness.profiles.fact_derived_obligations import (
     STATE_DERIVED_PROOFS,
     StateDerived,
     assert_state_derived_contract,
 )
-from due_work_harness.safety.bounded_retry import (
-    BOUNDED_RETRY_PROOFS,
-    BoundedRetry,
-    assert_bounded_retry_contract,
+from due_work_harness.profiles.gated_execution import (
+    ELIGIBILITY_PROOFS,
+    ExecutionGate,
 )
-from due_work_harness.safety.replay_safe_execution import (
+from due_work_harness.profiles.harmless_replay import (
     REPLAY_SAFETY_PROOFS,
     ReplaySafeEffect,
     assert_replay_safety_contract,
 )
+from due_work_harness.profiles.indivisible_admission import AdmissionAtomicity, AdmissionPublication
+from due_work_harness.profiles.job_retry_limits import (
+    BOUNDED_RETRY_PROOFS,
+    BoundedRetry,
+    assert_bounded_retry_contract,
+)
 
 __all__ = [
+    "AdmissionAtomicity",
+    "AdmissionPublication",
     "__version__",
     "exempt_due_work_suite",
     # Contract layer.
@@ -157,7 +161,8 @@ __all__ = [
     "NotApplicable",
     "Profile",
     "SafetyContract",
-    "SafetyProfile",
+    "NotAssessed",
+    "ConvergenceFamily",
     "ScheduledSelection",
     "contract_cases",
     "contract_report",

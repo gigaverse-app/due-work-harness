@@ -43,7 +43,6 @@ from due_work_harness.contract import (
     contract_cases,
     contract_report,
     due_work_contract_suite,
-    safety_contract_cases,
     scheduled_selection_cases,
     suite_cases,
 )
@@ -56,11 +55,11 @@ from due_work_harness.gap_probes import (
 from due_work_harness.host import Host
 from due_work_harness.process_histories import ProcessHistory
 from due_work_harness.profiles.automatic_recovery import assert_in_flight_work_is_not_redispatched
-from due_work_harness.profiles.execution_eligibility import ELIGIBILITY_PROOFS
 from due_work_harness.profiles.fact_derived_obligations import (
     StateDerived,
     assert_unrecorded_obligation_is_discovered,
 )
+from due_work_harness.profiles.gated_execution import ELIGIBILITY_PROOFS
 from due_work_harness.references import in_memory_handoffs
 from due_work_harness.references.eligibility import SCHEDULER, GateReference, reference_gate, reference_sweep
 from due_work_harness.references.in_memory import (
@@ -79,7 +78,6 @@ from tests.core.contract.declarations import (
     annotated_never_built,
     derivation_binding,
     dispositions,
-    safety_contract,
     snapshot_binding,
 )
 
@@ -99,7 +97,7 @@ def test_meaningful_profile_names_are_aliases_of_the_letters() -> None:
     }
 
     assert all(meaningful is letter for meaningful, letter in aliases.items())
-    assert [profile.name for profile in Profile] == ["A", "B", "C", "D", "E", "F"]
+    assert [profile.name for profile in Profile] == list("ABCDEFGHIJ")
 
 
 # Design validation.
@@ -110,7 +108,6 @@ def _contract(**overrides: Any) -> DueWorkContract:
     arguments: dict[str, Any] = {
         "name": "self-test contract",
         "profiles": dispositions(F=Claim()),
-        "safety": safety_contract(),
         "derivation": derivation_binding,
     }
     arguments.update(overrides)
@@ -121,14 +118,10 @@ def test_a_complete_declaration_constructs() -> None:
     _contract()
 
 
-def test_a_due_work_adopter_cannot_omit_the_safety_profiles() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="no safety contract declares"):
-        _contract(safety=None)
-
-
-def test_the_safety_contract_must_describe_the_same_domain() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="the declarations must describe the same domain"):
-        _contract(safety=safety_contract("another domain"))
+@pytest.mark.parametrize("profile", [Profile.H, Profile.J])
+def test_a_due_work_adopter_cannot_omit_the_safety_profiles(profile: Profile) -> None:
+    with pytest.raises(DueWorkContractDesignError, match=f"no disposition for profile\\(s\\) {profile.name}"):
+        _contract(profiles={p: d for p, d in dispositions(F=Claim()).items() if p is not profile})
 
 
 def test_an_omitted_profile_is_a_design_error() -> None:
@@ -407,12 +400,12 @@ def test_the_report_names_every_disposition() -> None:
         ),
     )
     report = contract_report(contract)
-    assert "Profile A (due-work recovery): known gap — no sweep exists" in report
-    assert "Profile B (fenced ownership): declined — no ownership surface" in report
-    assert "Profile D (retention): not applicable" in report
+    assert "Profile A — Automatic Recovery: known gap — no sweep exists" in report
+    assert "Profile B — Bounded Ownership: declined — no ownership surface" in report
+    assert "Profile D — Durable Retention: not applicable" in report
     assert "1 known gap(s): assert_stopped_work_is_not_revived" in report
-    assert "Safety REPLAY_SAFE_EXECUTION (replay-safe execution): not applicable" in report
-    assert "Safety BOUNDED_RETRY (bounded retry): not applicable" in report
+    assert "Profile H — Harmless Replay: not applicable" in report
+    assert "Profile J — Job Retry Limits: not applicable" in report
 
 
 def test_scheduled_selection_cases_cover_the_selection_proofs() -> None:
@@ -1141,14 +1134,11 @@ def test_suite_cases_are_exactly_what_pytest_collects_from_the_generated_suite()
     assert code == pytest.ExitCode.OK, output
     collected = re.findall(r"::test_due_work_contract\[(.+)\]$", output, flags=re.MULTILINE)
     assert collected == [param.id for param in suite_cases(REFERENCE_CONTRACT)], output
-    assert REFERENCE_CONTRACT.safety is not None
-    safety = [param.id for param in safety_contract_cases(REFERENCE_CONTRACT.safety)]
-    assert safety and collected[-len(safety) :] == safety
 
 
 def test_the_conforming_reference_suite_passes_every_generated_case() -> None:
     outcomes, output, code = _run_reference_cases("conforming")
-    assert outcomes == {"passed": _generated_case_count()}, output
+    assert outcomes == {"passed": _generated_case_count() - 3, "xfailed": 3}, output
     assert code == pytest.ExitCode.OK, output
 
 
@@ -1381,11 +1371,11 @@ def _eligibility_case_ids(prefix: str) -> set[str]:
 
 def test_a_contract_generates_and_reports_eligibility_without_work_tables() -> None:
     contract = _contract(
-        profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=reference_gate, derivation=None
+        profiles=dispositions(A=Claim(), G=Claim()), sweep=reference_sweep, eligibility=reference_gate, derivation=None
     )
     cases = [param.values[0] for param in contract_cases(contract) if param.id.startswith("eligibility-")]
     assert {case.id for case in cases} == _eligibility_case_ids("eligibility")
-    assert "Eligibility: claimed" in contract_report(contract)
+    assert "Profile G — Gated Execution: claimed" in contract_report(contract)
     for case in cases:
         case.run()
 
@@ -1399,7 +1389,10 @@ def test_a_generated_eligibility_case_fails_a_scheduler_that_breaks_its_proof() 
         return GateReference(fault="hot_loop").binding()
 
     contract = _contract(
-        profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=hot_looping_gate, derivation=None
+        profiles=dispositions(A=Claim(), G=Claim()),
+        sweep=reference_sweep,
+        eligibility=hot_looping_gate,
+        derivation=None,
     )
     cases = _params_by_id(contract_cases(contract))
     with pytest.raises(AssertionError, match="hot-loops"):
@@ -1416,7 +1409,10 @@ def test_a_generated_case_ties_the_gate_to_the_contracts_own_sweep() -> None:
         return reference_gate().model_copy(update={"recover": SCHEDULER.complete_directly})
 
     contract = _contract(
-        profiles=dispositions(A=Claim()), sweep=reference_sweep, eligibility=gate_recovered_elsewhere, derivation=None
+        profiles=dispositions(A=Claim(), G=Claim()),
+        sweep=reference_sweep,
+        eligibility=gate_recovered_elsewhere,
+        derivation=None,
     )
     case = _params_by_id(contract_cases(contract))[f"eligibility-{_SWEEP_TIED}"]
     with pytest.raises(AssertionError, match="recover never dispatched 'obligation' through the contract sweep"):
@@ -1432,7 +1428,7 @@ def test_eligibility_cannot_claim_recovery_without_a_sweep() -> None:
 def test_every_eligibility_variant_is_generated_and_reported(named: bool) -> None:
     variants = {"active_owner": reference_gate, "unsettled_dependency": reference_gate}
     contract = _contract(
-        profiles=dispositions(A=Claim()),
+        profiles=dispositions(A=Claim(), G=Claim()),
         sweep=reference_sweep,
         eligibility=variants if named else reference_gate,
         derivation=None,
@@ -1452,7 +1448,12 @@ def test_every_eligibility_variant_is_generated_and_reported(named: bool) -> Non
 )
 def test_eligibility_variant_names_cannot_silently_drop_coverage(variants: dict[str, Any]) -> None:
     with pytest.raises(DueWorkContractDesignError, match="eligibility.*(empty|name)"):
-        _contract(profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=variants, derivation=None)
+        _contract(
+            profiles=dispositions(A=Claim(), G=Claim()),
+            sweep=annotated_never_built,
+            eligibility=variants,
+            derivation=None,
+        )
 
 
 def test_an_eligibility_binding_without_adopter_annotations_is_refused() -> None:
@@ -1463,13 +1464,16 @@ def test_an_eligibility_binding_without_adopter_annotations_is_refused() -> None
         DueWorkContractDesignError, match="the eligibility binding is missing adopter evidence annotations"
     ):
         _contract(
-            profiles=dispositions(A=Claim()), sweep=annotated_never_built, eligibility=unannotated_gate, derivation=None
+            profiles=dispositions(A=Claim(), G=Claim()),
+            sweep=annotated_never_built,
+            eligibility=unannotated_gate,
+            derivation=None,
         )
 
 
 def test_eligibility_cases_carry_the_hosts_database_marks(marking_host: Host) -> None:
     contract = _contract(
-        profiles=dispositions(A=Claim()),
+        profiles=dispositions(A=Claim(), G=Claim()),
         sweep=annotated_never_built,
         eligibility=reference_gate,
         derivation=None,

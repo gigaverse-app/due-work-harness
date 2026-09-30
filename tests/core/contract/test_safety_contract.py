@@ -11,8 +11,8 @@ from due_work_harness.contract import (
     DueWorkContractDesignError,
     KnownGap,
     NotApplicable,
+    Profile,
     SafetyContract,
-    SafetyProfile,
     safety_contract_cases,
 )
 from due_work_harness.host import Host
@@ -24,10 +24,10 @@ from due_work_harness.references.in_memory import (
 _WHY = "self-test reason"
 
 
-def _dispositions(**overrides: Any) -> dict[SafetyProfile, Any]:
-    complete: dict[SafetyProfile, Any] = {profile: NotApplicable(_WHY) for profile in SafetyProfile}
+def _dispositions(**overrides: Any) -> dict[Profile, Any]:
+    complete: dict[Profile, Any] = {profile: NotApplicable(_WHY) for profile in (Profile.H, Profile.J)}
     for key, value in overrides.items():
-        complete[SafetyProfile[key]] = value
+        complete[Profile[{"REPLAY_SAFE_EXECUTION": "H", "BOUNDED_RETRY": "J"}.get(key, key)]] = value
     return complete
 
 
@@ -68,10 +68,10 @@ def test_autocommit_safety_contract_marks_execution_proofs_transactionally(marki
 
 
 def test_a_safety_declaration_requires_every_profile_disposition() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="no disposition for safety profile"):
+    with pytest.raises(DueWorkContractDesignError, match="no disposition for profile"):
         SafetyContract(
             name="self-test safety",
-            profiles={SafetyProfile.REPLAY_SAFE_EXECUTION: Claim()},
+            profiles={Profile.H: Claim()},
             replay=_annotated_replay,
         )
 
@@ -82,9 +82,7 @@ def test_a_claim_requires_its_binding() -> None:
 
 
 def test_a_binding_without_a_claim_is_a_design_error() -> None:
-    with pytest.raises(
-        DueWorkContractDesignError, match="REPLAY_SAFE_EXECUTION is NotApplicable but `replay=` is bound"
-    ):
+    with pytest.raises(DueWorkContractDesignError, match="H is NotApplicable but `replay=` is bound"):
         SafetyContract(name="self-test safety", profiles=_dispositions(), replay=_annotated_replay)
 
 

@@ -151,14 +151,14 @@ points with `os._exit`, restarts it the way production would, and applies the
 same verdict. That is how the DBOS demo above works; a contract declares such
 histories as `process_handoffs`, beside `handoffs`.
 
-## Six ways due work goes missing: lifecycle profiles
+## Ten guarantees: profiles A–J
 
 Every domain adoption **must** use `DueWorkContract` and
 `@due_work_contract_suite(CONTRACT)`; standalone histories or ordinary tests do
 not complete adoption. See [the required adoption shape](ADOPTING.md#required-adoption-shape).
 A crash history proves one handoff. A declarative `DueWorkContract` binds your
 production selection, tick and transitions, and asks for a disposition (claim,
-decline with a reason, not applicable, or known gap) for each of six profiles:
+decline with a reason, not applicable, known gap, or not assessed) for each profile:
 
 | Profile | The question it answers |
 | --- | --- |
@@ -169,11 +169,21 @@ decline with a reason, not applicable, or known gap) for each of six profiles:
 | **E** eventual convergence | When a result lands late, can it overwrite a newer one? |
 | **F** fact-derived obligations | Can product state imply work nothing recorded, and is it still found? |
 
-Every contract also disposes of two execution-safety profiles: replay safety and
-bounded retry. Work that is owed but blocked by a product decision (a dependency
-that has not settled, an owner still active) can declare an `ExecutionGate`
-as `eligibility=`: blocked work must stay owed and untouched, and once eligible
-it must complete by recovery alone, even with the readiness notification lost.
+| **G** gated execution | Does blocked work stay owed and untouched, then recover once eligible without its notification? |
+| **H** harmless replay | Does executing the same logical operation twice converge to one visible effect? |
+| **I** indivisible admission | Does a standalone command commit intent and work together, or roll both back after partial writes? |
+| **J** job retry limits | Does failing work exhaust exactly its execution budget and remain terminal? |
+
+Profile E includes independently assessed stale-snapshot, monotonic-result,
+in-flight and evidence-confluence families. Bind competing-event scenarios once
+and the harness generates deterministic histories; optional Hypothesis explores
+and shrinks additional schedules. See [interleavings](docs/interleavings.md).
+
+`NotAssessed` emits a strict XFAIL with a remediation reason. It records unfinished
+assessment, not a demonstrated production bug. A passing sibling profile or family
+cannot clear that debt. Use `--due-work-profile-report=profiles.json` to distinguish
+claims from fully executed evidence, including filters, teardown failures and xdist.
+
 Read [what a green result means](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/what-a-green-result-means.md)
 before you treat a pass as a guarantee.
 
