@@ -45,6 +45,7 @@ from due_work_harness.contract import (
     due_work_contract_suite,
     safety_contract_cases,
     scheduled_selection_cases,
+    suite_cases,
 )
 from due_work_harness.crash_histories import CallableDelivery, Findings, HandoffHistory, HistoriesDiverged
 from due_work_harness.gap_probes import (
@@ -1130,8 +1131,27 @@ def _run_reference_cases(mode: str, *selection: str) -> tuple[dict[str, int], st
 
 
 def _generated_case_count() -> int:
+    return len(suite_cases(REFERENCE_CONTRACT))
+
+
+def test_suite_cases_are_exactly_what_the_suite_decorator_generates() -> None:
+    # The public list an adopter can count or filter is the one the decorator installs, covered cases included.
+    source = DueWorkSource(_reference_due_work_source, unrecoverable_because=WHY)
+
+    @due_work_contract_suite(REFERENCE_CONTRACT, covers=(source,))
+    class Generated:
+        pass
+
+    installed = [
+        param.id
+        # The generated method is installed at run time, so the checker cannot see it on the class.
+        for mark in vars(Generated)["test_due_work_contract"].pytestmark
+        if mark.name == "parametrize"
+        for param in mark.args[1]
+    ]
+    assert installed == [param.id for param in suite_cases(REFERENCE_CONTRACT, covers=(source,))]
     assert REFERENCE_CONTRACT.safety is not None
-    return len(contract_cases(REFERENCE_CONTRACT)) + len(safety_contract_cases(REFERENCE_CONTRACT.safety))
+    assert {param.id for param in safety_contract_cases(REFERENCE_CONTRACT.safety)} <= set(installed)
 
 
 def test_the_conforming_reference_suite_passes_every_generated_case() -> None:

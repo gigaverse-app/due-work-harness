@@ -54,6 +54,7 @@ from due_work_harness.contract import (
     safety_contract_suite,
     scheduled_selection_cases,
     scheduled_selection_suite,
+    suite_cases,
 )
 from due_work_harness.crash_histories import (
     CallableDelivery,
@@ -166,6 +167,7 @@ __all__ = [
     "safety_contract_suite",
     "scheduled_selection_cases",
     "scheduled_selection_suite",
+    "suite_cases",
     # Host.
     "Host",
     "SelectionInspector",
