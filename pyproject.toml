@@ -37,6 +37,7 @@ rq = ["rq>=2.6", "redis>=5.0", "time-machine>=2.10"]
 # The wire adapter binds PyMongo's 4.x connection API; 4.18 replaced its bulk-write boundary.
 mongodb = ["pymongo>=4.9,<4.18", "motor>=3.7,<4"]
 prefect = ["prefect>=3.7,<3.8"]
+kafka = ["aiokafka>=0.12,<0.15"]
 
 [project.urls]
 Homepage = "https://github.com/gigaverse-app/due-work-harness"
