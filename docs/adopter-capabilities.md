@@ -10,15 +10,16 @@ A Decline or known gap remains unverified. A report covers collected suites only
 | Adopter | New executable adoption | Scope and remaining guarantees |
 | --- | --- | --- |
 | [SQLite catalog](../examples/adopter/README.md) | G/H/I; E revisions, retirement, transport, receipts, batches, separate connections, retry turnover; optional Hypothesis and JSON replay | Full demonstration of the new engines on persisted application state; no periodic scheduler or lease claim |
-| RQ integration | Same application bindings through Redis + SimpleWorker; H on the existing message job | Message replay exposes duplicate sends as a strict gap; existing ownership/retry/crash findings remain pinned |
+| RQ integration | Same application bindings through Redis + SimpleWorker; H on the existing message job; G with one and two real dependencies | Message replay exposes duplicate sends as a strict gap; existing ownership/retry/crash findings remain pinned |
 | Celery integration | Same application bindings through Redis and a real Celery solo worker; H on the existing message task | Deterministic interleavings do not claim broker scheduling; the existing prefork process suite checks actual worker deaths and callbacks |
 | Prefect integration | Same bindings through the actual Prefect flow engine and isolated API server | Flow execution and application invariants; deployment delivery remains outside this local test |
 | Django integration | I against real PostgreSQL atomic and nested transactions, split-commit negative controls | Shared SQL-boundary fault adapter never supplies a transaction or rollback |
-| Procrastinate Django demo | I on the real create-book view | Split admission fails; the existing ATOMIC_REQUESTS variant passes. Existing H/J/B/D remain executable; no product readiness gate or mutable-result merge |
-| DBOS transactional outbox | I on real order INSERT + SQL workflow enqueue | Interruption observes both uncommitted writes on the actual connection, then verifies rollback outside it. Existing process deaths, D and J remain; no post-admission gate |
-| Wagtail media | I on both image and document deletion | Product/task split commits remain strict gaps; deletion is immediately eligible |
-| Wagtail publishing | I on page publication and H on the real CDN purge task | Split commit is a strict gap; repeated invalidation is harmless and measured independently from call count |
+| Procrastinate Django demo | I on the real create-book view; commit-death histories for index_book's follow-up admission | Split admission fails; the existing ATOMIC_REQUESTS variant passes. Existing H/J/B/D remain executable; no product readiness gate or mutable-result merge |
+| DBOS transactional outbox | I on real order INSERT + SQL workflow enqueue; H on the actual notification step | Atomic admission passes; replaying the step duplicates the notification. Existing process deaths, D and J remain; no post-admission gate |
+| Wagtail media | I on image/document deletion; H/J separately for image, document and feature detection; E on stale crop calculation | Product/task split commits and stale crop overwrite remain strict gaps; deletion is immediately eligible |
+| Wagtail publishing | I on page publication; H/J on the real CDN purge task | Split commit is a strict gap; repeated invalidation is harmless; persistent CDN failure exhausts execution |
 | Saleor checkout, both payment variants | H confirmation replay and executable I gap probes with real crash histories and confirmation observations | After-commit obligations lack durable admission. Automatic completion protects the paid order but still loses confirmation. No invented obligation before payment |
+| Saleor payment reports | E charge/refund evidence, duplicate delivery, recovery, separate actors and optional Hypothesis; I commit interruption; overlapping request regression | Sequential evidence histories pass. Interrupted projection and overlapping aggregate writes leave incorrect money even after redelivery |
 | MongoDB/Motor, aiokafka | Existing real-server driver/offset fault controls continue in CI | These are host/protocol controls, not application contracts. A driver cannot supply product intent, desired revisions, evidence or approval predicates; the application supplies those bindings |
 
 Framework worker factories explicitly decline application-owned admission and
@@ -32,11 +33,10 @@ claimed, the additional G/A proof still requires the gate's recovery to dispatch
 its identity through the contract's actual sweep. Existing negative controls
 continue to reject an unrelated recovery implementation.
 
-The upstream examples do not have mutable remote revisions or a partial-evidence
-merge API where one is absent. Their concrete E reasons remain explicit; the
-catalog demonstrates those scenarios rather than binding a reference state
-machine and calling it an upstream guarantee.
-
+Application-specific E bindings cover Wagtail's stale snapshot and Saleor's
+payment evidence. Other E families retain explicit reasons where the application
+has no corresponding lifecycle. The catalog demonstrates the remaining generated
+scenarios without claiming they prove an upstream application's behavior.
 
 ## Deeper application coverage
 

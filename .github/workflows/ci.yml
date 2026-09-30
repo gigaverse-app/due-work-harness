@@ -327,6 +327,7 @@ jobs:
           uv run --no-sync python scripts/check_adoption_report.py profiles-procrastinate.json --contract "procrastinate demo_django: create book" --contract "procrastinate demo_django: create book, with its fixes" --exercised I
           uv run --no-sync python scripts/check_adoption_report.py profiles-dbos.json --contract "DBOS transactional-outbox: place order" --verified I --exercised H J
           uv run --no-sync python scripts/check_adoption_report.py demos/wagtail_tasks/profiles-wagtail.json --contract "wagtail: image and document lifecycle" --contract "wagtail: publishing a page behind a CDN" --exercised I --verified H J
+          uv run --no-sync python scripts/check_adoption_report.py demos/wagtail_tasks/profiles-wagtail.json --contract "wagtail: image and document lifecycle" --exercised E
       - name: Keep executed profile evidence
         if: always()
         uses: actions/upload-artifact@v4
