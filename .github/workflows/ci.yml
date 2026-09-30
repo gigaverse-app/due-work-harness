@@ -153,10 +153,21 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --locked --no-default-groups --extra rq --extra celery --group xdist
+      - run: uv sync --locked --no-default-groups --extra rq --extra celery --extra exploration --group xdist
       # Each xdist worker takes its own four Redis databases (tests/redis_databases.py), so cases that
       # empty theirs cannot wipe another worker's; four workers use all 16 of the service's databases.
-      - run: uv run --no-sync pytest tests/rq tests/celery_worker -p no:django -rxX -n 4 --durations=10
+      - run: uv run --no-sync pytest tests/rq tests/celery_worker -p no:django -rxX -n 4 --durations=10 --due-work-explore=smoke --due-work-require-assessed --due-work-profile-report=profiles-redis.json
+
+      - name: Keep executed profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiles-redis
+          path: |
+            profiles-*.json
+            demos/**/profiles-*.json
+          if-no-files-found: error
+
 
   mongodb:
     runs-on: ubuntu-latest
@@ -214,8 +225,19 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --locked --no-default-groups --extra prefect
-      - run: uv run --no-sync pytest tests/prefect -q
+      - run: uv sync --locked --no-default-groups --extra prefect --extra exploration
+      - run: uv run --no-sync pytest tests/prefect -q --due-work-explore=smoke --due-work-require-assessed --due-work-profile-report=profiles-prefect.json
+
+      - name: Keep executed profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiles-prefect
+          path: |
+            profiles-*.json
+            demos/**/profiles-*.json
+          if-no-files-found: error
+
 
   demos:
     runs-on: ubuntu-latest
@@ -254,9 +276,9 @@ jobs:
           PGDATABASE: procrastinate_demo
         run: >-
           uv run --no-sync pytest demos/procrastinate_demo_django --ds=demos.procrastinate_demo_django.settings
-          -rxX --durations=15
+          -rxX --durations=15 --due-work-require-assessed --due-work-profile-report=profiles-procrastinate.json
       - name: DBOS transactional-outbox
-        run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX --durations=15
+        run: uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django -rxX --durations=15 --due-work-require-assessed --due-work-profile-report=profiles-dbos.json
       # Migrating Wagtail's test database is most of its run, and depends only on the pinned packages
       # (uv.lock) and the demo's settings: restored from the cached dump when the key matches.
       - uses: actions/cache@v4
@@ -274,7 +296,7 @@ jobs:
         working-directory: demos/wagtail_tasks
         env:
           PGDATABASE: wagtail_tasks
-        run: uv run --no-sync --project ../.. pytest --reuse-db --due-work-verify --durations=15
+        run: uv run --no-sync --project ../.. pytest --reuse-db --due-work-verify --durations=15 --due-work-require-assessed --due-work-profile-report=profiles-wagtail.json
       - name: the README's demo GIF prints what the harness prints
         run: uv run --no-sync pytest demos/test_readme_gif.py -p no:django --durations=15
       # Each demo is an adopter: its handoffs are checked the way an adopter's CI checks them.
@@ -293,6 +315,17 @@ jobs:
         with:
           working-directory: demos/wagtail_tasks
           package: ${{ github.workspace }}
+
+      - name: Keep executed profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiles-demos
+          path: |
+            profiles-*.json
+            demos/**/profiles-*.json
+          if-no-files-found: error
+
 
   saleor:
     # Saleor's checkout, unmodified, in Saleor's own environment built from its uv.lock.
@@ -345,7 +378,18 @@ jobs:
       # tried: pytest took 75 s and 80 s, inside the 66 to 91 s this step takes with the default on the
       # same code, as runners vary. No gain was measurable, so the default stays.
       - name: Saleor checkout
-        run: demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --reuse-db --durations=15
+        run: demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --reuse-db --durations=15 --due-work-require-assessed --due-work-profile-report=profiles-saleor.json
+
+      - name: Keep executed profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiles-saleor
+          path: |
+            profiles-*.json
+            demos/**/profiles-*.json
+          if-no-files-found: error
+
 
   build:
     # The published wheel alone: it installs without any framework, imports, and ships py.typed.
@@ -375,10 +419,27 @@ jobs:
         with:
           working-directory: examples/adopter
           package: ${{ github.workspace }}
-      - name: test runs the project's generated suites
+      - name: test runs the project's generated suites without Hypothesis
         uses: ./test
         with:
           working-directory: examples/adopter
+          pytest-args: --due-work-require-assessed
+      - name: Generated histories also support optional search
+        uses: ./test
+        with:
+          working-directory: examples/adopter
+          sync-args: --extra exploration
+          pytest-args: --due-work-explore=smoke --due-work-require-assessed --due-work-profile-report=profiles-example.json
+      - name: Replay and sensitivity controls
+        working-directory: examples/adopter
+        run: uv run --no-sync pytest tests/test_catalog_failures.py
+      - name: Keep example profile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiles-example
+          path: examples/adopter/profiles-example.json
+          if-no-files-found: error
       - name: check fails once a handoff loses its disposition
         run: |
           rm examples/adopter/tests/test_summaries_exemption.py

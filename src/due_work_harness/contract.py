@@ -915,8 +915,6 @@ def _eligibility_errors(contract: DueWorkContract) -> list[str]:
     if contract.eligibility is None:
         return []
     errors: list[str] = []
-    if not _claims_recovery(contract):
-        errors.append("eligibility requires claimed automatic recovery with a sweep")
     if isinstance(contract.eligibility, Mapping):
         if not contract.eligibility:
             errors.append("eligibility variants cannot be empty")
@@ -1298,6 +1296,10 @@ def contract_cases(contract: DueWorkContract) -> list[Any]:
             if isinstance(assessment, NotAssessed):
                 params.append(_assessment_case(contract, Profile.E, assessment, family=family.value))
     for name, binding in eligibility_bindings(contract).items():
+        # Native workers can own gating without a periodic sweep. When A is
+        # claimed, retain the stronger proof that both bindings use that sweep.
+        if not _claims_recovery(contract):
+            continue
         prefix = f"eligibility-{name}" if name else "eligibility"
         assert contract.sweep is not None, "DueWorkContract validation requires a sweep with eligibility"
         case = ContractCase(

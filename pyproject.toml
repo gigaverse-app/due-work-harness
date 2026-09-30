@@ -94,15 +94,15 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # The Django self-tests and demos import their settings modules from the repository root.
-pythonpath = ["."]
+pythonpath = [".", "examples/adopter"]
 addopts = "-p no:cacheprovider"
 
 [tool.pyrefly]
-project-includes = ["src", "tests", "tests_support", "demos", "scripts"]
+project-includes = ["src", "tests", "tests_support", "demos", "scripts", "examples/adopter"]
 # The Saleor demo runs in Saleor's own environment and is type-checked there (see its pyproject.toml).
 project-excludes = ["demos/.upstream/**", "demos/saleor_checkout/**", "**/__pycache__/**", ".venv*/**"]
 python-version = "3.12"
 python-platform = "linux"
 # tests_support holds the sample production package the binding self-tests import;
 # the DBOS demo imports the upstream demo module from its pinned checkout.
-search-path = ["src", ".", "tests_support", "demos/.upstream/dbos-demo-apps/python/transactional-outbox"]
+search-path = ["src", ".", "tests_support", "examples/adopter", "demos/.upstream/dbos-demo-apps/python/transactional-outbox"]

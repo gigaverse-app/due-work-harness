@@ -54,3 +54,21 @@ def test_explicit_search_without_the_optional_dependency_is_actionable(pytester:
     result = pytester.runpytest_subprocess("--due-work-explore=smoke")
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines(["*Install due-work-harness[[]exploration[]]*"])
+
+
+def test_assessment_gate_refuses_unassessed_families_even_when_deselected(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(DECLARATION)
+    result = pytester.runpytest_subprocess("-q", "--due-work-require-assessed", "-k", "not not_assessed")
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(["*generated*E/snapshot*not assessed*"])
+
+
+def test_assessment_gate_accepts_explicit_family_decisions(pytester: pytest.Pytester) -> None:
+    source = DECLARATION.replace(
+        "in_flight={scenario.name: scenario},",
+        'in_flight={scenario.name: scenario}, convergence_families={family: NotApplicable("No separate API in this reference.") '
+        "for family in ConvergenceFamily if family != ConvergenceFamily.IN_FLIGHT},",
+    )
+    pytester.makepyfile("from due_work_harness.profiles.catalog import ConvergenceFamily\n" + source)
+    result = pytester.runpytest_subprocess("-q", "--due-work-require-assessed")
+    assert result.ret == pytest.ExitCode.OK

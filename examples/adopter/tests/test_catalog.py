@@ -1,0 +1,12 @@
+"""Generated proofs against the runnable SQLite catalog application."""
+
+from contract_bindings import catalog_contract
+
+from due_work_harness import due_work_contract_suite
+
+CATALOG = catalog_contract("example catalog")
+
+
+@due_work_contract_suite(CATALOG)
+class TestCatalog:
+    pass

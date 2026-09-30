@@ -20,6 +20,8 @@ covers the create view's handoff, so ``due-work-harness check`` counts it (see
 import asyncio
 from collections import Counter
 from collections.abc import Iterator
+from contextlib import nullcontext
+from functools import partial
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -32,6 +34,7 @@ from procrastinate.demos.demo_django.demo.models import Book
 from procrastinate.demos.demo_django.demo.views import CreateBookView
 
 from due_work_harness import (
+    AdmissionAtomicity,
     Adoption,
     BoundedRetry,
     CallableDelivery,
@@ -45,7 +48,6 @@ from due_work_harness import (
     KnownGap,
     MissingReclaim,
     NotApplicable,
-    NotAssessed,
     Profile,
     ReplaySafeEffect,
     Retention,
@@ -54,6 +56,7 @@ from due_work_harness import (
 )
 from due_work_harness.contract import Disposition
 from due_work_harness.integrations import procrastinate as integration
+from due_work_harness.integrations.django.admission import AdmissionInterrupted, interrupt_after_statement
 from due_work_harness.integrations.procrastinate import (
     attempts_by_job,
     django_worker_once,
@@ -267,6 +270,37 @@ STALE_WORKER_FINISHES = (
 )
 
 
+def book_admission() -> AdmissionAtomicity[list[str]]:
+    # ARRANGE: a fresh title; the proof starts outside any caller transaction.
+    # REAL PRODUCTION: the demo's CreateBookView through the full Django request stack.
+    # EXTERNAL SEAM: none; PostgreSQL NOTIFY is committed with the queued job.
+    # OBSERVE: independent book titles and all persisted job IDs, including completed jobs.
+    title = f"admission-{uuid4().hex}"
+
+    def jobs() -> list[int]:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM procrastinate_jobs")
+            return [row[0] for row in cursor.fetchall()]
+
+    def admit() -> list[int]:
+        before = set(jobs())
+        create_book(title)
+        return [identity for identity in jobs() if identity not in before]
+
+    return AdmissionAtomicity(
+        name="create book and index job",
+        admit=admit,
+        observe=lambda: list(Book.objects.filter(title=title).values_list("title", flat=True)),
+        expected=[title],
+        obligations=jobs,
+        outstanding=_todo_jobs,
+        effects=lambda: SLOW_CALLS["slow call"],
+        publications=lambda: nullcontext(()),
+        during=partial(interrupt_after_statement, lambda sql: "procrastinate_defer_job" in sql.lower()),
+        expected_error=AdmissionInterrupted,
+    )
+
+
 def _profiles() -> dict[Profile, Disposition]:
     return {
         Profile.A: Decline(WHY_NOT_A_SWEEP),
@@ -278,8 +312,8 @@ def _profiles() -> dict[Profile, Disposition]:
         Profile.D: Claim(),
         Profile.E: NotApplicable(WHY_NO_CONVERGENCE),
         Profile.F: Decline(WHY_NOT_DERIVED),
-        Profile.G: NotAssessed(because="Product execution prerequisites have not been assessed."),
-        Profile.I: NotAssessed(because="Standalone partial admission rollback has not been assessed."),
+        Profile.G: NotApplicable("index_book has no readiness gate: every committed book is immediately indexable"),
+        Profile.I: Claim(),
     }
 
 
@@ -287,7 +321,17 @@ DEMO_AS_SHIPPED = DueWorkContract(
     name="procrastinate demo_django: create book",
     adoption=Adoption.LEGACY,
     transactional=True,
-    profiles={**(_profiles()), Profile.H: Claim(), Profile.J: Claim()},
+    profiles={
+        **_profiles(),
+        Profile.H: Claim(),
+        Profile.J: Claim(),
+        Profile.I: Claim(
+            gaps={
+                "assert_interrupted_admission_rolls_back": "The view autocommits the book and job separately; failure after enqueue cannot roll either back."
+            }
+        ),
+    },
+    admission={"create book": book_admission},
     ownership=the_demos_ownership,
     retention=the_demos_retention,
     replay=indexing_replay,
@@ -335,6 +379,7 @@ DEMO_WITH_ITS_FIXES = DueWorkContract(
     transactional=True,
     fixtures=("atomic_requests",),
     profiles={**(_profiles()), Profile.H: Claim(), Profile.J: Claim()},
+    admission={"create book": book_admission},
     ownership=the_demos_ownership,
     retention=the_demos_retention,
     replay=indexing_replay,

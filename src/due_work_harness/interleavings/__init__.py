@@ -18,7 +18,7 @@ from .bindings import (
 )
 from .engine.provider import AcceptedProviderRequest, ProviderControl
 from .engine.runner import replay_history
-from .model import Bounds, HistoryTrace, KnownFailure
+from .model import Bounds, HistoryTrace, InterleavingFailure, KnownFailure
 from .ports import PendingRequest, Transport
 
 __all__ = [
@@ -33,6 +33,7 @@ __all__ = [
     "InFlightConvergence",
     "InFlightSession",
     "Intent",
+    "InterleavingFailure",
     "KnownFailure",
     "PendingRequest",
     "ProviderControl",

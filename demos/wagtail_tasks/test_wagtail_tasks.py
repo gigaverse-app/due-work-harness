@@ -25,11 +25,15 @@ of Wagtail's ``page_published``, as a receiver with a bug or an unreachable
 backend would.
 """
 
+from collections.abc import Callable
+from contextlib import nullcontext
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from django.core.files.base import ContentFile
 from django.test import Client
+from django_tasks_db.models import DBTaskResult
 from pydantic import BaseModel, ConfigDict
 from wagtail.contrib.frontend_cache.tasks import purge_urls_from_cache_task
 from wagtail.contrib.frontend_cache.utils import purge_urls_from_cache
@@ -43,8 +47,10 @@ from wagtail.test.customuser.models import CustomUser
 from wagtail.test.testapp.models import SimplePage
 
 from due_work_harness import (
+    AdmissionAtomicity,
     Adoption,
     CallableDelivery,
+    Claim,
     Decline,
     DueWorkContract,
     DueWorkSource,
@@ -52,11 +58,12 @@ from due_work_harness import (
     HandoffHistory,
     KnownGap,
     NotApplicable,
-    NotAssessed,
     Profile,
+    ReplaySafeEffect,
     due_work_contract_suite,
 )
 from due_work_harness.crash_histories import ExternalCall
+from due_work_harness.integrations.django.admission import AdmissionInterrupted, interrupt_after_statement
 from due_work_harness.integrations.django_tasks import RUNS_ONCE, TaskOutcome, db_worker_once, worker_contract
 
 from . import cdn
@@ -160,6 +167,47 @@ WHY_NO_SWEEP = (
 )
 WHY_NO_RETRY = f"{RUNS_ONCE}, so a storage error fails the deletion for good"
 
+
+def task_admission(
+    arrange: Callable[[], Any],
+    transition: Callable[[Any], None],
+    observe: Callable[[Any], Any],
+    expected: Any,
+) -> AdmissionAtomicity:
+    # ARRANGE: a real Wagtail resource before its admin command changes product intent.
+    # REAL PRODUCTION: the unchanged Wagtail delete/publish transition and django-tasks-db enqueue.
+    # EXTERNAL SEAM: interruption after the actual task row INSERT; workers remain stopped.
+    # OBSERVE: independent product state, persisted task IDs and the CDN call ledger.
+    handle = arrange()
+
+    def obligations() -> list[str]:
+        return list(DBTaskResult.objects.values_list("id", flat=True))
+
+    def admit() -> list[str]:
+        before = set(obligations())
+        transition(handle)
+        return [identity for identity in obligations() if identity not in before]
+
+    return AdmissionAtomicity(
+        name="Wagtail product and task admission",
+        admit=admit,
+        observe=lambda: observe(handle),
+        expected=expected,
+        obligations=obligations,
+        outstanding=lambda: list(DBTaskResult.objects.filter(status="READY").values_list("id", flat=True)),
+        effects=lambda: sum(cdn.PURGED.values()),
+        publications=lambda: nullcontext(()),
+        during=partial(
+            interrupt_after_statement, lambda sql: sql.startswith('INSERT INTO "django_tasks_database_dbtaskresult"')
+        ),
+        expected_error=AdmissionInterrupted,
+    )
+
+
+ADMISSION_GAP = {
+    "assert_interrupted_admission_rolls_back": "Wagtail commits product intent before the task INSERT; an interrupted enqueue cannot roll both back."
+}
+
 WAGTAIL_MEDIA = DueWorkContract(
     name="wagtail: deleting an image or a document",
     adoption=Adoption.LEGACY,
@@ -176,9 +224,15 @@ WAGTAIL_MEDIA = DueWorkContract(
         ),
         Profile.H: NotApplicable("a repeated deletion deletes nothing"),
         Profile.J: NotApplicable(WHY_NO_RETRY),
-        Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
-        Profile.I: NotAssessed(
-            because="Standalone partial admission rollback have not been assessed for this adopter."
+        Profile.G: NotApplicable(
+            "The deletion is immediately eligible once admitted; it has no later product prerequisite."
+        ),
+        Profile.I: Claim(gaps=ADMISSION_GAP),
+    },
+    admission={
+        "delete image": partial(task_admission, an_image, delete_the_image, lambda h: image_left(h).row, False),
+        "delete document": partial(
+            task_admission, a_document, delete_the_document, lambda h: document_left(h).row, False
         ),
     },
     handoffs=(DELETE_IMAGE, DELETE_DOCUMENT),
@@ -265,6 +319,23 @@ PUBLISH_PAGE = HandoffHistory(
     findings=Findings(PURGED, PUBLISH_FINDINGS),
 )
 
+
+def purge_replay() -> ReplaySafeEffect:
+    # ARRANGE: a URL with a stale entry at the external CDN.
+    # REAL PRODUCTION: Wagtail's purge task executed twice through Django's Task.call.
+    # EXTERNAL SEAM: RecordingCDN records calls; purged URLs no longer serve cached content.
+    # OBSERVE: whether the URL still serves its stale entry, separately from the call count.
+    url = "http://localhost/replay/"
+    cdn.PURGED.clear()
+    return ReplaySafeEffect(
+        name="Wagtail CDN purge",
+        prepare=lambda: url,
+        execute=lambda target: purge_urls_from_cache_task.call([target]),
+        observe=lambda target: cdn.PURGED[target] > 0,
+        execution_count_for=lambda target: cdn.PURGED[target],
+    )
+
+
 WAGTAIL_PUBLISHING = DueWorkContract(
     name="wagtail: publishing a page behind a CDN",
     adoption=Adoption.LEGACY,
@@ -282,13 +353,19 @@ WAGTAIL_PUBLISHING = DueWorkContract(
             "no product state records that a published page is still to be purged, so no recovery can derive "
             "the obligation"
         ),
-        Profile.H: NotApplicable("a repeated purge purges nothing new"),
+        Profile.H: Claim(),
         Profile.J: NotApplicable(f"{RUNS_ONCE}, so a CDN error fails the purge"),
-        Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
-        Profile.I: NotAssessed(
-            because="Standalone partial admission rollback have not been assessed for this adopter."
+        Profile.G: NotApplicable(
+            "The purge is immediately eligible after publication; it has no later product prerequisite."
         ),
+        Profile.I: Claim(gaps=ADMISSION_GAP),
     },
+    admission={
+        "publish page": partial(
+            task_admission, a_live_page, publish_new_hours, lambda h: what_visitors_get(h).live_content, "10 to 6"
+        )
+    },
+    replay=purge_replay,
     handoffs=(PUBLISH_PAGE,),
     handoff_delivery=WORKER,
     handoff_gaps={
