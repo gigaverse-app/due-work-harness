@@ -3,7 +3,7 @@
 from collections.abc import Callable
 
 from celery import Celery
-from contract_bindings import catalog_contract
+from test_bindings import catalog_contract
 
 from due_work_harness import due_work_contract_suite
 from tests_support.catalog_executor import execute, registered

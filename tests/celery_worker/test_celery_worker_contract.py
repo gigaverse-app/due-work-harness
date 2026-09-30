@@ -8,13 +8,17 @@ suite red until the table is updated.
 """
 
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import cast
 
 import pytest
 import redis
+from celery.app.task import Task
 from celery.result import AsyncResult
 
-from due_work_harness import Findings, due_work_contract_suite
+from due_work_harness import Claim, Findings, Profile, ReplaySafeEffect, due_work_contract_suite
+from due_work_harness.host import Host, hosted
 from due_work_harness.integrations.celery_worker import worker_contract, worker_history
 from tests.celery_worker import app as reference
 
@@ -71,10 +75,41 @@ SEND_MESSAGE = worker_history(
     findings=FINDINGS,
 )
 
+
+@contextmanager
+def message_replay() -> Iterator[ReplaySafeEffect]:
+    # ARRANGE: a fresh customer message and a cleared external delivery ledger.
+    # REAL PRODUCTION: Celery's Task.apply tracer runs the real task body for both deliveries.
+    # EXTERNAL SEAM: the task's Redis-backed recipient ledger, also used by the real process histories.
+    # OBSERVE: exact delivered-message count, independent of Celery's result status.
+    reference.RECORDS.flushdb()
+    with hosted(Host(production_packages=frozenset({"celery"}))):
+        yield ReplaySafeEffect(
+            name="Celery message task",
+            prepare=lambda: MESSAGE,
+            execute=lambda message: Task.apply(reference.send_message, (message,), throw=True).get(propagate=True),
+            observe=lambda message: reference.RECORDS.lrange("sent", 0, -1).count(message),
+            execution_count_for=lambda message: reference.RECORDS.lrange("sent", 0, -1).count(message),
+        )
+
+
 CONTRACT = worker_contract(
     name="celery reference worker",
     history=SEND_MESSAGE,
     gap="a failure after the result is stored or the link published still runs the failure path",
+)
+
+
+CONTRACT = CONTRACT.model_copy(
+    update={
+        "profiles": {
+            **CONTRACT.profiles,
+            Profile.H: Claim(
+                gaps={"assert_replay_converges": "The reference task sends a second customer message on blind replay."}
+            ),
+        },
+        "replay": message_replay,
+    }
 )
 
 

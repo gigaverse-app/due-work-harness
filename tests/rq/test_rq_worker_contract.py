@@ -8,8 +8,9 @@ history by history, in the same run as the verdict.
 """
 
 from rq import Callback, Queue, Retry
+from rq.job import Job
 
-from due_work_harness import Profile, due_work_contract_suite
+from due_work_harness import Claim, Profile, ReplaySafeEffect, due_work_contract_suite
 from due_work_harness.crash_histories import ExternalCall, Findings
 from due_work_harness.integrations.rq import ONE_QUEUE, worker_contract
 from due_work_harness.integrations.task_queues import TaskOutcome
@@ -73,6 +74,22 @@ FINDINGS = Findings(
     },
 )
 
+
+def message_replay() -> ReplaySafeEffect:
+    # ARRANGE: a real RQ job carrying one message identity.
+    # REAL PRODUCTION: Job.perform invokes the reference application's actual function twice.
+    # EXTERNAL SEAM: Outbox.send records every customer message.
+    # OBSERVE: exact message count, so two deliveries cannot be declared equivalent.
+    jobs.outbox.clear()
+    return ReplaySafeEffect(
+        name="RQ message task",
+        prepare=lambda: Queue(QUEUE, connection=CONNECTION).enqueue(jobs.send_message, MESSAGE),
+        execute=Job.perform,
+        observe=lambda job: jobs.outbox.sent[job.args[0]],
+        execution_count_for=lambda job: jobs.outbox.sent[job.args[0]],
+    )
+
+
 CONTRACT = worker_contract(
     CONNECTION,
     name="rq reference jobs",
@@ -87,6 +104,21 @@ CONTRACT = worker_contract(
     handoff_gaps={ONE_QUEUE: "a lost reply or a raising on_success runs a finished job again"},
     findings={ONE_QUEUE: FINDINGS},
     fixtures=("empty_redis",),
+)
+
+
+# Task semantics belong to this adopter. The generic worker contract deliberately
+# declines H until an application supplies an observation of its external effect.
+CONTRACT = CONTRACT.model_copy(
+    update={
+        "profiles": {
+            **CONTRACT.profiles,
+            Profile.H: Claim(
+                gaps={"assert_replay_converges": "The reference task sends a second customer message on blind replay."}
+            ),
+        },
+        "replay": message_replay,
+    }
 )
 
 

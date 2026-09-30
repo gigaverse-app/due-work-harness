@@ -4,6 +4,7 @@ The runner changes how the worker is invoked. Commands, SQL, faults, expected
 results and all harness-owned assertions stay identical across executors.
 """
 
+import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
@@ -15,6 +16,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from adopter_app.catalog import Catalog
+from pydantic import InstanceOf
 
 from due_work_harness import (
     AdmissionAtomicity,
@@ -32,12 +34,14 @@ from due_work_harness.interleavings import (
     EvidenceArrival,
     EvidenceConfluence,
     EvidenceExpectation,
+    EvidenceRetry,
     EvidenceSession,
     InFlightConvergence,
     InFlightSession,
     Intent,
     ProviderControl,
 )
+from due_work_harness.models import HarnessModel
 from due_work_harness.profiles.catalog import ConvergenceFamily
 
 # Executor implementations are external to the application and may queue this callable.
@@ -65,12 +69,22 @@ class ObservedConnection(sqlite3.Connection):
         return result
 
 
+class ApplicationResources(HarnessModel):
+    """One history's application and external systems; live ledgers retain their identity."""
+
+    catalog: InstanceOf[Catalog]
+    provider: InstanceOf[ProviderControl]
+    remote: InstanceOf[dict[int, str]]
+    facts: InstanceOf[set[tuple[int, str]]]
+    publications: InstanceOf[list[AdmissionPublication]]
+
+
 @contextmanager
-def application() -> Iterator[tuple[Catalog, ProviderControl, dict[int, str], set[str], list[AdmissionPublication]]]:
+def application() -> Iterator[ApplicationResources]:
     """Fresh file-backed SQL and external systems for every history, including Hypothesis shrinking."""
     provider = ProviderControl()
     remote: dict[int, str] = {}
-    facts: set[str] = set()
+    facts: set[tuple[int, str]] = set()
     events: list[AdmissionPublication] = []
     with TemporaryDirectory() as directory:
         catalog = Catalog(
@@ -81,13 +95,16 @@ def application() -> Iterator[tuple[Catalog, ProviderControl, dict[int, str], se
             read=lambda identity: remote.get(identity, ""),
             notify=lambda identity: events.append(AdmissionPublication(in_transaction=catalog.db.in_transaction)),
             receipts=lambda: facts,
+            request_receipts=lambda: provider.invoke("receipts", "request", lambda: None),
             connection_factory=ObservedConnection,
         )
         try:
             with hosted(
                 Host(production_packages=frozenset({"adopter_app"}), in_transaction=lambda: catalog.db.in_transaction)
             ):
-                yield catalog, provider, remote, facts, events
+                yield ApplicationResources(
+                    catalog=catalog, provider=provider, remote=remote, facts=facts, publications=events
+                )
         finally:
             catalog.db.close()
 
@@ -109,24 +126,42 @@ class Notifications:
         if enabled:
             self.messages.clear()
 
+    def deliver(self, identity: int) -> None:
+        """Only a surviving notification may wake the worker; recovery reads SQL independently."""
+        if identity in self.messages and not self.losing:
+            self.execute(identity)
+
     def redeliver(self, index: int) -> None:
         self.execute(self.messages[index])
 
 
 @contextmanager
-def in_flight(run: Runner = inline) -> Iterator[InFlightSession[int, str, str]]:
+def in_flight(run: Runner = inline, *, retirement: bool = False) -> Iterator[InFlightSession[int, str, str]]:
     # ARRANGE: a fresh durable catalog; every history gets its own SQL file.
     # REAL PRODUCTION: Catalog admission, revision commands, worker and reconciliation.
     # EXTERNAL SEAM: remote catalog writes accepted, refused or completed late by ProviderControl.
     # OBSERVE: remote values and independently read commanded/acknowledged SQL revision IDs.
-    with application() as (catalog, provider, remote, _facts, _events):
+    with application() as state:
+        catalog, provider = state.catalog, state.provider
+        remote = state.remote
         transport = Notifications(lambda identity: run(partial(catalog.execute, identity)))
         catalog.notify = transport.publish
+
+        def change(identity: int, value: str) -> None:
+            catalog.change(identity, value)
+            transport.deliver(identity)
+
+        def retire(identity: int) -> None:
+            catalog.retire(identity)
+            transport.deliver(identity)
+
         yield InFlightSession(
             intents={name: Intent(value=name, expected=name) for name in ("red", "green", "blue")},
             admit=catalog.admit,
-            change=catalog.change,
-            start=lambda identity: run(partial(catalog.execute, identity)),
+            change=None if retirement else change,
+            retire=retire if retirement else None,
+            retired="" if retirement else None,
+            start=transport.deliver,
             recover=lambda: run(catalog.recover),
             advance=lambda seconds: None,
             observe=lambda identity: remote.get(identity, ""),
@@ -144,22 +179,41 @@ def evidence(run: Runner = inline) -> Iterator[EvidenceSession[frozenset[str]]]:
     # REAL PRODUCTION: Catalog.ingest_receipts merges durable receipt identities.
     # EXTERNAL SEAM: the provider's visible receipt list, including partial batches and duplicates.
     # OBSERVE: committed SQL receipts, compared to independently enumerated expected sets.
-    with application() as (catalog, _provider, _remote, facts, _events):
+    with application() as state:
+        catalog, provider = state.catalog, state.provider
+        facts = state.facts
 
         def consume() -> None:
             run(catalog.ingest_receipts)
 
+        @contextmanager
+        def actor_scope() -> Iterator[None]:
+            original = catalog.db
+            catalog.db = sqlite3.connect(catalog.path)
+            try:
+                yield
+            finally:
+                catalog.db.close()
+                catalog.db = original
+
         names = ("alice", "bob", "carol")
         groups = [frozenset(group) for size in range(4) for group in combinations(names, size)]
         yield EvidenceSession(
-            prepare=lambda: None,
-            facts={name: EvidenceArrival(publish=partial(facts.add, name), consume=consume) for name in names},
+            prepare=catalog.request_receipts,
+            facts={name: EvidenceArrival(publish=partial(facts.add, (1, name)), consume=consume) for name in names},
             observe=catalog.received,
-            expectations={group: EvidenceExpectation(observation=group, effects={}) for group in groups},
+            expectations={group: EvidenceExpectation(observation=group, effects={"request": 1}) for group in groups},
             recover=consume,
             advance=lambda seconds: None,
-            effects=lambda: {},
-            actor_scope=nullcontext,
+            effects=lambda: {"request": provider.effects[("receipts", "request")]},
+            actor_scope=actor_scope,
+            retry=EvidenceRetry(
+                send=catalog.request_receipts,
+                expectations={
+                    group: EvidenceExpectation(observation=group, effects={"request": 2}) for group in groups
+                },
+            ),
+            settled_evidence=lambda: json.dumps(sorted(catalog.received(1))),
         )
 
 
@@ -169,7 +223,9 @@ def admission() -> Iterator[AdmissionAtomicity[list[str]]]:
     # REAL PRODUCTION: Catalog.admit owns the product/obligation transaction.
     # EXTERNAL SEAM: notification recorder; interruption after the real SQL obligation INSERT.
     # OBSERVE: independent product rows, obligation IDs and external provider calls.
-    with application() as (catalog, provider, _remote, _facts, events):
+    with application() as state:
+        catalog, provider = state.catalog, state.provider
+        events = state.publications
 
         @contextmanager
         def during(checkpoint: Callable[[], None]) -> Iterator[None]:
@@ -200,7 +256,9 @@ def gate(run: Runner = inline) -> Iterator[ExecutionGate]:
     # REAL PRODUCTION: Catalog.approve, eligible/owed selections and the real worker/recovery.
     # EXTERNAL SEAM: notifications are recorded but never delivered, so recovery must find release.
     # OBSERVE: SQL revisions and mutation counter plus independent remote provider state/calls.
-    with application() as (catalog, provider, remote, _facts, _events):
+    with application() as state:
+        catalog, provider = state.catalog, state.provider
+        remote = state.remote
         identity = catalog.admit("red", approved=False)
 
         def calls() -> int:
@@ -232,7 +290,9 @@ def replay(run: Runner = inline) -> Iterator[ReplaySafeEffect]:
     # REAL PRODUCTION: Catalog.execute, deliberately invoked twice for the same identity.
     # EXTERNAL SEAM: remote assignment and its independent call counter.
     # OBSERVE: final remote value; repeated assignment must reach the provider twice.
-    with application() as (catalog, provider, remote, _facts, _events):
+    with application() as state:
+        catalog, provider = state.catalog, state.provider
+        remote = state.remote
         yield ReplaySafeEffect(
             name="catalog assignment",
             prepare=lambda: catalog.admit("red"),
@@ -264,6 +324,16 @@ def catalog_contract(name: str, run: Runner = inline) -> DueWorkContract:
         replay=partial(replay, run),
         admission={"publish": admission},
         in_flight={
+            "catalog retirement": InFlightConvergence(
+                name="catalog retirement",
+                bind=partial(in_flight, run, retirement=True),
+                intents=("red", "green", "blue"),
+                seams=("publish",),
+                repair_seams=("publish",),
+                retirement=True,
+                independent=True,
+                transport=True,
+            ),
             "catalog revisions": InFlightConvergence(
                 name="catalog revisions",
                 bind=partial(in_flight, run),
@@ -271,7 +341,7 @@ def catalog_contract(name: str, run: Runner = inline) -> DueWorkContract:
                 seams=("publish",),
                 independent=True,
                 transport=True,
-            )
+            ),
         },
         evidence_confluence={
             "delivery receipts": EvidenceConfluence(
@@ -279,8 +349,9 @@ def catalog_contract(name: str, run: Runner = inline) -> DueWorkContract:
                 bind=partial(evidence, run),
                 facts=("alice", "bob", "carol"),
                 batchable=True,
-                no_ordered_pair_because="One serial executor owns this example's SQLite connection.",
-                no_retry_because="Receipt ingestion has no sender attempt turnover; recipient facts are immutable.",
+                ordered_pair=("alice", "bob") if run is inline else None,
+                no_ordered_pair_because="This executor variant runs a serial worker on the main thread; the inline example tests separate actor connections.",
+                retry_turnover=True,
             )
         },
         convergence_families={

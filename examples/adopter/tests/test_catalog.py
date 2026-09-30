@@ -1,6 +1,6 @@
 """Generated proofs against the runnable SQLite catalog application."""
 
-from contract_bindings import catalog_contract
+from test_bindings import catalog_contract
 
 from due_work_harness import due_work_contract_suite
 

@@ -632,8 +632,8 @@ class DueWorkContract(HarnessModel):
     #: product decides (see :mod:`due_work_harness.profiles.gated_execution`),
     #: independent of tables and worker framework. One factory, or named
     #: factories for named blockers; each generated proof gets a fresh blocked
-    #: example with its readiness notification lost. Requires profile A claimed
-    #: with a sweep: recovery is what must find the work once it is eligible.
+    #: example with its readiness notification lost. Native recovery may stand alone;
+    #: claiming A also generates the gate/sweep composition proof.
     eligibility: ExecutionGateBinding | Mapping[str, ExecutionGateBinding] | None = None
 
     #: Domain-specific applications of the standalone proofs.
@@ -1301,7 +1301,7 @@ def contract_cases(contract: DueWorkContract) -> list[Any]:
         if not _claims_recovery(contract):
             continue
         prefix = f"eligibility-{name}" if name else "eligibility"
-        assert contract.sweep is not None, "DueWorkContract validation requires a sweep with eligibility"
+        assert contract.sweep is not None, "claimed automatic recovery must supply its sweep"
         case = ContractCase(
             id=f"{prefix}-assert_gate_is_recovered_by_the_contract_sweep",
             profile=Profile.G,

@@ -3,8 +3,8 @@
 import asyncio
 from collections.abc import Callable
 
-from contract_bindings import catalog_contract
 from prefect import flow
+from test_bindings import catalog_contract
 
 from due_work_harness import due_work_contract_suite
 from due_work_harness.integrations.prefect import prefect_flow_call

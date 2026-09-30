@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from adopter_app.catalog import Catalog
-from contract_bindings import catalog_contract
+from test_bindings import catalog_contract
 
 from due_work_harness.interleavings import HistoryTrace, InterleavingFailure, replay_history
 

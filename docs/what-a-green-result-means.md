@@ -52,12 +52,13 @@ SQL instruction schedules. Exploration is additional search, never exhaustive pr
 
 Work can be owed and blocked at once: a dependency has not settled, an owner is
 still active, a user has not confirmed. That is profile G, declared as `eligibility=` (one `ExecutionGate`, or named gates for
-named blockers) on a contract that claims profiles A and G with a sweep, because
-recovery is what must find the work once it is eligible. It is not a seventh
-disposition: a domain without a product-level blocker has no gate to describe.
+named blockers) on a contract that claims G. Recovery must find the work once
+it is eligible; native workers may supply that recovery without an A-style
+sweep. When A is also claimed, an additional proof ties G to its sweep.
+It is not an additional disposition: a domain without a product-level blocker has no gate to describe.
 
 Each gate is one blocked, already time-due obligation with its readiness
-notification lost. Five proofs run against a fresh example each:
+notification lost. Four standalone proofs run against a fresh example each:
 
 - the bindings reach production: the routes, recovery, both selections
   (`due_work` and `owed_work`) and the readiness transition `make_eligible`;
@@ -77,7 +78,7 @@ notification lost. Five proofs run against a fresh example each:
   state or drop the obligation, and must not repeat without time passing. It
   counts as an execution unless the gate declares `inspections`, for a design
   that re-checks the blocker without executing anything;
-- the gate describes the contract sweep's own recovery: the sweep's selection
+- when A is claimed, a fifth proof checks the gate describes the contract sweep's own recovery: the sweep's selection
   leaves the blocked work out and takes it in once eligible, and during
   `recover` the sweep's `dispatched_ids` (the recorder of what its dispatch
   path sent, which the contract sweep must declare) records the gate's identity

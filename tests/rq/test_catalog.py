@@ -2,9 +2,9 @@
 
 from collections.abc import Callable
 
-from contract_bindings import catalog_contract
 from rq import Queue
 from rq.job import JobStatus
+from test_bindings import catalog_contract
 
 from due_work_harness import due_work_contract_suite
 from due_work_harness.integrations.rq import worker_pass

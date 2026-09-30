@@ -22,9 +22,12 @@ class Catalog:
         write: Callable[[int, str], None],
         read: Callable[[int], str],
         notify: Callable[[int], None],
-        receipts: Callable[[], Iterable[str]],
+        receipts: Callable[[], Iterable[tuple[int, str]]],
+        request_receipts: Callable[[], None] = lambda: None,
         connection_factory: type[sqlite3.Connection] = sqlite3.Connection,
     ) -> None:
+        self.path = path
+        self.request_provider_receipts = request_receipts
         self.db = sqlite3.connect(path, check_same_thread=False, factory=connection_factory)
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS products (
@@ -32,7 +35,8 @@ class Catalog:
                 approved INTEGER NOT NULL, acknowledged INTEGER
             );
             CREATE TABLE IF NOT EXISTS obligations (id INTEGER PRIMARY KEY REFERENCES products(id));
-            CREATE TABLE IF NOT EXISTS receipts (name TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS receipt_attempts (id INTEGER PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS receipts (attempt INTEGER, name TEXT, PRIMARY KEY(attempt, name));
         """)
         self.write, self.read, self.notify, self.receipts = write, read, notify, receipts
 
@@ -53,7 +57,10 @@ class Catalog:
         with self.db:
             self.db.execute("UPDATE products SET desired=?, revision=revision+1 WHERE id=?", (value, identity))
         self.notify(identity)
-        self.execute(identity)
+
+    def retire(self, identity: int) -> None:
+        """Retain a tombstone so reconciliation can undo a late accepted publication."""
+        self.change(identity, "")
 
     def approve(self, identity: int) -> None:
         """Release existing intent without changing its identity, revision or retry state."""
@@ -100,7 +107,14 @@ class Catalog:
     def ingest_receipts(self) -> None:
         """Duplicates, batches and partial responses all accumulate the same durable facts."""
         with self.db:
-            self.db.executemany("INSERT OR IGNORE INTO receipts VALUES (?)", [(name,) for name in self.receipts()])
+            self.db.executemany("INSERT OR IGNORE INTO receipts VALUES (?, ?)", list(self.receipts()))
 
-    def received(self) -> frozenset[str]:
-        return frozenset(row[0] for row in self.db.execute("SELECT name FROM receipts"))
+    def request_receipts(self, replay: Callable[[], None] = lambda: None) -> None:
+        """Start a fresh sender turn without rewriting the previous turn's evidence."""
+        with self.db:
+            self.db.execute("INSERT INTO receipt_attempts DEFAULT VALUES")
+        replay()
+        self.request_provider_receipts()
+
+    def received(self, attempt: int = 1) -> frozenset[str]:
+        return frozenset(row[0] for row in self.db.execute("SELECT name FROM receipts WHERE attempt=?", (attempt,)))
