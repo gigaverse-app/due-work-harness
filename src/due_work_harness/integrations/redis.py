@@ -124,6 +124,7 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
 
 RedisWorker = CommitWorker
 
+
 def redis_worker_killer(client: Any) -> Callable[[int | None], AbstractContextManager[RedisWorker]]:
     """A worker killer for every client and pipeline sharing ``client``'s connection pool."""
 
