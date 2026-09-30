@@ -38,3 +38,11 @@ A commit already in flight can still land at the broker after worker death. The
 adapter cannot roll it back, but it checks the fence again before returning the
 acknowledgement to application code. The broker suite holds the real coordinator
 commit lock to prove both the live-worker and dead-worker outcomes.
+
+## Required adoption surface
+
+Bind these aiokafka fault boundaries into a `DueWorkContract` and a collected
+`@due_work_contract_suite(CONTRACT)` class. The adapter does not generate a
+contract merely because a normal test uses it. Declare the histories and all
+profile dispositions, then execute the generated cases and retain their report;
+see [required adoption shape](../ADOPTING.md#required-adoption-shape).
