@@ -17,6 +17,10 @@ FRAMEWORKS = (
     "asgiref",
     "redis",
     "rq",
+    "pymongo",
+    "motor",
+    "prefect",
+    "confluent_kafka",
 )
 core = [
     m.name

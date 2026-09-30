@@ -40,7 +40,7 @@ from typing import Any
 
 from due_work_harness.host import Host, PublicationBreaker, ReceiverBreaker
 from due_work_harness.integrations.clocks import time_machine_clock
-from due_work_harness.worker_death import WorkerDied
+from due_work_harness.worker_death import CommitWorker
 
 #: Commands whose writes the server cannot report in advance.
 SCRIPT_COMMANDS = frozenset({"EVAL", "EVALSHA", "FCALL"})
@@ -122,27 +122,7 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
         yield
 
 
-class RedisWorker:
-    """The worker a crash history interrupts: its commit count and whether it died."""
-
-    def __init__(self, kill_after: int | None) -> None:
-        self._kill_after = kill_after
-        self.commits = 0
-        self.dead = False
-
-    def committed(self) -> None:
-        self.commits += 1
-        if self.commits == self._kill_after:
-            self.kill_now(f"worker died right after commit {self.commits}")
-
-    def kill_now(self, reason: str) -> None:
-        self.dead = True
-        raise WorkerDied(reason)
-
-    def refuse_if_dead(self) -> None:
-        if self.dead:
-            raise WorkerDied("the worker is dead; its connection sends nothing more")
-
+RedisWorker = CommitWorker
 
 def redis_worker_killer(client: Any) -> Callable[[int | None], AbstractContextManager[RedisWorker]]:
     """A worker killer for every client and pipeline sharing ``client``'s connection pool."""
