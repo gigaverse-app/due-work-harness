@@ -7,13 +7,14 @@ it does not own changes what the code under test does: a rollback that no
 longer rolls back proves nothing about the handoff being rolled back.
 """
 
-import contextlib
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import pytest
 from django.db import connection, transaction
 
+from due_work_harness.crash_histories import HandoffHistory, crash_histories
 from due_work_harness.integrations.django import lifecycle_references as ref
 from due_work_harness.integrations.django.commits import django_worker_killer
 from due_work_harness.integrations.django.writes import leading_keyword
@@ -222,16 +223,19 @@ def _executor_threads() -> set[threading.Thread]:
     return {thread for thread in threading.enumerate() if thread.name.startswith("ThreadPoolExecutor")}
 
 
-def test_a_death_raised_through_async_to_sync_leaves_no_executor_thread_behind() -> None:
-    # async_to_sync runs its event loop on a one-shot executor; the death's traceback holds it in a cycle,
-    # and its idle thread would linger (and warn about sessions in later tests) until some later GC.
+@pytest.mark.parametrize(
+    "transition",
+    [ref.fail_attempt_through_async_to_sync, ref.fail_attempt_through_async_to_sync_collecting_on_the_way_out],
+    ids=["unwinding-quietly", "collected-while-unwinding"],
+)
+def test_a_crash_history_through_async_to_sync_leaves_no_executor_thread_behind(
+    transition: Callable[[int], Any],
+) -> None:
+    # The history catches each death it injects; what the death's traceback held must go with the dead worker,
+    # even when a young collection ran while it unwound and promoted the cycle out of generation 0.
     before = _executor_threads()
-    pk = _running()
-    with django_worker_killer(1) as worker:
-        # Caught inside the killer, as a crash history catches the death it injected.
-        with contextlib.suppress(WorkerDied):
-            ref.fail_attempt_through_async_to_sync(pk)
-    assert worker.dead
+    history = HandoffHistory(name="retryable failure", arrange=_running, transition=transition, observe=_status)
+    crash_histories(ref.RETRY_DELIVERY, history)
     for thread in _executor_threads() - before:
-        thread.join(timeout=5)  # a collected executor's thread exits on its own, promptly
+        thread.join(timeout=5)  # a released executor's thread exits on its own, promptly
     assert _executor_threads() <= before

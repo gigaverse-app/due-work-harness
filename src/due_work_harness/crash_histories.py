@@ -108,6 +108,7 @@ What these histories do not claim:
 """
 
 import concurrent.futures
+import traceback
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from inspect import getattr_static, isasyncgen, isawaitable, iscoroutine, iscoroutinefunction, isgenerator
@@ -587,6 +588,7 @@ def _run(
             except (Exception, WorkerDied, BaseExceptionGroup) as error:
                 if not _absorbed(error, worker):
                     raise
+                _release(error)
             else:
                 assert not worker.dead, (
                     f"handoff {history.name!r} kept running after its worker died: something caught WorkerDied "
@@ -663,6 +665,35 @@ def _absorbed(error: BaseException, worker: _Worker) -> bool:
             f"failure ('raise ... from error'), or 'from None' to replace it on purpose"
         )
     return False
+
+
+def _release(error: BaseException) -> None:
+    """
+    Drop what an absorbed exception's frames hold, as a dead or failed request's would be.
+
+    The frames a traceback keeps hold their locals, and those can hold threads:
+    ``async_to_sync`` runs its loop on a one-shot executor that a death's
+    traceback keeps in a cycle, so its idle thread lingers until some later
+    collection, and warns about sessions in unrelated tests. A collection after
+    the fact is not enough, because one that ran while the death unwound (a
+    close or a log allocating) promotes the cycle past the young generation.
+    Clearing the finished frames breaks the cycle at its root whatever
+    generation it reached; the frame still running (this history's) is skipped.
+    """
+    for linked in _chain(error, set()):
+        traceback.clear_frames(linked.__traceback__)
+
+
+def _chain(error: BaseException, seen: set[int]) -> Iterator[BaseException]:
+    """An exception, its group members and everything chained to them, each once."""
+    if id(error) in seen:
+        return
+    seen.add(id(error))
+    yield error
+    members = error.exceptions if isinstance(error, BaseExceptionGroup) else ()
+    for linked in (error.__cause__, error.__context__, *members):
+        if linked is not None:
+            yield from _chain(linked, seen)
 
 
 def _leaves(error: BaseException) -> Iterator[BaseException]:

@@ -21,7 +21,6 @@ a dead worker's connection is closed, releasing its advisory locks and session
 state.
 """
 
-import gc
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -101,7 +100,3 @@ def django_worker_killer(kill_after: int | None) -> Iterator[DjangoWorker]:
             # settings and temporary tables must not survive into recovery, nor
             # into the next test when a history is rejected while its worker is dead.
             target.close()
-            # A death raised through async_to_sync leaves its one-shot event-loop
-            # executor in a traceback cycle; a dead process's threads are gone, so
-            # collect them now rather than when some later test triggers a GC.
-            gc.collect(generation=0)
