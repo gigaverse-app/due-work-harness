@@ -153,6 +153,9 @@ histories as `process_handoffs`, beside `handoffs`.
 
 ## Six ways due work goes missing: lifecycle profiles
 
+Every domain adoption **must** use `DueWorkContract` and
+`@due_work_contract_suite(CONTRACT)`; standalone histories or ordinary tests do
+not complete adoption. See [the required adoption shape](ADOPTING.md#required-adoption-shape).
 A crash history proves one handoff. A declarative `DueWorkContract` binds your
 production selection, tick and transitions, and asks for a disposition (claim,
 decline with a reason, not applicable, or known gap) for each of six profiles:
@@ -190,6 +193,8 @@ every proof measure the copy, and it stays green forever. So the harness:
 
 The full catalogue of lies it refuses: [false greens](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/false-greens.md).
 
+Cases are generated at pytest collection time, not written as Python files.
+Use `--junitxml=<artifact-path>` for a machine-readable run artifact.
 A contract class is empty in the source, so `pytest --due-work-summary` lists
 what each one generated after the run: every case with its outcome, and each
 declared gap's reason beside its strict xfail.
