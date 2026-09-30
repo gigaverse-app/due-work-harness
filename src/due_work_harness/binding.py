@@ -386,18 +386,43 @@ def _function_of(binding: Callable[..., Any]) -> FunctionType | None:
 
     The one reading of a binding's shape every tripwire shares: through
     ``functools.partial`` layers, bound methods, decorators that set
-    ``__wrapped__``, and a callable instance's ``__call__``.
+    ``__wrapped__``, a Celery task's ``run``, and a callable instance's ``__call__``.
     """
-    while isinstance(binding, functools.partial):
-        binding = binding.func
-    function = getattr(binding, "__func__", binding)
+    body = _body(binding)
+    function = getattr(body, "__func__", body)
     if callable(function):
+        # A method's function may itself be decorated.
         function = inspect.unwrap(function)
+        function = getattr(function, "__func__", function)
     if inspect.isfunction(function):
         return function
     call = getattr(type(binding), "__call__", None)  # noqa: B004 - reads the class attribute, not callability
     call = getattr(call, "__func__", call)
     return call if inspect.isfunction(call) else None
+
+
+def _body(binding: Callable[..., Any]) -> object:
+    """
+    What a binding runs when called, before any ``__call__`` of the object itself: a function or a bound method.
+
+    Unwrapping can land on a bound method: a Celery ``shared_task(bind=True)``
+    proxy's ``__wrapped__`` is its task's bound ``run``, and the proxy's own
+    ``__call__`` only forwards to it. A class-based Celery task is an instance
+    whose ``__call__`` runs its ``run``. Celery is recognised only when something
+    already imported it, so the core stays framework-free.
+    """
+    while isinstance(binding, functools.partial):
+        binding = binding.func
+    body: object = binding
+    if callable(body) and not isinstance(body, MethodType):
+        body = inspect.unwrap(body)
+    celery_task = sys.modules.get("celery.app.task")
+    if celery_task is not None and not inspect.isfunction(body) and not isinstance(body, MethodType):
+        task_class: type[Any] = celery_task.Task
+        if isinstance(body, task_class):
+            task: Any = body  # a Celery task: its class was read from sys.modules at run time
+            body = task.run
+    return body
 
 
 def _namespace(binding: Callable[..., Any]) -> Mapping[str, object]:
@@ -415,10 +440,9 @@ def _namespace(binding: Callable[..., Any]) -> Mapping[str, object]:
         namespace.update(inspect.getclosurevars(function).nonlocals)
     parameters = list(inspect.signature(function).parameters.values())
     namespace.update({p.name: p.default for p in parameters if p.default is not inspect.Parameter.empty})
-    while isinstance(binding, functools.partial):
-        binding = binding.func
-    if isinstance(binding, MethodType) and parameters:
-        namespace[parameters[0].name] = binding.__self__
+    body = _body(binding)
+    if isinstance(body, MethodType) and parameters:
+        namespace[parameters[0].name] = body.__self__
     return namespace
 
 

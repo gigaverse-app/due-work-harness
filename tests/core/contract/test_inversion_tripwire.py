@@ -385,3 +385,49 @@ def test_the_handler_that_swallows_is_named_by_its_line() -> None:
 def test_a_probe_that_leaves_its_finally_is_named_by_the_finally_line() -> None:
     names = authored_inversion_names(_probe_that_returns_from_finally)
     assert any(name.startswith("finally at test_inversion_tripwire.py:") for name in names), names
+
+
+class _TaskBody:
+    def run(self, proof: int) -> None:
+        try:
+            assert proof == 0
+        except Exception:  # noqa: BLE001 - the inversion under test
+            return
+
+
+class _TaskProxy:
+    """A lazily bound task, as Celery's ``shared_task(bind=True)`` returns: its ``__wrapped__`` is a bound ``run``."""
+
+    def __init__(self) -> None:
+        self.__wrapped__ = _TaskBody().run
+
+    def __call__(self, proof: int) -> None:
+        return self.__wrapped__(proof)
+
+
+def test_a_proxy_wrapping_a_bound_method_is_read_as_the_method_not_the_proxy() -> None:
+    # Unwrapping lands on a bound method: its function is the body the binding runs, not the proxy's __call__.
+    assert callable_code(_TaskProxy()) is _TaskBody.run.__code__
+    assert "AssertionError" in authored_inversion_names(_TaskProxy())
+
+
+def _logged(function: Any) -> Any:
+    @functools.wraps(function)
+    def logging(*args: Any, **kwargs: Any) -> Any:
+        return function(*args, **kwargs)
+
+    return logging
+
+
+class _DecoratedHolder:
+    @_logged
+    def probe(self, proof: int) -> None:
+        try:
+            assert proof == 0
+        except Exception:  # noqa: BLE001 - the inversion under test
+            return
+
+
+def test_a_bound_method_whose_function_is_decorated_is_read_as_the_undecorated_body() -> None:
+    assert callable_code(_DecoratedHolder().probe) is inspect.unwrap(_DecoratedHolder.probe).__code__
+    assert "AssertionError" in authored_inversion_names(_DecoratedHolder().probe)
