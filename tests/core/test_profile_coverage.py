@@ -92,3 +92,29 @@ def test_native_filtered_report_keeps_unselected_proofs_and_missing_families(
     assert convergence["families"]["IN_FLIGHT"]["state"] == "not assessed"
     assert not convergence["verified"]
     assert report["profiles"]["I"]["assessment"]["state"] == "not applicable"
+
+
+def test_executable_gap_and_decline_probes_are_reported_without_becoming_verified(pytester: pytest.Pytester) -> None:
+    import json
+
+    pytester.makepyfile("""
+from functools import partial
+from due_work_harness import Adoption, Decline, DueWorkContract, KnownGap, NotApplicable, Profile, due_work_contract_suite
+from due_work_harness.references.in_memory import assert_the_reference_capability_exists, assert_self_test_probe_fires
+contract = DueWorkContract(
+    name="executed assessment controls", adoption=Adoption.LEGACY,
+    profiles={**{p: NotApplicable("Outside this reporting control.") for p in Profile},
+        Profile.A: Decline("The alternative behavior has a real probe.", prove=partial(assert_self_test_probe_fires, [])),
+        Profile.I: KnownGap("The reference capability is deliberately missing.", detect=assert_the_reference_capability_exists)},
+)
+@due_work_contract_suite(contract)
+class TestAssessmentProbes:
+    pass
+""")
+    destination = pytester.path / "profiles.json"
+    result = pytester.runpytest_subprocess("-q", f"--due-work-profile-report={destination}")
+    assert result.ret == pytest.ExitCode.OK
+    report = next(iter(json.loads(destination.read_text()).values()))["profiles"]
+    assert report["I"]["cases"]["I-known_gap"]["outcomes"]["call"] == ["xfail"]
+    assert report["A"]["cases"]["A-declined"]["passed"]
+    assert not report["A"]["verified"] and not report["I"]["verified"]

@@ -2,7 +2,8 @@
 
 This is the adoption map for the generated capabilities ported in #34. CI runs
 these contracts with `--due-work-require-assessed` and uploads executed JSON
-profile reports. The option rejects assessment debt before `-k`/marker filtering;
+profile reports. CI also checks required adopter names and executed profiles
+against those reports, so deleting a suite cannot leave an empty green report. The option rejects assessment debt before `-k`/marker filtering;
 reports distinguish declarations, selected cases, actual outcomes and verification.
 A Decline or known gap remains unverified. A report covers collected suites only.
 

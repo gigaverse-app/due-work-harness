@@ -915,6 +915,13 @@ def _eligibility_errors(contract: DueWorkContract) -> list[str]:
     if contract.eligibility is None:
         return []
     errors: list[str] = []
+    disposition = contract.profiles.get(Profile.G)
+    if (
+        isinstance(disposition, Claim)
+        and "assert_gate_is_recovered_by_the_contract_sweep" in disposition.gaps
+        and not _claims_recovery(contract)
+    ):
+        errors.append("a gate/sweep composition gap requires claimed automatic recovery with a sweep")
     if isinstance(contract.eligibility, Mapping):
         if not contract.eligibility:
             errors.append("eligibility variants cannot be empty")
@@ -1103,7 +1110,15 @@ class ContractCase(HarnessModel):
 
     @property
     def assessment_only(self) -> bool:
-        """Assessment records never certify an executed behavioral guarantee."""
+        """Pure declarations are not execution; real detect/prove callbacks carry evidence.
+
+        An executed gap or decline still cannot verify its profile: coverage's
+        assessment state must be claimed before any passing cases can certify it.
+        """
+        if isinstance(self.assessment, KnownGap):
+            return self.assessment.detect is None
+        if isinstance(self.assessment, Decline):
+            return self.assessment.prove is None
         return self.assessment is not None
 
     def __repr__(self) -> str:

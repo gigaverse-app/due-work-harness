@@ -17,7 +17,7 @@ def rq_run(operation: Callable[[], None]) -> None:
         job = Queue("catalog", connection=CONNECTION).enqueue(execute, identity)
         worker_pass(CONNECTION, ["catalog"])()
         assert job.get_status(refresh=True) == JobStatus.FINISHED, job.exc_info
-        job.delete()
+        # The empty_redis fixture owns cleanup after the proof, not this worker path.
 
 
 CONTRACT = catalog_contract("catalog on RQ", rq_run).model_copy(update={"fixtures": ("empty_redis",)})

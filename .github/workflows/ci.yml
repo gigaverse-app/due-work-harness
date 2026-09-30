@@ -74,6 +74,7 @@ jobs:
       - run: uv pip install 'pydantic==2.11.0'
       - run: uv run --no-sync python scripts/check_core_is_framework_free.py
       - run: uv run --no-sync pytest tests/core
+      - run: uv run --no-sync pytest examples/adopter/tests --due-work-require-assessed
 
   exploration:
     runs-on: ubuntu-latest
@@ -158,6 +159,9 @@ jobs:
       # empty theirs cannot wipe another worker's; four workers use all 16 of the service's databases.
       - run: uv run --no-sync pytest tests/rq tests/celery_worker -p no:django -rxX -n 4 --durations=10 --due-work-explore=smoke --due-work-require-assessed --due-work-profile-report=profiles-redis.json
 
+      - name: Require the promised adopters and executed capabilities
+        run: |
+          uv run --no-sync python scripts/check_adoption_report.py profiles-redis.json --contract "catalog on RQ" --contract "catalog through Celery" --verified E G H I
       - name: Keep executed profile evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -228,6 +232,9 @@ jobs:
       - run: uv sync --locked --no-default-groups --extra prefect --extra exploration
       - run: uv run --no-sync pytest tests/prefect -q --due-work-explore=smoke --due-work-require-assessed --due-work-profile-report=profiles-prefect.json
 
+      - name: Require the promised adopters and executed capabilities
+        run: |
+          uv run --no-sync python scripts/check_adoption_report.py profiles-prefect.json --contract "catalog through Prefect flow body" --verified E G H I
       - name: Keep executed profile evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -316,6 +323,11 @@ jobs:
           working-directory: demos/wagtail_tasks
           package: ${{ github.workspace }}
 
+      - name: Require the promised adopters and executed capabilities
+        run: |
+          uv run --no-sync python scripts/check_adoption_report.py profiles-procrastinate.json --contract "procrastinate demo_django: create book" --contract "procrastinate demo_django: create book, with its fixes" --exercised I
+          uv run --no-sync python scripts/check_adoption_report.py profiles-dbos.json --contract "DBOS transactional-outbox: place order" --verified I
+          uv run --no-sync python scripts/check_adoption_report.py demos/wagtail_tasks/profiles-wagtail.json --contract "wagtail: deleting an image or a document" --contract "wagtail: publishing a page behind a CDN" --exercised I
       - name: Keep executed profile evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -380,6 +392,9 @@ jobs:
       - name: Saleor checkout
         run: demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --reuse-db --durations=15 --due-work-require-assessed --due-work-profile-report=profiles-saleor.json
 
+      - name: Require the promised adopters and executed capabilities
+        run: |
+          demos/.upstream/saleor/.venv/bin/python scripts/check_adoption_report.py demos/saleor_checkout/profiles-saleor.json --contract "saleor checkout" --contract "saleor checkout, Transactions API with automatic completion" --exercised I
       - name: Keep executed profile evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -433,6 +448,9 @@ jobs:
       - name: Replay and sensitivity controls
         working-directory: examples/adopter
         run: uv run --no-sync pytest tests/test_catalog_failures.py
+      - name: Require example capabilities
+        working-directory: examples/adopter
+        run: uv run --no-sync python ../../scripts/check_adoption_report.py profiles-example.json --contract "example catalog" --verified E G H I
       - name: Keep example profile evidence
         if: always()
         uses: actions/upload-artifact@v4
