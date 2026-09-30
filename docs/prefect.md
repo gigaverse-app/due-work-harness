@@ -28,3 +28,8 @@ bodies. Awaiting the outer coroutine is insufficient when it returns a generator
 or another awaitable. Schedule evidence checks the first **three future** runs,
 excluding a tick exactly at `start`; it is a bounded declaration check, not proof
 that an RRule continues forever or that a deployed worker executes those runs.
+
+A rejected asyncio task/future belonging to the supplied runner is cancelled and
+drained before the binding raises, so it cannot resume when the next history
+uses that loop. Unrelated caller tasks and futures on other event loops remain
+caller-owned. This is not a whole-loop or whole-process termination guarantee.

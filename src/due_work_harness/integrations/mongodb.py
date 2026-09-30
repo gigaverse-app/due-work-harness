@@ -58,6 +58,7 @@ def _writes(spec: dict[str, Any]) -> bool:
 @contextmanager
 def _watching(client: Any, before: Callable[[], None], committed: Callable[[], None]) -> Iterator[None]:
     import pytest
+    from pymongo.synchronous.bulk import _Bulk
     from pymongo.synchronous.mongo_client import MongoClient
     from pymongo.synchronous.pool import Connection
 
@@ -70,6 +71,7 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
     original_write = Connection.write_command
     original_send = Connection.send_message
     original_unack = Connection.unack_write
+    original_bulk_unack = _Bulk.execute_no_results
 
     @contextmanager
     def checkout(self: Any, server: Any, session: Any) -> Iterator[Any]:
@@ -82,13 +84,17 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
             finally:
                 active.reset(token)
 
+    def refuse_unacknowledged() -> None:
+        if active.get()[0]:
+            raise DueWorkContractDesignError("MongoDB histories require acknowledged writes (w >= 1)")
+
     def command(self: Any, dbname: str, spec: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
         watched, session = active.get()
         if watched:
             before()
             concern = kwargs.get("write_concern")
             if spec.get("writeConcern", {}).get("w") == 0 or (concern is not None and not concern.acknowledged):
-                raise DueWorkContractDesignError("MongoDB histories require acknowledged writes (w >= 1)")
+                refuse_unacknowledged()
         in_transaction = session is not None and session.in_transaction
         result = original_command(self, dbname, spec, *args, **kwargs)
         if watched and _writes(spec) and (not in_transaction or "commitTransaction" in spec):
@@ -111,9 +117,14 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
         return original_send(self, *args, **kwargs)
 
     def unack_write(self: Any, *args: Any, **kwargs: Any) -> Any:
-        if active.get()[0]:
-            raise DueWorkContractDesignError("MongoDB histories require acknowledged writes (w >= 1)")
+        refuse_unacknowledged()
         return original_unack(self, *args, **kwargs)
+
+    def bulk_unack(self: Any, *args: Any, **kwargs: Any) -> Any:
+        # Ordered w=0 bulks internally use acknowledged commands to stop on errors.
+        # Reject the caller's original concern before that conversion sends a batch.
+        refuse_unacknowledged()
+        return original_bulk_unack(self, *args, **kwargs)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(MongoClient, "_checkout", checkout)
@@ -121,6 +132,7 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
         patch.setattr(Connection, "write_command", write_command)
         patch.setattr(Connection, "send_message", send_message)
         patch.setattr(Connection, "unack_write", unack_write)
+        patch.setattr(_Bulk, "execute_no_results", bulk_unack)
         yield
 
 

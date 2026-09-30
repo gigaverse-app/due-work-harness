@@ -101,3 +101,53 @@ def test_hourly_schedule_at_exact_tick_still_has_three_future_runs():
             within=timedelta(hours=1),
             runner=runner,
         )
+
+
+@pytest.mark.parametrize("await_child", [False, True])
+def test_rejected_task_cannot_resume_during_a_later_history(await_child):
+    effects = []
+    release = asyncio.Event()
+
+    async def effect():
+        await release.wait()
+        effects.append("written")
+        return "done"
+
+    @flow
+    async def application():
+        task = asyncio.create_task(effect())
+        if await_child:
+            release.set()
+            return await task
+        return task
+
+    async def next_history():
+        release.set()
+        await asyncio.sleep(0)
+
+    with asyncio.Runner() as runner:
+        call = prefect_flow_call(application, runner)
+        if await_child:
+            assert call() == "done"
+        else:
+            with pytest.raises(DueWorkContractDesignError, match="deferred work"):
+                call()
+        runner.run(next_history())
+        assert effects == (["written"] if await_child else [])
+
+
+def test_rejected_task_is_cancelled_before_the_runner_is_resumed():
+    effects = []
+
+    async def ready_effect():
+        await asyncio.sleep(0)
+        effects.append("written")
+
+    @flow
+    async def application():
+        return asyncio.create_task(ready_effect())
+
+    with asyncio.Runner() as runner:
+        with pytest.raises(DueWorkContractDesignError, match="deferred work"):
+            prefect_flow_call(application, runner)()
+        assert effects == []

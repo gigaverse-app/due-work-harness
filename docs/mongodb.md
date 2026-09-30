@@ -10,7 +10,9 @@ batches, `$out`/`$merge`, and explicit transaction commits. Transactional writes
 are not durable boundaries until commit. Reads and aborted transactions do not
 count. Each bulk wire batch is one boundary; a batch can contain multiple
 documents. A batch that inserts some documents before reporting a duplicate-key
-error still exposes its acknowledged boundary. Unknown commands count conservatively. Writes using `w=0` are refused.
+error still exposes its acknowledged boundary. Unknown commands count conservatively. Writes using `w=0` are refused before dispatch, including ordered bulks whose
+driver internally converts them into acknowledged commands. `$out` and `$merge`
+have real-server controls alongside read-only aggregation.
 
 Death fences subsequent commands on that client, including commands issued
 from Motor executor threads and finally blocks. Independent clients remain
