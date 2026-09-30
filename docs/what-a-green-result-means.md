@@ -184,16 +184,24 @@ order, for every host:
 
 1. A seam's refusal (a deferred result the harness cannot observe honestly) is
    raised, even when production swallowed it or wrapped it in its own error.
-2. A failed assertion, bare or inside an exception group, is raised: an
-   invariant failing is a defect whatever happened before it.
-3. After a simulated worker death, any other exception is absorbed: it was
-   raised on the way out (a connection close, a `finally`), which a dead
-   process never runs.
+2. After a simulated worker death, everything is absorbed, a failed assertion
+   included: it was raised on the way out (a connection close, a `finally`, a
+   cleanup's check), which a dead process never runs. A death raised inside a
+   task group arrives as a group holding `WorkerDied`, and is the death.
+3. Otherwise a failed assertion, bare or anywhere inside an exception group,
+   is raised: an invariant failing is a defect whatever happened before it.
 4. After an injected failure (a failed after-commit callback or signal
    receiver, a refused publication, a lost reply), an exception is absorbed
-   only when it is that failure or was raised while handling it or from it:
-   that is the application's own response, as a real request errors.
-5. Anything else fails the history.
+   when it is that failure, is raised from it (`raise ... from error`), is a
+   deliberate translation of it (`raise ... from None` in its handler), or is
+   a group made only of such exceptions: that is the application's own
+   response, as a real request errors.
+5. Anything else fails the history. An error raised inside the failure's
+   handler without `from` is linked to it only implicitly and is usually a bug
+   in the handler; it, and an error not linked at all, carry a note saying to
+   chain it if it is a deliberate response.
+
+The Gigaverse backend's copy of the harness applies the same rule.
 
 A divergence always raises `HistoriesDiverged`, and a declared handoff gap is a
 strict xfail for that alone; a broken binding, a failed positive control or an

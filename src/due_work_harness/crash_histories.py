@@ -70,19 +70,27 @@ no message separate from the database, so its delivery declares
 ``can_lose = False`` and the lost-notification history is not applicable.
 
 What a history does with an exception that reaches it from the transition,
-in this order (the same rule in every host):
+in this order (the same rule in every host, and in the Gigaverse backend's copy):
 
 1. A seam's refusal (a deferred result it cannot observe) is raised, even when
    production swallowed or wrapped it.
-2. A failed assertion, bare or inside an exception group, is raised: an
-   invariant failing is a defect, whatever happened before it.
-3. After a simulated worker death, any other exception is absorbed: it was
-   raised on the way out (a close, a ``finally``), which a dead process never runs.
+2. After a simulated worker death, everything is absorbed, a failed assertion
+   included: it was raised on the way out (a close, a ``finally``, a cleanup's
+   check), which a dead process never runs. The death itself may arrive inside
+   an exception group (a task group); a group holding ``WorkerDied`` is the
+   death. ``WorkerDied`` without a simulated death is refused.
+3. Otherwise a failed assertion, bare or anywhere inside an exception group,
+   is raised: an invariant failing is a defect, whatever happened before it.
 4. After an injected failure (a failed callback or receiver, a refused
-   publication, a lost reply), an exception is absorbed only when it is that
-   failure or was raised while handling it or from it: the application's own
+   publication, a lost reply), an exception is absorbed when it is that
+   failure, reaches it through ``__cause__`` (``raise … from failure``), is a
+   deliberate translation (``raise … from None`` while handling it), or is a
+   group every member of which is one of those: the application's own
    response, as a real request errors.
-5. Anything else fails the history.
+5. Anything else fails the history. An error linked to the injected failure
+   only implicitly, through ``__context__`` (raised inside the handler
+   without ``from``), is usually a bug in the handler; it and an error not
+   linked at all get a note saying to chain it.
 
 What these histories do not claim:
 
@@ -575,21 +583,9 @@ def _run(
         with _worker(history, crash_after, crash_after_call, inject) as worker:
             try:
                 history.transition(handle)
-            except WorkerDied:
-                assert worker.dead, "WorkerDied escaped from something other than the simulated death"
-            except Exception as error:
-                # A seam's refusal is reported as itself, even when production wrapped it in its own error.
-                if worker.refused is not None and error is not worker.refused:
-                    raise worker.refused from error
-                if worker.refused is not None:
-                    raise
-                # An invariant failing, in production or in a proof, is never absorbed, bare or grouped.
-                if _is_assertion_failure(error):
-                    raise
-                # Raised on the way out of a dead worker (a close, a finally): a dead process runs none of it.
-                # Otherwise an injected failure reached the caller, as the framework and the application let
-                # it: a real request errors here.
-                if not worker.dead and not any(_caused_by(error, failure) for failure in worker.injected_failures):
+            # KeyboardInterrupt and SystemExit are the operator's, never the history's to judge.
+            except (Exception, WorkerDied, BaseExceptionGroup) as error:
+                if not _absorbed(error, worker):
                     raise
             else:
                 assert not worker.dead, (
@@ -628,21 +624,88 @@ def _run(
     )
 
 
-def _is_assertion_failure(error: BaseException) -> bool:
-    """A failed assertion, reported bare or inside an exception group."""
-    if isinstance(error, BaseExceptionGroup):
-        return error.subgroup(AssertionError) is not None
-    return isinstance(error, AssertionError)
+def _absorbed(error: BaseException, worker: _Worker) -> bool:
+    """
+    Whether a history absorbs an exception from its transition: the absorption rule, in the module docstring.
 
-
-def _caused_by(error: BaseException, cause: BaseException) -> bool:
-    """Whether ``error`` is ``cause``, or was raised while handling it or from it."""
-    seen: BaseException | None = error
-    while seen is not None:
-        if seen is cause:
-            return True
-        seen = seen.__cause__ or seen.__context__
+    Returns False for an exception the caller must re-raise, and raises itself
+    only where the report is something other than ``error`` (a seam's refusal,
+    a death that was never simulated).
+    """
+    # 1. A seam's refusal is reported as itself, even when production wrapped it in its own error.
+    if worker.refused is not None:
+        if error is worker.refused:
+            return False
+        raise worker.refused from error
+    leaves = list(_leaves(error))
+    if any(not isinstance(leaf, (Exception, WorkerDied)) for leaf in leaves):
+        return False  # an interrupt or exit inside a group is the operator's
+    if any(isinstance(leaf, WorkerDied) for leaf in leaves):
+        assert worker.dead, "WorkerDied escaped from something other than the simulated death"
+    # 2. A dead process runs nothing on its way out: whatever a close, a finally or a check raised there, it
+    # raised because the harness killed the worker under it.
+    if worker.dead:
+        return True
+    # 3. An invariant failing, in production or in a proof, is never absorbed, bare or grouped.
+    if any(isinstance(leaf, AssertionError) for leaf in leaves):
+        return False
+    failures = worker.injected_failures
+    # 4. The injected failure reached the caller, as the framework and the application let it, or the
+    # application answered it with its own error, chained on purpose: a real request errors here.
+    if any(_caused_by(error, failure, frozenset()) for failure in failures):
+        return True
+    # 5. Anything else is a defect of its own; say how to make a deliberate response recognisable.
+    for failure in failures:
+        where = "while handling" if _handled_during(error, failure, frozenset()) else "after"
+        error.add_note(
+            f"due-work-harness: raised {where} the injected failure {failure!r}, but not chained from it, so "
+            f"the history fails. If this is the application's response to that failure, raise it from the "
+            f"failure ('raise ... from error'), or 'from None' to replace it on purpose"
+        )
     return False
+
+
+def _leaves(error: BaseException) -> Iterator[BaseException]:
+    """The exceptions an exception group holds, at any depth; an ordinary exception is its own leaf."""
+    if isinstance(error, BaseExceptionGroup):
+        for member in error.exceptions:
+            yield from _leaves(member)
+    else:
+        yield error
+
+
+def _caused_by(error: BaseException, cause: BaseException, path: frozenset[int]) -> bool:
+    """
+    Whether ``error`` is ``cause``, was raised from it, deliberately translates it, or is a group of such errors.
+
+    Explicit links only: ``__cause__`` (``raise … from``), and ``__context__``
+    when ``from None`` suppressed it (a translation made while handling the
+    failure). An exception's chain can cycle, so ``path`` holds the exceptions
+    already on the way here.
+    """
+    if error is cause:
+        return True
+    if id(error) in path:
+        return False
+    path = path | {id(error)}
+    if isinstance(error, BaseExceptionGroup) and all(_caused_by(m, cause, path) for m in error.exceptions):
+        return True
+    if error.__cause__ is not None:
+        return _caused_by(error.__cause__, cause, path)
+    return error.__suppress_context__ and error.__context__ is not None and _caused_by(error.__context__, cause, path)
+
+
+def _handled_during(error: BaseException, cause: BaseException, path: frozenset[int]) -> bool:
+    """Whether ``error`` was raised while ``cause`` was being handled: linked by ``__context__`` alone."""
+    if error is cause:
+        return True
+    if id(error) in path:
+        return False
+    path = path | {id(error)}
+    links = [error.__cause__, error.__context__]
+    if isinstance(error, BaseExceptionGroup):
+        links.extend(error.exceptions)
+    return any(link is not None and _handled_during(link, cause, path) for link in links)
 
 
 def assert_handoff_bindings_are_production_bound(delivery: Delivery, history: HandoffHistory[Any, Any]) -> None:

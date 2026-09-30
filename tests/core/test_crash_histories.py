@@ -214,3 +214,47 @@ def test_an_assertion_inside_an_exception_group_after_an_injected_failure_is_nev
             ref.COMPLETION_DELIVERY, _completion(ref.complete_grouping_its_assertion_on_error)
         )
     assert raised.value.subgroup(AssertionError) is not None
+
+
+def test_an_assertion_on_the_way_out_of_a_dead_worker_is_absorbed(ledger_host: Host) -> None:
+    # The cleanup's check fails only because the worker died under it; a dead process runs no cleanup.
+    assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, _retry(ref.fail_with_atomic_handoff_checking_in_cleanup))
+
+
+def test_a_death_inside_a_task_group_is_the_death(ledger_host: Host) -> None:
+    assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, _retry(ref.fail_with_atomic_handoff_in_a_task_group))
+
+
+def test_a_task_group_reporting_the_injected_failure_is_absorbed(replying_ledger_host: Host) -> None:
+    assert_crash_at_every_commit_converges(
+        ref.COMPLETION_DELIVERY, _completion(ref.complete_in_a_task_group_checking_on_error)
+    )
+
+
+def test_a_deliberate_translation_of_the_injected_failure_is_absorbed(replying_ledger_host: Host) -> None:
+    assert_crash_at_every_commit_converges(ref.COMPLETION_DELIVERY, _completion(ref.complete_translating_a_lost_reply))
+
+
+@pytest.mark.parametrize(
+    ("transition", "note"),
+    [
+        (ref.complete_raising_unchained_on_error, "while handling the injected failure"),
+        (ref.complete_raising_unlinked_after_error, "after the injected failure"),
+    ],
+    ids=["implicit-context-only", "unlinked"],
+)
+def test_an_error_not_chained_from_the_injected_failure_fails_the_history_with_a_note(
+    replying_ledger_host: Host, transition: Callable[[int], Any], note: str
+) -> None:
+    with pytest.raises(ref.CompletionUnconfirmed) as raised:
+        assert_crash_at_every_commit_converges(ref.COMPLETION_DELIVERY, _completion(transition))
+    notes = "\n".join(getattr(raised.value, "__notes__", ()))
+    assert note in notes, notes
+    assert "raise it from the failure" in notes, notes
+
+
+def test_a_group_with_a_death_raised_by_a_live_worker_is_refused(ledger_host: Host) -> None:
+    with pytest.raises(AssertionError, match="WorkerDied escaped from something other than the simulated death"):
+        assert_crash_at_every_commit_converges(
+            ref.RETRY_DELIVERY, _retry(ref.fail_with_atomic_handoff_then_a_group_with_its_own_death)
+        )
