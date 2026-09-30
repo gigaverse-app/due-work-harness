@@ -29,15 +29,19 @@ and make the adapter forward to it.
 """
 
 import ast
+import builtins
+import contextlib
 import dis
 import functools
 import inspect
 import sys
 import textwrap
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterator, Mapping
 from pathlib import Path
-from types import CodeType, ModuleType
+from types import CodeType, MethodType, ModuleType
 from typing import Any
+
+import pytest
 
 from due_work_harness.host import production_packages
 
@@ -90,43 +94,124 @@ INVOCATION_AUTHORING_OPERATIONS = SELECTION_AUTHORING_OPERATIONS | TRANSITION_AU
 #: bindings it feeds are production-bound. A test-side ``pytest.raises`` around
 #: a shared proof can "prove" anything by feeding the proof a synthetic
 #: implementation and celebrating the failure. ``AssertionError`` counts only
-#: where an ``except`` clause matches it: *raising* it is what every ``assert``
-#: does once pytest rewrites the test module, so its bare name proves nothing.
+#: where a handler catches it (naming it, ``Exception`` or ``BaseException``, or
+#: a bare ``except``; see :func:`_catches_assertion_error`): *raising* it is what
+#: every ``assert`` does once pytest rewrites the test module, so its bare name
+#: proves nothing. ``suppress`` and ``raises`` count under any imported name.
 ASSERTION_INVERSION_NAMES = frozenset({"raises", "AssertionError", "suppress"})
 
 
-def _catches_assertion_error(code: CodeType) -> bool:
-    """
-    Whether ``code`` (or a function nested in it) matches ``AssertionError`` in an ``except`` clause.
+#: Exception types whose handler also catches the ``AssertionError`` a failing proof raises.
+_ASSERTION_CATCHING_TYPES = frozenset({"AssertionError", "Exception", "BaseException"})
 
-    From each load of the name, the first of ``CHECK_EXC_MATCH`` (the clause's
-    type test, reached through any tuple of types) and ``RAISE_VARARGS`` (a
-    ``raise``, which pytest's rewritten asserts compile to) decides.
-    """
-    instructions = list(dis.get_instructions(code))
-    for index, instruction in enumerate(instructions):
-        if instruction.argval != "AssertionError" or not instruction.opname.startswith("LOAD_"):
-            continue
-        following = (later.opname for later in instructions[index + 1 :])
-        if (
-            next((name for name in following if name in ("CHECK_EXC_MATCH", "RAISE_VARARGS")), None)
-            == "CHECK_EXC_MATCH"
-        ):
-            return True
-    return any(isinstance(constant, CodeType) and _catches_assertion_error(constant) for constant in code.co_consts)
+#: The first of these after a load of ``AssertionError`` decides it: a match is an ``except``
+#: clause (``except*`` included), a raise is what pytest's rewritten ``assert`` compiles to.
+_EXCEPTION_MATCH_OR_RAISE = frozenset({"CHECK_EXC_MATCH", "CHECK_EG_MATCH", "RAISE_VARARGS"})
+
+#: The objects behind the inversion names, so an aliased import (``suppress as quietly``) is seen too.
+_INVERTING_OBJECTS: dict[str, object] = {"suppress": contextlib.suppress, "raises": pytest.raises}
 
 
-def _inversion_names(code: CodeType) -> set[str]:
-    names = set(code.co_names)
+def _nested_code(code: CodeType) -> Iterator[CodeType]:
+    """``code`` and every function, lambda and comprehension defined inside it, at any depth."""
+    yield code
     for constant in code.co_consts:
         if isinstance(constant, CodeType):
-            names |= set(constant.co_names)
+            yield from _nested_code(constant)
+
+
+def _catches_assertion_error_in_bytecode(code: CodeType) -> bool:
+    """The fallback when the source cannot say: ``AssertionError`` tested by an ``except`` clause."""
+    for nested in _nested_code(code):
+        instructions = list(dis.get_instructions(nested))
+        for index, instruction in enumerate(instructions):
+            if instruction.argval != "AssertionError" or not instruction.opname.startswith("LOAD_"):
+                continue
+            following = (later.opname for later in instructions[index + 1 :])
+            decider = next((name for name in following if name in _EXCEPTION_MATCH_OR_RAISE), None)
+            if decider in ("CHECK_EXC_MATCH", "CHECK_EG_MATCH"):
+                return True
+    return False
+
+
+def _catches_assertion_error(code: CodeType, tree: ast.Module | None, namespace: Mapping[str, object]) -> bool:
+    """
+    Whether ``code`` (or a function nested in it, at any depth) has a handler that swallows ``AssertionError``.
+
+    Read from the source: a bare ``except``, or an ``except``/``except*`` naming
+    ``AssertionError``, ``Exception`` or ``BaseException`` directly, in a tuple,
+    starred, or through a name bound to one of them locally (plain or annotated
+    assignment) or in ``namespace`` (the probe's module globals over the
+    builtins). A handler that ends in a bare ``raise``, with nothing leaving it
+    earlier, re-raises, so it swallows nothing. Raising ``AssertionError`` is
+    what every ``assert`` does once pytest rewrites the module, so the bare name
+    proves nothing. A handler type the source cannot resolve (a call) and code
+    without source are decided by the bytecode's exception matches.
+    """
+    if tree is None:
+        return _catches_assertion_error_in_bytecode(code)
+    catching = set(_ASSERTION_CATCHING_TYPES)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and _handler_type_catches(node.value, catching, namespace):
+            catching.update(target.id for target in node.targets if isinstance(target, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
+            if _handler_type_catches(node.value, catching, namespace):
+                catching.add(node.target.id)
+    unresolved = False
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Try, ast.TryStar)):
+            continue
+        for handler in node.handlers:
+            if _re_raises(handler):
+                continue
+            verdict = True if handler.type is None else _handler_type_catches(handler.type, catching, namespace)
+            if verdict:
+                return True
+            unresolved = unresolved or verdict is None
+    return unresolved and _catches_assertion_error_in_bytecode(code)
+
+
+def _handler_type_catches(expression: ast.expr, names: Collection[str], namespace: Mapping[str, object]) -> bool | None:
+    """True when the handler type catches ``AssertionError``, False when it cannot, None when the source cannot say."""
+    if isinstance(expression, ast.Tuple):
+        verdicts = [_handler_type_catches(element, names, namespace) for element in expression.elts]
+        return True if any(verdicts) else None if None in verdicts else False
+    if isinstance(expression, ast.Starred):
+        return _handler_type_catches(expression.value, names, namespace)
+    if isinstance(expression, ast.Attribute):
+        return expression.attr in names
+    if not isinstance(expression, ast.Name):
+        return None
+    if expression.id in names:
+        return True
+    if expression.id not in namespace:
+        return None
+    return _value_catches_assertion_error(namespace[expression.id])
+
+
+def _value_catches_assertion_error(value: object) -> bool | None:
+    """Whether an ``except`` naming ``value`` catches ``AssertionError``; None when ``value`` is not a handler type."""
+    if isinstance(value, tuple):
+        verdicts = [_value_catches_assertion_error(element) for element in value]
+        return True if any(verdicts) else None if None in verdicts else False
+    if isinstance(value, type) and issubclass(value, BaseException):
+        return issubclass(AssertionError, value)
+    return None
+
+
+def _inversion_names(code: CodeType, namespace: Mapping[str, object]) -> set[str]:
+    names = {name for nested in _nested_code(code) for name in nested.co_names}
     found = names & (ASSERTION_INVERSION_NAMES - {"AssertionError"})
+    found |= {
+        name
+        for name, inverter in _INVERTING_OBJECTS.items()
+        if any(namespace.get(bound) is inverter for bound in names)
+    }
     tree = _source_tree(code)
-    leaves_finally = tree is not None and _leaves_a_finally_early(tree)
-    if leaves_finally:
-        found.add("finally")
-    if _catches_assertion_error(code) and (leaves_finally or tree is None or not _every_handler_re_raises(tree)):
+    if tree is not None and _leaves_a_finally_early(tree):
+        # A return, break or continue leaving a finally discards the exception in flight, whatever was caught.
+        found |= {"finally", "AssertionError"}
+    elif _catches_assertion_error(code, tree, namespace):
         found.add("AssertionError")
     return found
 
@@ -138,20 +223,15 @@ def _source_tree(code: CodeType) -> ast.Module | None:
         return None
 
 
-def _every_handler_re_raises(tree: ast.Module) -> bool:
-    """
-    Whether every ``except`` handler in the source ends in a bare ``raise`` and cannot leave another way.
-
-    A handler that annotates an assertion (``add_note``) or logs it and then
-    re-raises it inverts nothing: the assertion reaches the case as itself. The
-    bytecode says an ``AssertionError`` is matched; the source says what the
-    handler does with it. Every handler is held to it, whatever it matches, so
-    an aliased ``AssertionError`` cannot slip through a handler that swallows.
-    Without source, nothing is exonerated; with a ``finally`` that leaves early
-    (see :func:`_leaves_a_finally_early`), neither is the re-raise.
-    """
-    handlers = [node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)]
-    return bool(handlers) and all(_re_raises(handler) for handler in handlers)
+def _namespace(binding: Callable[..., Any]) -> Mapping[str, object]:
+    """The names a binding's code resolves at run time: its module's globals over the builtins."""
+    while isinstance(binding, functools.partial):
+        binding = binding.func
+    function = inspect.unwrap(binding.__func__ if isinstance(binding, MethodType) else binding)
+    if not inspect.isfunction(function):
+        function = type(binding).__call__
+    module_globals = function.__globals__ if inspect.isfunction(function) else {}
+    return {**vars(builtins), **module_globals}
 
 
 def _leaves_a_finally_early(tree: ast.Module) -> bool:
@@ -188,8 +268,9 @@ def _escapes(node: ast.AST, *, in_loop: bool) -> bool:
 
 
 def _re_raises(handler: ast.ExceptHandler) -> bool:
+    """Whether every way out of the handler is its closing bare ``raise``: no return, break or continue first."""
     last = handler.body[-1]
-    leaves = any(isinstance(node, (ast.Return, ast.Break, ast.Continue)) for node in ast.walk(handler))
+    leaves = any(_escapes(statement, in_loop=False) for statement in handler.body)
     return isinstance(last, ast.Raise) and last.exc is None and not leaves
 
 
@@ -570,7 +651,7 @@ def authored_inversion_names(binding: Callable[..., Any], *, seen: set[int] | No
     if code is None or not is_test_code(code) or is_harness_owned(code):
         return set()
 
-    inverted = _inversion_names(code)
+    inverted = _inversion_names(code, _namespace(binding))
     for nested in _nested_test_callables(binding):
         inverted.update(authored_inversion_names(nested, seen=seen))
     return inverted
