@@ -182,6 +182,7 @@ def test_inflight_commit_does_not_resume_a_dead_worker(dies):
             worker = CommitWorker(None)
             with aiokafka_fenced(consumer, worker):
                 # Hold the driver's actual commit mutex; no broker response or client method is mocked.
+                assert consumer._coordinator is not None, "consumer.start established the coordinator"
                 async with consumer._coordinator._commit_lock:
                     pending = asyncio.create_task(consumer.commit({partition: 1}))
                     await asyncio.sleep(0)
