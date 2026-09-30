@@ -21,6 +21,7 @@ FRAMEWORKS = (
     "motor",
     "prefect",
     "confluent_kafka",
+    "aiokafka",
 )
 core = [
     m.name
