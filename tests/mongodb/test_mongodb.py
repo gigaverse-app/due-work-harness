@@ -35,19 +35,24 @@ def collection(client):
     client.drop_database(collection.database.name)
 
 
-@pytest.mark.parametrize("write", ["insert", "update", "findAndModify", "bulk"])
+def write_owed(collection, operation):
+    """Exercise the same collection operations with acknowledged and w=0 clients."""
+    if operation == "insert":
+        collection.insert_one({"_id": "owed"})
+    elif operation == "update":
+        collection.update_one({"_id": "owed"}, {"$set": {"due": True}}, upsert=True)
+    elif operation == "findAndModify":
+        collection.find_one_and_update({"_id": "owed"}, {"$set": {"due": True}}, upsert=True)
+    else:
+        collection.insert_many([{"_id": "owed"}, {"_id": "other"}], ordered=operation != "bulk_unordered")
+
+
+@pytest.mark.parametrize("write", ["insert", "update", "findAndModify", "bulk", "bulk_unordered"])
 def test_death_occurs_after_the_write_and_blocks_finally_reads_and_writes(client, collection, write):
     collection.insert_one({"_id": "before"})
     with mongodb_worker_killer(client)(1) as worker:
         with pytest.raises(WorkerDied):
-            if write == "insert":
-                collection.insert_one({"_id": "owed"})
-            elif write == "update":
-                collection.update_one({"_id": "owed"}, {"$set": {"due": True}}, upsert=True)
-            elif write == "findAndModify":
-                collection.find_one_and_update({"_id": "owed"}, {"$set": {"due": True}}, upsert=True)
-            else:
-                collection.insert_many([{"_id": "owed"}, {"_id": "other"}])
+            write_owed(collection, write)
         assert worker.commits == 1
         with pytest.raises(WorkerDied):
             collection.find_one({})
@@ -94,11 +99,12 @@ def test_transaction_counts_only_the_commit_and_abort_is_not_a_commit(client, co
     assert collection.find_one({"_id": "owed"})["due"] is True
 
 
-def test_unacknowledged_writes_are_refused_before_they_can_escape(client, collection):
+@pytest.mark.parametrize("write", ["insert", "update", "findAndModify", "bulk", "bulk_unordered"])
+def test_unacknowledged_writes_are_refused_before_they_can_escape(client, collection, write):
     with mongodb_worker_killer(client)(None):
         with pytest.raises(DueWorkContractDesignError, match="acknowledged"):
-            collection.with_options(write_concern=WriteConcern(w=0)).insert_one({"_id": "escape"})
-    assert collection.find_one({"_id": "escape"}) is None
+            write_owed(collection.with_options(write_concern=WriteConcern(w=0)), write)
+    assert collection.find_one({"_id": "owed"}) is None
 
 
 def test_motor_writes_are_counted_on_the_delegate_client(collection):
@@ -161,3 +167,15 @@ def test_partial_bulk_failure_still_exposes_the_acknowledged_write(client, colle
         with pytest.raises(WorkerDied):
             collection.insert_many([{"_id": "owed"}, {"_id": "duplicate"}], ordered=ordered)
     assert collection.find_one({"_id": "owed"}) is not None
+
+
+@pytest.mark.parametrize("stage", ["$out", "$merge"])
+def test_writing_aggregation_counts_only_after_its_output_is_durable(client, collection, stage):
+    collection.insert_one({"_id": "owed"})
+    output = collection.database.output
+    with mongodb_worker_killer(client)(1) as worker:
+        assert list(collection.aggregate([{"$match": {"_id": "owed"}}])) == [{"_id": "owed"}]
+        assert worker.commits == 0
+        with pytest.raises(WorkerDied):
+            list(collection.aggregate([{stage: output.name}]))
+    assert output.find_one({"_id": "owed"}) == {"_id": "owed"}
