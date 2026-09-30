@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13", "3.14"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -56,9 +56,10 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python }}
       # xdist is no framework: it lets the verify option's self-tests split a session across workers.
-      - run: uv sync --locked --no-default-groups --group xdist
-      - run: uv run --no-sync python scripts/check_core_is_framework_free.py
-      - run: uv run --no-sync pytest tests/core
+      - run: uv sync --python ${{ matrix.python }} --locked --no-default-groups --group xdist
+      - run: uv run --python ${{ matrix.python }} --no-sync python scripts/check_core_is_framework_free.py
+      - run: uv run --python ${{ matrix.python }} --no-sync python -m compileall -q src/due_work_harness
+      - run: uv run --python ${{ matrix.python }} --no-sync pytest tests/core
 
   minimum-models:
     # Exercise nested generic declarations on the supported minimum, without Hypothesis or frameworks.

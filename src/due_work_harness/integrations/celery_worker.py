@@ -43,7 +43,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from due_work_harness.contract import (
     Adoption,
@@ -121,7 +121,11 @@ def running_worker(
             output.close()
 
 
-def worker_history[HandleT, ObservationT](
+HandleT = TypeVar("HandleT")
+ObservationT = TypeVar("ObservationT")
+
+
+def worker_history(
     *,
     name: str,
     app: str,
