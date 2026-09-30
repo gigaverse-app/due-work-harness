@@ -10,7 +10,7 @@ description = "Conformance proofs for background work that must survive lost mes
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [{ name = "Gigaverse" }]
 keywords = ["background jobs", "task queue", "durable execution", "testing", "pytest", "crash testing", "outbox", "rq", "redis"]
 classifiers = [
@@ -18,6 +18,7 @@ classifiers = [
     "Framework :: Pytest",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -83,7 +84,7 @@ exclude = ["docs/demo.gif"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py311"
 extend-exclude = ["demos/.upstream", ".venv*"]
 
 [tool.ruff.lint]
@@ -100,7 +101,7 @@ addopts = "-p no:cacheprovider"
 project-includes = ["src", "tests", "tests_support", "demos", "scripts"]
 # The Saleor demo runs in Saleor's own environment and is type-checked there (see its pyproject.toml).
 project-excludes = ["demos/.upstream/**", "demos/saleor_checkout/**", "**/__pycache__/**", ".venv*/**"]
-python-version = "3.12"
+python-version = "3.11"
 python-platform = "linux"
 # tests_support holds the sample production package the binding self-tests import;
 # the DBOS demo imports the upstream demo module from its pinned checkout.

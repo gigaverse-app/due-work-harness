@@ -21,7 +21,7 @@ Two readings are offered:
 import json
 import re
 from collections.abc import Collection, Iterator, Mapping
-from typing import Any
+from typing import Any, TypeAlias
 
 from due_work_harness.host import ReadCost
 
@@ -41,7 +41,7 @@ def _rendered(plan: dict[str, Any]) -> str:
 
 
 #: A partial index's name, with the columns its predicate constrains (read from the catalog).
-type PredicateIndexes = Mapping[str, Collection[str]] | Collection[str]
+PredicateIndexes: TypeAlias = Mapping[str, Collection[str]] | Collection[str]
 
 
 def index_served_verdict(plan: dict[str, Any], *, table: str, predicate_indexes: PredicateIndexes = ()) -> str | None:
