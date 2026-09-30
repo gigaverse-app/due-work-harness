@@ -37,6 +37,7 @@ def _watching(consumer: Any, before: Callable[[], None], committed: Callable[[],
             if subscription is not None and subscription.assignment is not None:
                 committed_offsets = subscription.assignment.all_consumed_offsets()
         await original_commit(offsets)
+        before()
         if committed_offsets:
             committed()
 

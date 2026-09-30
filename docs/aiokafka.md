@@ -33,3 +33,8 @@ fence unrelated clients or external side effects.
 The broker tests compare uncommitted, normally committed, worker-death and
 lost-reply histories. A restarted consumer repeats the first record only in the
 uncommitted and database-death controls. They run against a real single-node broker on localhost.
+
+A commit already in flight can still land at the broker after worker death. The
+adapter cannot roll it back, but it checks the fence again before returning the
+acknowledgement to application code. The broker suite holds the real coordinator
+commit lock to prove both the live-worker and dead-worker outcomes.

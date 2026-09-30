@@ -156,3 +156,46 @@ def test_fetch_waiting_when_worker_dies_cannot_deliver_later_records(fetch):
             await producer.stop()
 
     asyncio.run(history())
+
+
+@pytest.mark.parametrize("dies", [False, True])
+def test_inflight_commit_does_not_resume_a_dead_worker(dies):
+    """An already-started broker write may land; its success must not revive the caller."""
+
+    async def history():
+        topic, group = f"inflight-{uuid4().hex}", f"inflight-{uuid4().hex}"
+        producer = AIOKafkaProducer(bootstrap_servers=BROKER)
+        await producer.start()
+        try:
+            await producer.send_and_wait(topic, b"owed", partition=0)
+        finally:
+            await producer.stop()
+        partition = TopicPartition(topic, 0)
+        consumer = AIOKafkaConsumer(
+            bootstrap_servers=BROKER, group_id=group, enable_auto_commit=False, auto_offset_reset="earliest"
+        )
+        consumer.assign([partition])
+        await consumer.start()
+        try:
+            await asyncio.wait_for(consumer.getone(), 10)
+            await consumer.commit({partition: 0})  # Establish the real group coordinator.
+            worker = CommitWorker(None)
+            with aiokafka_fenced(consumer, worker):
+                # Hold the driver's actual commit mutex; no broker response or client method is mocked.
+                async with consumer._coordinator._commit_lock:
+                    pending = asyncio.create_task(consumer.commit({partition: 1}))
+                    await asyncio.sleep(0)
+                    assert not pending.done()
+                    if dies:
+                        with pytest.raises(WorkerDied):
+                            worker.kill_now("database died while offset commit was awaiting its lock")
+                if dies:
+                    with pytest.raises(WorkerDied):
+                        await asyncio.wait_for(pending, 10)
+                else:
+                    await asyncio.wait_for(pending, 10)
+            assert await consumer.committed(partition) == 1  # In-flight writes cannot be rolled back by a fence.
+        finally:
+            await consumer.stop()
+
+    asyncio.run(history())
