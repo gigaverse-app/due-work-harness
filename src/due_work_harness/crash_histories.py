@@ -56,7 +56,8 @@ Seven families of histories must reach that same outcome:
 
 The verdict is differential: the adopter supplies how to arrange the state, the
 real transition and an observation, never the expected value. Positive
-controls keep agreement honest: normal operation must change the observation,
+controls keep agreement honest: normal operation must change the observation
+and reach the same observation when run twice (or nothing could be compared with it),
 the transition must commit, every interrupted run must actually be interrupted,
 and when every history converges, recovery must have changed the observation in
 at least one of them — otherwise an inert recovery, or an observation that
@@ -646,6 +647,14 @@ def crash_histories(delivery: Delivery, history: HandoffHistory[Any, Any]) -> li
     assert delivered.after != delivered.before, (
         f"{delivery.name}: handoff {history.name!r} — positive control failed: normal operation left the "
         f"observation unchanged ({delivered.before!r}), so no history could diverge"
+    )
+    # A divergence is evidence only if normal operation reproduces itself: an observation that
+    # differs between two clean runs would make every history "diverge", and a known gap accept it.
+    again = _run(delivery, history, label="normal operation, again")
+    assert again.after == delivered.after, (
+        f"{delivery.name}: handoff {history.name!r} — normal operation observed {delivered.after!r}, then "
+        f"{again.after!r} on a second clean run. The observation is not deterministic, so no history can be "
+        f"compared with it. Leave out identifiers and timestamps that differ between runs"
     )
     runs = [delivered]
     with delivery.session() as probe:

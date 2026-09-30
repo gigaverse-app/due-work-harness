@@ -194,3 +194,13 @@ def test_a_transition_that_changes_nothing_fails_the_positive_control_not_as_a_d
 def test_a_divergence_is_always_a_histories_diverged(ledger_host: Host) -> None:
     with pytest.raises(HistoriesDiverged, match=r"'worker died after commit 1'"):
         assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, _retry(ref.fail_with_split_handoff))
+
+
+def test_an_observation_that_differs_between_clean_runs_is_refused_not_a_divergence(ledger_host: Host) -> None:
+    # The per-run identifier makes every history "diverge"; a known gap must not accept that.
+    history = _retry(ref.fail_with_atomic_handoff).model_copy(
+        update={"observe": lambda attempt: (attempt, *ref.attempt_and_successors(attempt))}
+    )
+    with pytest.raises(AssertionError, match="not deterministic") as raised:
+        assert_crash_at_every_commit_converges(ref.RETRY_DELIVERY, history)
+    assert not isinstance(raised.value, HistoriesDiverged)
