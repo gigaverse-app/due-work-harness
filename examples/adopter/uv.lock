@@ -45,7 +45,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiokafka", marker = "extra == 'kafka'", specifier = ">=0.12,<0.15" },
+    { name = "aiokafka", marker = "extra == 'aiokafka'", specifier = ">=0.12,<0.15" },
     { name = "celery", marker = "extra == 'celery'", specifier = ">=5.3" },
     { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.0" },
     { name = "django", marker = "extra == 'django'", specifier = ">=4.2" },
@@ -64,7 +64,7 @@ requires-dist = [
     { name = "time-machine", marker = "extra == 'redis'", specifier = ">=2.10" },
     { name = "time-machine", marker = "extra == 'rq'", specifier = ">=2.10" },
 ]
-provides-extras = ["celery", "dbos", "django", "kafka", "mongodb", "prefect", "procrastinate", "redis", "rq"]
+provides-extras = ["aiokafka", "celery", "dbos", "django", "mongodb", "prefect", "procrastinate", "redis", "rq"]
 
 [package.metadata.requires-dev]
 demos = [

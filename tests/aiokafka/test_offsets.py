@@ -8,7 +8,11 @@ import pytest
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from aiokafka.errors import RequestTimedOutError
 
-from due_work_harness.integrations.kafka import kafka_fenced, kafka_offset_reply_breaker, kafka_worker_killer
+from due_work_harness.integrations.aiokafka import (
+    aiokafka_fenced,
+    aiokafka_offset_reply_breaker,
+    aiokafka_worker_killer,
+)
 from due_work_harness.models import DueWorkContractDesignError
 from due_work_harness.worker_death import CommitWorker, WorkerDied
 
@@ -43,7 +47,7 @@ def test_restart_reads_broker_committed_offset(fault):
             message = await asyncio.wait_for(first.getone(), 10)
             assert message.value == b"first"
             if fault == "death":
-                with kafka_worker_killer(first)(1) as worker:
+                with aiokafka_worker_killer(first)(1) as worker:
                     with pytest.raises(WorkerDied):
                         await first.commit({partition: message.offset + 1})
                     assert worker.commits == 1 and worker.dead
@@ -53,13 +57,13 @@ def test_restart_reads_broker_committed_offset(fault):
                         await first.commit({partition: message.offset + 2})
             elif fault == "database_death":
                 worker = CommitWorker(None)
-                with kafka_fenced(first, worker):
+                with aiokafka_fenced(first, worker):
                     with pytest.raises(WorkerDied):
                         worker.kill_now("database committed before offset acknowledgement")
                     with pytest.raises(WorkerDied):
                         await first.commit({partition: message.offset + 1})
             elif fault == "lost_reply":
-                with kafka_offset_reply_breaker(first)(1) as replies:
+                with aiokafka_offset_reply_breaker(first)(1) as replies:
                     with pytest.raises(RequestTimedOutError):
                         await first.commit({partition: message.offset + 1})
                     assert replies.count == 1
@@ -85,7 +89,7 @@ def test_auto_commit_cannot_bypass_injected_offset_boundary():
         consumer = AIOKafkaConsumer(bootstrap_servers=BROKER, group_id="unsafe")
         try:
             with pytest.raises(DueWorkContractDesignError, match="auto_commit=False"):
-                with kafka_worker_killer(consumer)(1):
+                with aiokafka_worker_killer(consumer)(1):
                     pass
         finally:
             await consumer.stop()

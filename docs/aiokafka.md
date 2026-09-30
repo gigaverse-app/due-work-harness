@@ -1,8 +1,14 @@
-# Kafka consumer offset failures
+# aiokafka consumer offset failures
 
-Install `due-work-harness[kafka]` for aiokafka. Pass a real `AIOKafkaConsumer` with
-`enable_auto_commit=False` to `kafka_worker_killer(consumer)` or
-`kafka_offset_reply_breaker(consumer)`. Both return context-manager factories
+This adapter is specific to the Python **aiokafka** client. It instruments
+`AIOKafkaConsumer` methods and raises aiokafka exceptions; it is not a
+client-independent Kafka adapter. Clients such as `confluent-kafka` require their
+own adapter, even though the broker-level recovery principles are the same.
+
+Install `due-work-harness[aiokafka]` and import helpers from
+`due_work_harness.integrations.aiokafka`. Pass a real `AIOKafkaConsumer` with
+`enable_auto_commit=False` to `aiokafka_worker_killer(consumer)` or
+`aiokafka_offset_reply_breaker(consumer)`. Both return context-manager factories
 accepting a one-based offset-commit number, or `None` to count only.
 
 The consumer sends its real commit to the broker. After acknowledgement the
@@ -13,7 +19,7 @@ broker's committed offsets/replayed records; do not reconstruct replay in a fake
 
 Use these capabilities in a `Host` for offset-only histories, or directly around
 an application's consumer. A MongoDB history can separately interrupt its durable
-writes before the application reaches its offset commit. Use `kafka_fenced(consumer, database_worker)` around that transition so
+writes before the application reaches its offset commit. Use `aiokafka_fenced(consumer, database_worker)` around that transition so
 shutdown cannot commit offsets after the database worker dies. Do not replace the
 application's handler, completion-watermark or retry logic with the adapter.
 

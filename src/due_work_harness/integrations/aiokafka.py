@@ -1,5 +1,6 @@
 """Faults at aiokafka's acknowledged consumer-offset boundary.
 
+This adapter supports AIOKafkaConsumer only, not other Kafka client libraries.
 Use a real consumer with auto-commit disabled. The broker commits first; only
 then can the worker die or lose its reply. Restart with the same group to observe
 what actually replays. Application handlers, partition watermarks, serialization
@@ -21,7 +22,7 @@ def _watching(consumer: Any, before: Callable[[], None], committed: Callable[[],
     from aiokafka import AIOKafkaConsumer
 
     if not isinstance(consumer, AIOKafkaConsumer) or consumer._enable_auto_commit:
-        raise DueWorkContractDesignError("Kafka offset histories require AIOKafkaConsumer(enable_auto_commit=False)")
+        raise DueWorkContractDesignError("aiokafka offset histories require AIOKafkaConsumer(enable_auto_commit=False)")
     original_commit = consumer.commit
     original_getone = consumer.getone
     original_getmany = consumer.getmany
@@ -47,13 +48,13 @@ def _watching(consumer: Any, before: Callable[[], None], committed: Callable[[],
 
 
 @contextmanager
-def kafka_fenced(consumer: Any, worker: CommitWorker) -> Iterator[None]:
+def aiokafka_fenced(consumer: Any, worker: CommitWorker) -> Iterator[None]:
     """Share a database worker's death fence: cleanup must not commit Kafka offsets after it dies."""
     with _watching(consumer, worker.refuse_if_dead, lambda: None):
         yield
 
 
-def kafka_worker_killer(consumer: Any) -> Callable[[int | None], AbstractContextManager[CommitWorker]]:
+def aiokafka_worker_killer(consumer: Any) -> Callable[[int | None], AbstractContextManager[CommitWorker]]:
     """Fence this consumer's fetches and commits after an acknowledged offset commit kills it."""
 
     @contextmanager
@@ -65,7 +66,7 @@ def kafka_worker_killer(consumer: Any) -> Callable[[int | None], AbstractContext
     return killer
 
 
-class KafkaLostOffsetReplies:
+class AIOKafkaLostOffsetReplies:
     """Count offset acknowledgements; the chosen one raises the driver's timeout after landing."""
 
     def __init__(self, lose_at: int | None) -> None:
@@ -82,10 +83,12 @@ class KafkaLostOffsetReplies:
             raise self.failure
 
 
-def kafka_offset_reply_breaker(consumer: Any) -> Callable[[int | None], AbstractContextManager[KafkaLostOffsetReplies]]:
+def aiokafka_offset_reply_breaker(
+    consumer: Any,
+) -> Callable[[int | None], AbstractContextManager[AIOKafkaLostOffsetReplies]]:
     @contextmanager
-    def breaker(lose_at: int | None) -> Iterator[KafkaLostOffsetReplies]:
-        replies = KafkaLostOffsetReplies(lose_at)
+    def breaker(lose_at: int | None) -> Iterator[AIOKafkaLostOffsetReplies]:
+        replies = AIOKafkaLostOffsetReplies(lose_at)
         with _watching(consumer, lambda: None, replies.committed):
             yield replies
 

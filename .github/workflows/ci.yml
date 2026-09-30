@@ -153,7 +153,7 @@ jobs:
           done
       - run: uv run --no-sync pytest tests/mongodb -q
 
-  kafka:
+  aiokafka:
     runs-on: ubuntu-latest
     services:
       kafka:
@@ -179,8 +179,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --locked --no-default-groups --extra kafka
-      - run: uv run --no-sync pytest tests/kafka -q
+      - run: uv sync --locked --no-default-groups --extra aiokafka
+      - run: uv run --no-sync pytest tests/aiokafka -q
 
   prefect:
     runs-on: ubuntu-latest
