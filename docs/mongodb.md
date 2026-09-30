@@ -9,7 +9,8 @@ The host counts acknowledged wire writes, including `findAndModify`, bulk
 batches, `$out`/`$merge`, and explicit transaction commits. Transactional writes
 are not durable boundaries until commit. Reads and aborted transactions do not
 count. Each bulk wire batch is one boundary; a batch can contain multiple
-documents. Unknown commands count conservatively. Writes using `w=0` are refused.
+documents. A batch that inserts some documents before reporting a duplicate-key
+error still exposes its acknowledged boundary. Unknown commands count conservatively. Writes using `w=0` are refused.
 
 Death fences subsequent commands on that client, including commands issued
 from Motor executor threads and finally blocks. Independent clients remain

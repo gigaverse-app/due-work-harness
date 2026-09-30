@@ -22,7 +22,7 @@ from typing import Any
 
 from due_work_harness.host import Host
 from due_work_harness.models import DueWorkContractDesignError
-from due_work_harness.worker_death import CommitWorker
+from due_work_harness.worker_death import CommitWorker, LostCommitReplies
 
 # Anything not positively known to be read-only counts conservatively. Aggregation
 # has its own rule because $out/$merge are writes despite using a read-shaped API.
@@ -137,21 +137,13 @@ def mongodb_worker_killer(client: Any) -> Callable[[int | None], AbstractContext
     return killer
 
 
-class MongoDBLostReplies:
-    """A write landed but its acknowledgement was lost; the worker remains alive."""
+class MongoDBLostReplies(LostCommitReplies):
+    """An acknowledged write loses its reply with the driver's connection error."""
 
     def __init__(self, lose_at: int | None) -> None:
-        self._lose_at = lose_at
-        self.count = 0
-        self.failure: Exception | None = None
-
-    def committed(self) -> None:
         from pymongo.errors import ConnectionFailure
 
-        self.count += 1
-        if self.count == self._lose_at:
-            self.failure = ConnectionFailure(f"MongoDB reply to write {self.count} lost; the write landed")
-            raise self.failure
+        super().__init__(lose_at, lambda count: ConnectionFailure(f"MongoDB reply to write {count} lost; the write landed"))
 
 
 def mongodb_reply_breaker(client: Any) -> Callable[[int | None], AbstractContextManager[MongoDBLostReplies]]:

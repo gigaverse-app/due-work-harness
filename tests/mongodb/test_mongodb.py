@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
+from pymongo.errors import BulkWriteError, ConnectionFailure
 from pymongo.write_concern import WriteConcern
 
 from due_work_harness import CallableDelivery, ExternalCall, HandoffHistory, assert_crash_at_every_commit_converges
@@ -147,3 +147,17 @@ def test_generated_histories_catch_a_repeated_provider_effect(client, collection
         else:
             with pytest.raises(HistoriesDiverged, match="external call"):
                 assert_crash_at_every_commit_converges(CallableDelivery(name="outbox", recover=app.recover), history)
+
+
+@pytest.mark.parametrize("ordered", [True, False])
+def test_partial_bulk_failure_still_exposes_the_acknowledged_write(client, collection, ordered):
+    """A duplicate in a batch must not hide the preceding durable insert from crash histories."""
+    collection.insert_one({"_id": "duplicate"})
+    with mongodb_worker_killer(client)(None) as control:
+        with pytest.raises(BulkWriteError):
+            collection.insert_many([{"_id": "control"}, {"_id": "duplicate"}], ordered=ordered)
+        assert control.commits == 1
+    with mongodb_worker_killer(client)(1):
+        with pytest.raises(WorkerDied):
+            collection.insert_many([{"_id": "owed"}, {"_id": "duplicate"}], ordered=ordered)
+    assert collection.find_one({"_id": "owed"}) is not None
