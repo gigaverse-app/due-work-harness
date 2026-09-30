@@ -143,7 +143,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from enum import Enum
 from functools import wraps
-from typing import Any
+from typing import Any, TypeAlias
 
 import pytest
 from pydantic import Field, InstanceOf, SkipValidation
@@ -400,14 +400,19 @@ def _adopter_annotation_defect(owner: str, binding: Callable[..., Any]) -> str |
     )
 
 
+#: One factory per independent effect; named bindings reuse the same profile engine.
+ReplayBinding: TypeAlias = Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]]
+RetryBinding: TypeAlias = Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]]
+
+
 class SafetyContract(HarnessModel):
     """Complete replay/retry assessment for one production effect."""
 
     name: str
     profiles: Mapping[Profile, Disposition]
     adoption: Adoption = Adoption.NEW_FEATURE
-    replay: Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]] | None = None
-    retry: Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]] | None = None
+    replay: ReplayBinding | Mapping[str, ReplayBinding] | None = None
+    retry: RetryBinding | Mapping[str, RetryBinding] | None = None
     fixtures: tuple[str, ...] = ()
     transactional: bool = False
 
@@ -590,9 +595,9 @@ class DueWorkContract(HarnessModel):
     in_flight: Mapping[str, InstanceOf[InFlightConvergence]] = Field(default_factory=dict)
     evidence_confluence: Mapping[str, InstanceOf[EvidenceConfluence]] = Field(default_factory=dict)
     #: H: replay one logical operation and observe its external result.
-    replay: Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]] | None = None
+    replay: ReplayBinding | Mapping[str, ReplayBinding] | None = None
     #: J: drive transient failures until the production retry budget is exhausted.
-    retry: Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]] | None = None
+    retry: RetryBinding | Mapping[str, RetryBinding] | None = None
     #: I: standalone commands interrupted after partial product and obligation writes.
     admission: Mapping[str, Callable[[], AdmissionAtomicity | AbstractContextManager[AdmissionAtomicity]]] = Field(
         default_factory=dict
@@ -632,8 +637,8 @@ class DueWorkContract(HarnessModel):
     #: product decides (see :mod:`due_work_harness.profiles.gated_execution`),
     #: independent of tables and worker framework. One factory, or named
     #: factories for named blockers; each generated proof gets a fresh blocked
-    #: example with its readiness notification lost. Requires profile A claimed
-    #: with a sweep: recovery is what must find the work once it is eligible.
+    #: example with its readiness notification lost. Native recovery may stand alone;
+    #: claiming A also generates the gate/sweep composition proof.
     eligibility: ExecutionGateBinding | Mapping[str, ExecutionGateBinding] | None = None
 
     #: Domain-specific applications of the standalone proofs.
@@ -915,8 +920,13 @@ def _eligibility_errors(contract: DueWorkContract) -> list[str]:
     if contract.eligibility is None:
         return []
     errors: list[str] = []
-    if not _claims_recovery(contract):
-        errors.append("eligibility requires claimed automatic recovery with a sweep")
+    disposition = contract.profiles.get(Profile.G)
+    if (
+        isinstance(disposition, Claim)
+        and "assert_gate_is_recovered_by_the_contract_sweep" in disposition.gaps
+        and not _claims_recovery(contract)
+    ):
+        errors.append("a gate/sweep composition gap requires claimed automatic recovery with a sweep")
     if isinstance(contract.eligibility, Mapping):
         if not contract.eligibility:
             errors.append("eligibility variants cannot be empty")
@@ -1105,7 +1115,15 @@ class ContractCase(HarnessModel):
 
     @property
     def assessment_only(self) -> bool:
-        """Assessment records never certify an executed behavioral guarantee."""
+        """Pure declarations are not execution; real detect/prove callbacks carry evidence.
+
+        An executed gap or decline still cannot verify its profile: coverage's
+        assessment state must be claimed before any passing cases can certify it.
+        """
+        if isinstance(self.assessment, KnownGap):
+            return self.assessment.detect is None
+        if isinstance(self.assessment, Decline):
+            return self.assessment.prove is None
         return self.assessment is not None
 
     def __repr__(self) -> str:
@@ -1298,8 +1316,12 @@ def contract_cases(contract: DueWorkContract) -> list[Any]:
             if isinstance(assessment, NotAssessed):
                 params.append(_assessment_case(contract, Profile.E, assessment, family=family.value))
     for name, binding in eligibility_bindings(contract).items():
+        # Native workers can own gating without a periodic sweep. When A is
+        # claimed, retain the stronger proof that both bindings use that sweep.
+        if not _claims_recovery(contract):
+            continue
         prefix = f"eligibility-{name}" if name else "eligibility"
-        assert contract.sweep is not None, "DueWorkContract validation requires a sweep with eligibility"
+        assert contract.sweep is not None, "claimed automatic recovery must supply its sweep"
         case = ContractCase(
             id=f"{prefix}-assert_gate_is_recovered_by_the_contract_sweep",
             profile=Profile.G,

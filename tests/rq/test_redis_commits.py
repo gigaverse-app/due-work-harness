@@ -11,7 +11,7 @@ import pytest
 from redis import ConnectionPool, Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from due_work_harness.integrations.redis import redis_reply_breaker, redis_worker_killer
+from due_work_harness.integrations.redis import redis_key_writes, redis_reply_breaker, redis_worker_killer
 from due_work_harness.worker_death import WorkerDied
 from tests.rq.connection import CONNECTION
 
@@ -84,3 +84,21 @@ def test_a_killer_and_a_reply_breaker_count_the_same_commits() -> None:
     with redis_worker_killer(CONNECTION)(None) as worker, redis_reply_breaker(CONNECTION)(None) as replies:
         _writes()
     assert worker.commits == replies.count == 3
+
+
+def test_key_write_observation_sees_same_value_writes_and_pipelines() -> None:
+    with redis_key_writes(CONNECTION, "target") as counter:
+        CONNECTION.set("unrelated", "value")
+        CONNECTION.get("target")
+        assert counter.commits == 0
+        CONNECTION.set("target", "value")
+        CONNECTION.set("target", "value")
+        with CONNECTION.pipeline() as pipeline:
+            pipeline.set("target", "value")
+            pipeline.set("unrelated", "value")
+            pipeline.execute()
+        assert counter.commits == 3
+        with CONNECTION.pipeline() as pipeline:
+            pipeline.get("target")
+            pipeline.execute()
+        assert counter.commits == 3

@@ -50,12 +50,13 @@ from due_work_harness.contract import (
     Decline,
     DueWorkContract,
     NotApplicable,
-    NotAssessed,
     Profile,
 )
 from due_work_harness.crash_histories import Findings
 from due_work_harness.helpers import wait_until
 from due_work_harness.integrations.task_queues import (
+    application_admission,
+    application_gate,
     replay_safety_is_the_functions,
     settled_by_one_worker,
     the_obligation_is_the,
@@ -229,10 +230,8 @@ def worker_contract(
                 "a task's retries are its own (self.retry, autoretry_for); a redelivery after a lost worker is "
                 "not counted as one"
             ),
-            Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
-            Profile.I: NotAssessed(
-                because="Standalone partial admission rollback have not been assessed for this adopter."
-            ),
+            Profile.G: application_gate("Celery"),
+            Profile.I: application_admission("Celery"),
         },
         process_handoffs=(history,),
         handoff_gaps={history.name: gap} if gap is not None else {},

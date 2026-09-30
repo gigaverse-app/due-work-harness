@@ -38,7 +38,6 @@ from due_work_harness.contract import (
     Claim,
     Decline,
     DueWorkContract,
-    NotAssessed,
     Profile,
 )
 from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, Findings, HandoffHistory
@@ -46,6 +45,8 @@ from due_work_harness.faults import CountedHooks
 from due_work_harness.host import current_host
 from due_work_harness.integrations.task_queues import (
     TaskOutcome,
+    application_admission,
+    application_gate,
     keeping_signal_handlers,
     replay_safety_is_the_functions,
     settled_by_one_worker,
@@ -423,10 +424,8 @@ def worker_contract(
                 "job", "RQ", runs_again="a retry, or a reclaim after a worker's death"
             ),
             Profile.J: Claim(gaps=gaps.get(Profile.J, {})),
-            Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
-            Profile.I: NotAssessed(
-                because="Standalone partial admission rollback have not been assessed for this adopter."
-            ),
+            Profile.G: application_gate("RQ"),
+            Profile.I: application_admission("RQ"),
         },
         retry=lambda: bounded_retry(
             connection, queue=queue, enqueue_failing=enqueue_failing, failures=failures, max_retries=max_retries

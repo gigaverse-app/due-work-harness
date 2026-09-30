@@ -191,11 +191,12 @@ calling adoption complete. See [the README](README.md) and
 
 If the work can be owed but *blocked* by a product decision (a dependency has
 not settled, an owner is still active), add an `ExecutionGate` to a contract
-that claims profiles A and G: `DueWorkContract(..., eligibility=order_blocked_by_payment)`,
+that claims profile G: `DueWorkContract(..., eligibility=order_blocked_by_payment)`,
 or a mapping of names to gates for several blockers. Its binding routes,
 recovery and selection call production; the harness proves the blocked work
 stays owed and untouched, and completes by recovery alone once eligible, with
-the readiness notification lost. The contract's sweep must declare `dispatched_ids`,
+the readiness notification lost. Native worker recovery can bind G without claiming
+A. When A is also claimed, the contract's sweep must declare `dispatched_ids`,
 the recorder of what its dispatch path sends: the gate's recovery is shown to be
 the sweep's by the gate's identity being dispatched there while it runs. See
 [what a green result means](docs/what-a-green-result-means.md#execution-eligibility-owed-is-not-the-same-as-runnable).
@@ -267,3 +268,18 @@ uv run pytest -m due_work --due-work-verify
 A declaration the check counts is one pytest will run as written: a
 module-level `Test*` class, not rebound later in its module, with no skip or
 xfail mark, using the harness's own decorator, `DueWorkSource` and contract.
+
+
+### Executed adoption and optional search
+
+The [catalog example](examples/adopter/README.md) supplies working G/H/I bindings,
+revision and retirement histories, delayed provider effects, lost/duplicate wakeups,
+and batched/duplicate receipts including retry turnover. The same bindings run
+through RQ, Celery and Prefect in this repository's integration suites.
+
+`--due-work-require-assessed` rejects collected contracts containing `NotAssessed`
+profiles or E families **before selection filters**. It is optional: ordinary
+adopters still get actionable XFAIL debt while migrating. It does not certify
+unimported suites or make a Decline/known gap green; combine it with
+`--due-work-verify` and `--due-work-profile-report=profiles.json` for enrollment
+and executed evidence. The shipped demos enable it in CI.

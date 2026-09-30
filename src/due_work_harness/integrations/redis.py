@@ -68,7 +68,9 @@ class _Writes:
 
 
 @contextmanager
-def _watching(client: Any, before: Callable[[], None], committed: Callable[[], None]) -> Iterator[None]:
+def _watching(
+    client: Any, before: Callable[[], None], committed: Callable[[], None], *, key: bytes | None = None
+) -> Iterator[None]:
     """
     Call ``before`` ahead of every command on ``client``'s pool, and ``committed`` after each that wrote.
 
@@ -83,6 +85,15 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
     # The unwatched command, so that asking the server for its flags is neither counted nor refused.
     unwatched = getattr(original_command, "unwatched", original_command)
     writes = _Writes(client, unwatched)
+
+    def relevant(args: tuple[Any, ...]) -> bool:
+        # Optional observation scope excludes other jobs and worker housekeeping.
+        # Match exact wire arguments; writes that restore the same value still count.
+        return writes(args) and (
+            key is None
+            or any(argument == key or (isinstance(argument, str) and argument.encode() == key) for argument in args[1:])
+        )
+
     original_immediate = Pipeline.immediate_execute_command
     original_execute = Pipeline.execute
 
@@ -91,7 +102,7 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
             return original_command(self, *args, **options)
         before()
         result = original_command(self, *args, **options)
-        if writes(args):
+        if relevant(args):
             committed()
         return result
 
@@ -100,7 +111,7 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
             return original_immediate(self, *args, **options)
         before()
         result = original_immediate(self, *args, **options)
-        if writes(args):
+        if relevant(args):
             committed()
         return result
 
@@ -108,7 +119,7 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
         if self.connection_pool is not pool:
             return original_execute(self, raise_on_error)
         before()
-        wrote = any(writes(args) for args, _options in self.command_stack)
+        wrote = any(relevant(args) for args, _options in self.command_stack)
         result = original_execute(self, raise_on_error)
         if wrote:
             committed()
@@ -135,6 +146,21 @@ def redis_worker_killer(client: Any) -> Callable[[int | None], AbstractContextMa
             yield worker
 
     return killer
+
+
+@contextmanager
+def redis_key_writes(client: Any, key: str | bytes) -> Iterator[CommitWorker]:
+    """Count acknowledged write round trips mentioning one exact key on this client's pool.
+
+    This is a conservative observation boundary, not a key parser: a write with
+    the same bytes as a non-key argument also counts. Lua-written keys must be
+    declared in the command arguments. Reads and unrelated worker writes do not
+    count; repeated writes restoring the same state do.
+    """
+    counter = CommitWorker(None)
+    encoded = key.encode() if isinstance(key, str) else key
+    with _watching(client, lambda: None, counter.committed, key=encoded):
+        yield counter
 
 
 class LostReplies(LostCommitReplies):

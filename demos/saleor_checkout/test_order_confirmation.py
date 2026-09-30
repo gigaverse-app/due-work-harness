@@ -41,6 +41,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import timedelta
 from decimal import Decimal
+from functools import partial
 from typing import Any
 from unittest import mock
 from uuid import UUID
@@ -68,7 +69,9 @@ from saleor.checkout.tasks import (
 from saleor.checkout.tests.utils import add_variant_to_checkout
 from saleor.core.notify import NotifyEventType
 from saleor.graphql.core.utils import to_global_id_or_none
+from saleor.order.fetch import fetch_order_info
 from saleor.order.models import Order
+from saleor.order.notifications import send_order_confirmation
 from saleor.payment import ChargeStatus, TransactionEventType
 from saleor.payment.models import Payment, TransactionItem
 from saleor.payment.utils import recalculate_transaction_amounts
@@ -91,14 +94,14 @@ from due_work_harness import (
     HandoffHistory,
     KnownGap,
     NotApplicable,
-    NotAssessed,
     Profile,
+    ReplaySafeEffect,
     Retention,
     assert_pinned_outcomes,
     due_work_contract_suite,
     due_work_database,
 )
-from due_work_harness.crash_histories import assert_histories_converge
+from due_work_harness.crash_histories import assert_crash_at_every_commit_converges, assert_histories_converge
 from due_work_harness.integrations.celery import celery_beat_evidence, held_publications
 from due_work_harness.integrations.django.selection import selection_built_by
 from due_work_harness.profiles.automatic_recovery import DueWorkSweep, InFlightExecution
@@ -409,6 +412,40 @@ def retention_of_transactions_checkouts() -> Retention:
     return _checkout_retention(charged_through_transactions)
 
 
+def confirmation_count(order: Order) -> int:
+    identity = to_global_id_or_none(order)
+    assert identity is not None, "a persisted order has a notification identity"
+    return current_shop().confirmations[identity]
+
+
+def confirmation_replay(prepare: Callable[[], Handle]) -> ReplaySafeEffect:
+    # ARRANGE: complete a real paid checkout; observe the confirmation callback as a separate effect.
+    # REAL PRODUCTION: Saleor's send_order_confirmation, with its real order payload and plugin manager.
+    # EXTERNAL SEAM: the notification plugin recorder from saleor_shop counts customer confirmations.
+    # OBSERVE: exact delivered confirmations; invoking the callback twice must not email twice.
+    handle = prepare()
+    complete(handle)
+    order = _order(handle[0])
+    assert order is not None
+    identity = to_global_id_or_none(order)
+    assert identity is not None, "a persisted order has a notification identity"
+    current_shop().confirmations[identity] = 0
+    return ReplaySafeEffect(
+        name="Saleor order confirmation",
+        prepare=lambda: order,
+        execute=lambda target: send_order_confirmation(
+            fetch_order_info(target), "https://www.example.com", get_plugins_manager(allow_replica=False)
+        ),
+        observe=confirmation_count,
+        execution_count_for=confirmation_count,
+    )
+
+
+CONFIRMATION_REPLAY_GAP = {
+    "assert_replay_converges": "Replaying the order confirmation callback sends another customer confirmation."
+}
+
+
 CHECKOUT_AS_SHIPPED = DueWorkContract(
     name="saleor checkout",
     adoption=Adoption.LEGACY,
@@ -441,15 +478,17 @@ CHECKOUT_AS_SHIPPED = DueWorkContract(
             "no product state records that an order is still to be confirmed, so no recovery can derive the "
             "obligation the lost callback held"
         ),
-        Profile.H: Decline(
-            "nothing in Saleor replays a lost confirmation (profile A), so there is no replay to make safe"
-        ),
+        Profile.H: Claim(gaps=CONFIRMATION_REPLAY_GAP),
         Profile.J: NotApplicable("the post-commit callbacks are not retried"),
-        Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
-        Profile.I: NotAssessed(
-            because="Standalone partial admission rollback have not been assessed for this adopter."
+        Profile.G: NotApplicable(
+            "Order callbacks are immediately eligible after commit; no admitted callback waits on a product prerequisite."
+        ),
+        Profile.I: KnownGap(
+            "Order admission keeps its follow-up obligations only in after-commit callbacks; crashes expose the missing durable admission.",
+            detect=partial(assert_crash_at_every_commit_converges, SALEOR, COMPLETE_CHECKOUT),
         ),
     },
+    replay=partial(confirmation_replay, pay_with_the_payments_api),
     retention=retention_of_payments_api_checkouts,
     handoffs=(COMPLETE_CHECKOUT,),
     handoff_delivery=SALEOR,
@@ -600,6 +639,16 @@ COMPLETE_PAID_CHECKOUT = HandoffHistory(
     observe=order_and_money,
 )
 
+
+def paid_order_confirmation(handle: Handle) -> tuple[bool, int]:
+    """Observe the confirmation too: merely keeping the order and money misses this obligation."""
+    order = _order(handle[0])
+    identity = to_global_id_or_none(order) if order else None
+    return order is not None, current_shop().confirmations[identity] if identity else 0
+
+
+PAID_CONFIRMATION = COMPLETE_PAID_CHECKOUT.model_copy(update={"observe": paid_order_confirmation})
+
 #: The checkouts the most recent tick dispatched for completion, in dispatch order.
 DISPATCHED: list[UUID] = []
 #: Every completion dispatched for a checkout, held or run: each is an execution in production.
@@ -703,14 +752,18 @@ CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
         Profile.F: Decline(
             "the obligation is the fully paid checkout itself, which automatic completion selects from product state"
         ),
-        Profile.H: Decline("completing an already completed checkout returns its existing order"),
+        Profile.H: Claim(gaps=CONFIRMATION_REPLAY_GAP),
         Profile.J: NotApplicable("automatic completion retries on the beat schedule, unbounded"),
-        Profile.G: NotAssessed(because="Execution prerequisites have not been assessed for this adopter."),
-        Profile.I: NotAssessed(
-            because="Standalone partial admission rollback have not been assessed for this adopter."
+        Profile.G: NotApplicable(
+            "An order becomes owed only when the checkout is fully paid; an unpaid cart is not an already-admitted order obligation."
+        ),
+        Profile.I: KnownGap(
+            "Automatic completion preserves the paid order, but does not durably admit its confirmation; a lost after-commit callback still strands it.",
+            detect=partial(assert_crash_at_every_commit_converges, SALEOR, PAID_CONFIRMATION),
         ),
     },
     sweep=automatic_completion_sweep,
+    replay=partial(confirmation_replay, pay_with_transactions),
     retention=retention_of_transactions_checkouts,
     handoffs=(COMPLETE_PAID_CHECKOUT,),
     handoff_delivery=SALEOR,

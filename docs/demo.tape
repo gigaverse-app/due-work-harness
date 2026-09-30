@@ -7,7 +7,7 @@
 # Everything shown is real output: the harness running against the demos in
 # demos/, their upstream applications cloned at the commits
 # demos/fetch_upstream.py pins. The recording runs in a fresh clone of HEAD at
-# /tmp/due-work-harness, so no local path appears, in the environment
+# a temporary directory, so no local path appears, in the environment
 # docs/demo_env.sh sets. demos/test_readme_gif.py replays every command typed
 # below and asserts the lines the GIF relies on, so the GIF cannot claim output
 # the harness no longer prints.
@@ -26,7 +26,7 @@ Set TypingSpeed 22ms
 Set CursorBlink false
 
 Hide
-Type "rm -rf /tmp/due-work-harness && git clone -q . /tmp/due-work-harness && cd /tmp/due-work-harness"
+Type "recording_dir=$(mktemp -d /tmp/due-work-harness-recording.XXXXXX) && git clone -q . $recording_dir && cd $recording_dir"
 Enter
 Type "uv run -q --no-project python demos/fetch_upstream.py procrastinate dbos-demo-apps saleor >/dev/null && uv sync -q --locked --all-extras --group demos && uv pip install -q -e demos/.upstream/procrastinate && echo SET''UP-DONE"
 Enter

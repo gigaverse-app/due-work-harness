@@ -133,7 +133,7 @@ due_work_harness/
     procrastinate.py  worker recovery, stalled-job arrangement, periodic evidence
     dbos.py    relaunch helper
 demos/       the harness run against unmodified upstream demo applications
-examples/adopter/  a minimal adopting project, run by CI through the actions
+examples/adopter/  SQLite catalog contracts and a minimal exemption, run by CI through the actions
 check/action.yml   GitHub Action: the static coverage check
 test/action.yml    GitHub Action: the generated due_work suites
 tests/core   self-tests with no framework installed

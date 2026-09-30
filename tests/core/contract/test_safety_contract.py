@@ -172,3 +172,17 @@ def test_safety_dispositions_distinguish_declined_from_not_applicable() -> None:
 def test_reference_retry_factory_remains_available_for_safety_claims() -> None:
     binding = reference_bounded_retry_binding()
     assert binding.max_executions > 0
+
+
+def test_each_named_effect_gets_its_own_replay_proofs() -> None:
+    """Image and document effects must both run; one passing effect cannot cover its sibling."""
+    contract = SafetyContract(
+        name="multiple effects",
+        profiles=_dispositions(H=Claim()),
+        replay={"image": _annotated_replay, "document": _annotated_replay},
+    )
+    cases = [row.values[0] for row in safety_contract_cases(contract) if row.values[0].profile is Profile.H]
+    assert len(cases) == 6
+    assert {case.id.split("-")[1] for case in cases} == {"image", "document"}
+    for case in cases:
+        case.run()

@@ -307,3 +307,7 @@ type-checked with [Pyrefly](https://pyrefly.org/). See [CONTRIBUTING.md](https:/
 ## License
 
 Apache-2.0. See [LICENSE](https://github.com/gigaverse-app/due-work-harness/blob/main/LICENSE).
+
+See the [executed adopter capability map](docs/adopter-capabilities.md) and the
+[runnable catalog example](examples/adopter/README.md) for generated interleavings,
+admission, gating, replay and optional Hypothesis adoption.

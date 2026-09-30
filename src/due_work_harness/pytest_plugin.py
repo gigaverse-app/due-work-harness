@@ -51,6 +51,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="optional Hypothesis schedule search",
     )
     for flag, help_text in (
+        (
+            "--due-work-require-assessed",
+            "reject unassessed profiles and E families in collected contracts before filtering",
+        ),
         (VERIFY, "fail unless every contract and exemption suite the coverage scan counts ran at least one case"),
         (
             RECORD,
@@ -204,8 +208,35 @@ class _Recording:
         stop_recording()
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Optional exploration is absent from normal runs, not a sea of skipped tests."""
+    """Check optional assessment policy before filtering, then select optional exploration."""
+    if config.getoption("due_work_require_assessed"):
+        from due_work_harness.contract import DueWorkContract, NotAssessed, SafetyContract, convergence_assessments
+
+        seen: set[int] = set()
+        problems: list[str] = []
+        for item in items:
+            if not isinstance(item, pytest.Function) or item.cls is None:
+                continue
+            contract = getattr(item.cls, "__due_work_contract__", None) or getattr(
+                item.cls, "__safety_contract__", None
+            )
+            if not isinstance(contract, (DueWorkContract, SafetyContract)) or id(contract) in seen:
+                continue
+            seen.add(id(contract))
+            decisions = {profile.name: decision for profile, decision in contract.profiles.items()}
+            if isinstance(contract, DueWorkContract):
+                decisions.update(
+                    {f"E/{family.value}": decision for family, decision in convergence_assessments(contract).items()}
+                )
+            problems.extend(
+                f"{contract.name}: {name} is not assessed: {decision.because}"
+                for name, decision in decisions.items()
+                if isinstance(decision, NotAssessed)
+            )
+        if problems:
+            raise pytest.UsageError("--due-work-require-assessed:\n" + "\n".join(problems))
     if config.getoption("due_work_explore") != "off":
         return
     excluded = [item for item in items if item.get_closest_marker("due_work_exploration")]

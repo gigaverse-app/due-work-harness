@@ -7,11 +7,18 @@ stay true of the RQ version the lock pins. ``FINDINGS`` pins each finding
 history by history, in the same run as the verdict.
 """
 
-from rq import Callback, Queue, Retry
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import timedelta
+from functools import partial
 
-from due_work_harness import Profile, due_work_contract_suite
+from rq import Callback, Queue, Retry
+from rq.job import Job
+
+from due_work_harness import Claim, ExecutionGate, Profile, ReplaySafeEffect, due_work_contract_suite
 from due_work_harness.crash_histories import ExternalCall, Findings
-from due_work_harness.integrations.rq import ONE_QUEUE, worker_contract
+from due_work_harness.integrations.redis import redis_key_writes
+from due_work_harness.integrations.rq import ONE_QUEUE, worker_contract, worker_pass
 from due_work_harness.integrations.task_queues import TaskOutcome
 from tests.rq import jobs
 from tests.rq.connection import CONNECTION
@@ -73,6 +80,59 @@ FINDINGS = Findings(
     },
 )
 
+
+def message_replay() -> ReplaySafeEffect:
+    # ARRANGE: a real RQ job carrying one message identity.
+    # REAL PRODUCTION: Job.perform invokes the reference application's actual function twice.
+    # EXTERNAL SEAM: Outbox.send records every customer message.
+    # OBSERVE: exact message count, so two deliveries cannot be declared equivalent.
+    jobs.outbox.clear()
+    return ReplaySafeEffect(
+        name="RQ message task",
+        prepare=lambda: Queue(QUEUE, connection=CONNECTION).enqueue(jobs.send_message, MESSAGE),
+        execute=Job.perform,
+        observe=lambda job: jobs.outbox.sent[job.args[0]],
+        execution_count_for=lambda job: jobs.outbox.sent[job.args[0]],
+    )
+
+
+@contextmanager
+def dependent_message_gate(prerequisites: int) -> Iterator[ExecutionGate]:
+    # ARRANGE: a real deferred RQ message depending on one or two unfinished jobs on another queue.
+    # REAL PRODUCTION: RQ dependency admission, completion/enqueue_dependents, and SimpleWorker polling.
+    # EXTERNAL SEAM: the actual message outbox; no notification is delivered to the dependent worker.
+    # OBSERVE: persisted reservation, exact-key Redis writes and customer messages independently.
+    jobs.outbox.clear()
+    parents = Queue("prerequisites", connection=CONNECTION)
+    queue = Queue(QUEUE, connection=CONNECTION)
+    dependencies = [parents.enqueue(jobs.send_message, f"prerequisite-{index}") for index in range(prerequisites)]
+    job = queue.enqueue(jobs.send_message, MESSAGE, depends_on=dependencies)
+
+    def reserved() -> tuple[bytes | str | None, ...]:
+        fields = CONNECTION.hmget(job.key, "data", "timeout", "retries_left")
+        return tuple(fields)
+
+    with redis_key_writes(CONNECTION, job.key) as writes:
+        yield ExecutionGate(
+            name=f"RQ message with {prerequisites} prerequisites",
+            identity=job.id,
+            due_work=queue.get_job_ids,
+            owed_work=lambda: [*queue.get_job_ids(), *queue.deferred_job_registry.get_job_ids()],
+            reserved_state=reserved,
+            routes={"dependent worker": worker_pass(CONNECTION, [QUEUE])},
+            make_eligible=worker_pass(CONNECTION, ["prerequisites"]),
+            recover=worker_pass(CONNECTION, [QUEUE]),
+            advance=lambda _elapsed: None,
+            executions=lambda: jobs.outbox.sent[MESSAGE],
+            mutation_count=lambda: writes.commits,
+            observe=lambda: jobs.outbox.sent[MESSAGE],
+            expected=1,
+            effect_calls=lambda: jobs.outbox.sent[MESSAGE],
+            recovery_interval=timedelta(seconds=1),
+            recovery_timeout=timedelta(seconds=3),
+        )
+
+
 CONTRACT = worker_contract(
     CONNECTION,
     name="rq reference jobs",
@@ -87,6 +147,23 @@ CONTRACT = worker_contract(
     handoff_gaps={ONE_QUEUE: "a lost reply or a raising on_success runs a finished job again"},
     findings={ONE_QUEUE: FINDINGS},
     fixtures=("empty_redis",),
+)
+
+
+# Task semantics belong to this adopter. The generic worker contract deliberately
+# declines H until an application supplies an observation of its external effect.
+CONTRACT = CONTRACT.model_copy(
+    update={
+        "profiles": {
+            **CONTRACT.profiles,
+            Profile.G: Claim(),
+            Profile.H: Claim(
+                gaps={"assert_replay_converges": "The reference task sends a second customer message on blind replay."}
+            ),
+        },
+        "replay": message_replay,
+        "eligibility": {str(count): partial(dependent_message_gate, count) for count in (1, 2)},
+    }
 )
 
 

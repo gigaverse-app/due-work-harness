@@ -1419,9 +1419,22 @@ def test_a_generated_case_ties_the_gate_to_the_contracts_own_sweep() -> None:
         case.values[0].run()
 
 
-def test_eligibility_cannot_claim_recovery_without_a_sweep() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="eligibility requires claimed automatic recovery"):
-        _contract(eligibility=reference_gate)
+def test_native_gate_runs_without_claiming_a_periodic_sweep() -> None:
+    contract = _contract(profiles=dispositions(G=Claim()), eligibility=reference_gate, derivation=None)
+    cases = _params_by_id(contract_cases(contract))
+    assert f"eligibility-{_SWEEP_TIED}" not in cases
+    for proof in ELIGIBILITY_PROOFS:
+        cases[f"eligibility-{proof.__name__}"].values[0].run()
+
+
+def test_native_gate_cannot_waive_a_sweep_proof_that_will_not_run() -> None:
+    with pytest.raises(DueWorkContractDesignError, match="composition gap requires claimed automatic recovery"):
+        _contract(
+            adoption=Adoption.LEGACY,
+            profiles=dispositions(G=Claim(gaps={_SWEEP_TIED: WHY})),
+            eligibility=reference_gate,
+            derivation=None,
+        )
 
 
 @pytest.mark.parametrize("named", [False, True], ids=["single-gate", "named-gates"])
