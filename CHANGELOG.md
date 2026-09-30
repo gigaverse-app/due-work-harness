@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.6.0...v0.7.0) (2026-09-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* four ways a suite that passed can now fail: a test-written probe that swallows an assertion through a broad handler or an alias fails contract validation; a declared handoff gap that xfailed for a reason other than the divergence fails as that reason; a history, in-process or process, whose observation differs between two clean runs is refused; and after an injected failure, an error raised in its handler without `from` fails the history. `assert_histories_converge` no longer accepts `divergence=`.
+
+### Features
+
+* add aiokafka offset faults and shared worker death fencing ([#33](https://github.com/gigaverse-app/due-work-harness/issues/33)) ([0753c30](https://github.com/gigaverse-app/due-work-harness/commit/0753c302ce170aa68e91851133b47b2a58f8ff92))
+* add Prefect flow-body and recurrence bindings ([#32](https://github.com/gigaverse-app/due-work-harness/issues/32)) ([00c0c68](https://github.com/gigaverse-app/due-work-harness/commit/00c0c687768eda5f571edc2b444df1d7a7af3508))
+* backend round fixes: inversion tripwire, handoff gaps, repeated normal operation, one absorption rule, tiny-table plans ([#29](https://github.com/gigaverse-app/due-work-harness/issues/29)) ([4be0656](https://github.com/gigaverse-app/due-work-harness/commit/4be0656ad4b46b28f2bbb719b707d66e56b42d26))
+* interrupt MongoDB writes in async application histories ([#31](https://github.com/gigaverse-app/due-work-harness/issues/31)) ([06c982e](https://github.com/gigaverse-app/due-work-harness/commit/06c982e994b1c022a51dd60458cd809923283ded))
+* support Python 3.11 for core conformance proofs ([#35](https://github.com/gigaverse-app/due-work-harness/issues/35)) ([a212ec0](https://github.com/gigaverse-app/due-work-harness/commit/a212ec0f895897930fdc2b7833262e97471b8d85))
+
 ## [0.6.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.5.2...v0.6.0) (2026-09-29)
 
 
