@@ -1,27 +1,40 @@
-"""Generated histories bind an actual async Prefect flow body, with complete coroutine lifetimes."""
+"""Generated application histories through Prefect's flow engine and local API server."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
+import pytest
 from prefect import flow
+from prefect.testing.utilities import prefect_test_harness
 from test_bindings import catalog_contract
 
 from due_work_harness import due_work_contract_suite
-from due_work_harness.integrations.prefect import prefect_flow_call
+from tests_support.catalog_executor import execute, registered
 
 
-@flow
-async def catalog_turn(operation: Callable[[], None]) -> None:
+@flow(log_prints=False, persist_result=False)
+async def catalog_turn(identity: str) -> None:
+    """A real flow invocation carries a stable operation identity through the engine."""
     await asyncio.sleep(0)
-    operation()
+    execute(identity)
+
+
+@pytest.fixture(scope="module")
+def catalog_prefect_server() -> Iterator[None]:
+    """Use Prefect's supported isolated API/database for engine semantics."""
+    with prefect_test_harness():
+        yield
 
 
 def prefect_run(operation: Callable[[], None]) -> None:
-    with asyncio.Runner() as runner:
-        prefect_flow_call(catalog_turn, runner)(operation)
+    with registered(operation) as identity, asyncio.Runner() as runner:
+        # Calling the decorated flow invokes the engine, including API state transitions.
+        runner.run(catalog_turn(identity))
 
 
-CONTRACT = catalog_contract("catalog through Prefect flow body", prefect_run)
+CONTRACT = catalog_contract("catalog through Prefect engine", prefect_run).model_copy(
+    update={"fixtures": ("catalog_prefect_server",)}
+)
 
 
 @due_work_contract_suite(CONTRACT)

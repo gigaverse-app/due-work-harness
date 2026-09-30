@@ -3,7 +3,3 @@
 production-packages = ["procrastinate.demos.demo_django"]
 source-roots = ["../.upstream/procrastinate"]
 test-paths = ["."]
-
-[tool.due-work-harness.baseline]
-# index_book defers set_indexed from inside the worker: no contract insures it yet.
-"procrastinate.demos.demo_django.demo.tasks.index_book" = 1

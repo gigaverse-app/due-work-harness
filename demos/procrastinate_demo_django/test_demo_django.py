@@ -253,6 +253,20 @@ THE_RECIPE_RECLAIMS = MissingReclaim(
     make_stranded=_stranded_job, dispatched_by_one_tick=lambda: redispatched_by(_recipe_then_worker, _attempts)
 )
 
+
+def indexing_task(identity: int) -> None:
+    """The task body calls its real follow-up admission inside its atomic transaction."""
+    tasks.index_book(book_id=identity)
+
+
+INDEX_BOOK = HandoffHistory(
+    name="index_book admits set_indexed",
+    arrange=lambda: Book.objects.create(title="follow-up", author="Frank Herbert").pk,
+    transition=indexing_task,
+    observe=lambda identity: Book.objects.get(pk=identity).indexed,
+)
+
+
 WHY_NOT_A_SWEEP = (
     "procrastinate's worker polls the job table, so a lost notification never strands a job; its selection "
     "claims as it selects, inside procrastinate_fetch_job, so there is no separate owed state for a sweep to "
@@ -336,13 +350,13 @@ DEMO_AS_SHIPPED = DueWorkContract(
     retention=the_demos_retention,
     replay=indexing_replay,
     retry=indexing_retry,
-    handoffs=(CREATE_BOOK,),
+    handoffs=(CREATE_BOOK, INDEX_BOOK),
     handoff_delivery=WORKER,
     handoff_gaps={
         "create book": (
             "the view commits the book, then defers index_book in a second autocommit statement. A worker "
             "that dies between the two leaves the book never indexed, and nothing ever finds it again"
-        )
+        ),
     },
     extras=(
         ExtraProof(
@@ -367,7 +381,9 @@ DEMO_AS_SHIPPED = DueWorkContract(
 )
 
 
-@due_work_contract_suite(DEMO_AS_SHIPPED, covers=(DueWorkSource(CreateBookView.form_valid),))
+@due_work_contract_suite(
+    DEMO_AS_SHIPPED, covers=(DueWorkSource(CreateBookView.form_valid), DueWorkSource(tasks.index_book))
+)
 class TestTheDemoAsShipped:
     pass
 
@@ -384,7 +400,7 @@ DEMO_WITH_ITS_FIXES = DueWorkContract(
     retention=the_demos_retention,
     replay=indexing_replay,
     retry=indexing_retry,
-    handoffs=(CREATE_BOOK,),
+    handoffs=(CREATE_BOOK, INDEX_BOOK),
     handoff_delivery=WORKER,
     extras=(
         ExtraProof(

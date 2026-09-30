@@ -400,14 +400,19 @@ def _adopter_annotation_defect(owner: str, binding: Callable[..., Any]) -> str |
     )
 
 
+#: One factory per independent effect; named bindings reuse the same profile engine.
+type ReplayBinding = Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]]
+type RetryBinding = Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]]
+
+
 class SafetyContract(HarnessModel):
     """Complete replay/retry assessment for one production effect."""
 
     name: str
     profiles: Mapping[Profile, Disposition]
     adoption: Adoption = Adoption.NEW_FEATURE
-    replay: Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]] | None = None
-    retry: Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]] | None = None
+    replay: ReplayBinding | Mapping[str, ReplayBinding] | None = None
+    retry: RetryBinding | Mapping[str, RetryBinding] | None = None
     fixtures: tuple[str, ...] = ()
     transactional: bool = False
 
@@ -590,9 +595,9 @@ class DueWorkContract(HarnessModel):
     in_flight: Mapping[str, InstanceOf[InFlightConvergence]] = Field(default_factory=dict)
     evidence_confluence: Mapping[str, InstanceOf[EvidenceConfluence]] = Field(default_factory=dict)
     #: H: replay one logical operation and observe its external result.
-    replay: Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]] | None = None
+    replay: ReplayBinding | Mapping[str, ReplayBinding] | None = None
     #: J: drive transient failures until the production retry budget is exhausted.
-    retry: Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]] | None = None
+    retry: RetryBinding | Mapping[str, RetryBinding] | None = None
     #: I: standalone commands interrupted after partial product and obligation writes.
     admission: Mapping[str, Callable[[], AdmissionAtomicity | AbstractContextManager[AdmissionAtomicity]]] = Field(
         default_factory=dict

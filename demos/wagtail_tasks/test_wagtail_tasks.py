@@ -25,15 +25,18 @@ of Wagtail's ``page_published``, as a receiver with a bug or an unreachable
 backend would.
 """
 
-from collections.abc import Callable
-from contextlib import nullcontext
+from collections import Counter
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from functools import partial
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from django.core.files.base import ContentFile
-from django.test import Client
-from django_tasks_db.models import DBTaskResult
+from django.core.files.storage import FileSystemStorage
+from django.test import Client, override_settings
+from django_tasks_db.models import DBTaskResult, DBTaskResultQuerySet
 from pydantic import BaseModel, ConfigDict
 from wagtail.contrib.frontend_cache.tasks import purge_urls_from_cache_task
 from wagtail.contrib.frontend_cache.utils import purge_urls_from_cache
@@ -43,12 +46,15 @@ from wagtail.images import get_image_model
 from wagtail.images import signal_handlers as image_signal_handlers
 from wagtail.images.tests.utils import get_test_image_file
 from wagtail.models import Page, Site
+from wagtail.tasks import delete_file_from_storage_task
 from wagtail.test.customuser.models import CustomUser
 from wagtail.test.testapp.models import SimplePage
+from willow import Image as WillowImage
 
 from due_work_harness import (
     AdmissionAtomicity,
     Adoption,
+    BoundedRetry,
     CallableDelivery,
     Claim,
     Decline,
@@ -65,8 +71,10 @@ from due_work_harness import (
 from due_work_harness.crash_histories import ExternalCall
 from due_work_harness.integrations.django.admission import AdmissionInterrupted, interrupt_after_statement
 from due_work_harness.integrations.django_tasks import RUNS_ONCE, TaskOutcome, db_worker_once, worker_contract
+from due_work_harness.profiles.catalog import ConvergenceFamily
 
 from . import cdn
+from .test_feature_detection import focal_point_replay, focal_point_snapshot
 
 # The workers production runs, in batch mode: every ready task, then stop.
 WORKER = CallableDelivery(name="wagtail on django-tasks-db", recover=db_worker_once())
@@ -208,8 +216,95 @@ ADMISSION_GAP = {
     "assert_interrupted_admission_rolls_back": "Wagtail commits product intent before the task INSERT; an interrupted enqueue cannot roll both back."
 }
 
+
+@contextmanager
+def media_replay(arrange: Callable[[], Any], delete: Callable[[Any], None]) -> Iterator[ReplaySafeEffect]:
+    # ARRANGE: delete a real image/document through its admin; capture the persisted task arguments.
+    # REAL PRODUCTION: invoke Wagtail's unchanged deletion task with exactly those arguments twice.
+    # EXTERNAL SEAM: count actual filesystem delete attempts while retaining the real filesystem behavior.
+    # OBSERVE: whether the original file still exists, independently of the attempt count.
+    handle = arrange()
+    before = set(DBTaskResult.objects.values_list("pk", flat=True))
+    delete(handle)
+    queued = DBTaskResult.objects.exclude(pk__in=before).get(task_path="wagtail.tasks.delete_file_from_storage_task")
+    args = queued.args_kwargs["args"]
+    calls: Counter[str] = Counter()
+    original = FileSystemStorage.delete
+
+    def counted(storage: FileSystemStorage, name: str) -> None:
+        calls[name] += 1
+        original(storage, name)
+
+    with mock.patch.object(FileSystemStorage, "delete", counted):
+        yield ReplaySafeEffect(
+            name="Wagtail file deletion",
+            prepare=lambda: args,
+            execute=lambda arguments: delete_file_from_storage_task.call(*arguments),
+            observe=lambda _arguments: Path(handle[1]).exists(),
+            execution_count_for=lambda arguments: calls[arguments[1]],
+        )
+
+
+@contextmanager
+def task_failure_limit(kind: str) -> Iterator[BoundedRetry]:
+    # ARRANGE: each real admin command enqueues its own task before its external service fails.
+    # REAL PRODUCTION: django-tasks-db's ready selection and actual db_worker drive exhaustion.
+    # EXTERNAL SEAM: storage/CDN raises on every call, with an independent attempt ledger.
+    # OBSERVE: task status and provider attempts; a terminal worker pass must leave both unchanged.
+    attempts: Counter[str] = Counter()
+
+    def unavailable(_service: object, target: str = "image") -> None:
+        attempts[target] += 1
+        raise OSError("injected external service outage")
+
+    if kind == "purge":
+
+        def prepare() -> str:
+            return str(purge_urls_from_cache_task.enqueue(["http://localhost/retry/"]).id)
+
+        owner, attribute = cdn.RecordingCDN, "purge"
+    elif kind == "feature":
+
+        def prepare() -> str:
+            an_image()
+            return str(DBTaskResult.objects.get(task_path="wagtail.images.tasks.set_image_focal_point_task").pk)
+
+        owner, attribute = WillowImage, "detect_faces"
+    else:
+        arrange, delete = (an_image, delete_the_image) if kind == "image" else (a_document, delete_the_document)
+
+        def prepare() -> str:
+            handle = arrange()
+            before = set(DBTaskResult.objects.values_list("pk", flat=True))
+            delete(handle)
+            return str(
+                DBTaskResult.objects.exclude(pk__in=before)
+                .get(task_path="wagtail.tasks.delete_file_from_storage_task")
+                .pk
+            )
+
+        owner, attribute = FileSystemStorage, "delete"
+
+    with (
+        override_settings(WAGTAILIMAGES_FEATURE_DETECTION_ENABLED=kind == "feature"),
+        mock.patch.object(owner, attribute, unavailable, create=kind == "feature"),
+    ):
+        yield BoundedRetry(
+            name=f"Wagtail {kind} service outage",
+            max_executions=1,
+            make_failing=prepare,
+            due_work=lambda: DBTaskResultQuerySet(model=DBTaskResult).ready().values_list("pk", flat=True),
+            identity_of=str,
+            run_once=db_worker_once(),
+            advance_to_due=lambda _identity: None,
+            is_terminal=lambda identity: DBTaskResult.objects.get(pk=identity).status == "FAILED",
+            failure_attempt_count=lambda _identity: sum(attempts.values()),
+            observe=lambda identity: (DBTaskResult.objects.get(pk=identity).status, dict(attempts)),
+        )
+
+
 WAGTAIL_MEDIA = DueWorkContract(
-    name="wagtail: deleting an image or a document",
+    name="wagtail: image and document lifecycle",
     adoption=Adoption.LEGACY,
     transactional=True,
     profiles={
@@ -217,13 +312,17 @@ WAGTAIL_MEDIA = DueWorkContract(
         Profile.B: Decline("the task is claimed by django-tasks-db's worker, whose contract is DJANGO_TASKS_DB"),
         Profile.C: NotApplicable("deleting a file is idempotent: a repeat deletes nothing"),
         Profile.D: NotApplicable("the obligation holds no rows of its own; the task's row is django-tasks-db's"),
-        Profile.E: NotApplicable("each deletion removes one file; no two results race to write it"),
+        Profile.E: Claim(
+            gaps={
+                "assert_superseded_snapshot_does_not_write": "The queued automatic detector overwrites an editor's newer manual focal point."
+            }
+        ),
         Profile.F: KnownGap(
             "no product state records that a file is still to be deleted once its row is gone, so no recovery "
             "can derive the obligation"
         ),
-        Profile.H: NotApplicable("a repeated deletion deletes nothing"),
-        Profile.J: NotApplicable(WHY_NO_RETRY),
+        Profile.H: Claim(),
+        Profile.J: Claim(),
         Profile.G: NotApplicable(
             "The deletion is immediately eligible once admitted; it has no later product prerequisite."
         ),
@@ -235,6 +334,24 @@ WAGTAIL_MEDIA = DueWorkContract(
             task_admission, a_document, delete_the_document, lambda h: document_left(h).row, False
         ),
     },
+    snapshot=partial(focal_point_snapshot, an_image),
+    convergence_families={
+        ConvergenceFamily.MONOTONIC_RESULTS: NotApplicable(
+            "An editor's crop can change; it is not a monotonic result."
+        ),
+        ConvergenceFamily.IN_FLIGHT: NotApplicable(
+            "Storage deletion is synchronous; feature detection returns local coordinates, not pending remote writes."
+        ),
+        ConvergenceFamily.EVIDENCE_CONFLUENCE: NotApplicable(
+            "These tasks consume one object or crop, not partial provider receipts."
+        ),
+    },
+    replay={
+        "feature": partial(focal_point_replay, an_image),
+        "image": partial(media_replay, an_image, delete_the_image),
+        "document": partial(media_replay, a_document, delete_the_document),
+    },
+    retry={kind: partial(task_failure_limit, kind) for kind in ("image", "document", "feature")},
     handoffs=(DELETE_IMAGE, DELETE_DOCUMENT),
     handoff_delivery=WORKER,
     handoff_gaps={
@@ -253,6 +370,7 @@ WAGTAIL_MEDIA = DueWorkContract(
     WAGTAIL_MEDIA,
     covers=(
         DueWorkSource(image_signal_handlers.post_delete_file_cleanup, sites=2),
+        DueWorkSource(image_signal_handlers.post_save_image_feature_detection),
         DueWorkSource(document_signal_handlers.post_delete_file_cleanup, sites=2),
     ),
 )
@@ -354,7 +472,7 @@ WAGTAIL_PUBLISHING = DueWorkContract(
             "the obligation"
         ),
         Profile.H: Claim(),
-        Profile.J: NotApplicable(f"{RUNS_ONCE}, so a CDN error fails the purge"),
+        Profile.J: Claim(),
         Profile.G: NotApplicable(
             "The purge is immediately eligible after publication; it has no later product prerequisite."
         ),
@@ -366,6 +484,7 @@ WAGTAIL_PUBLISHING = DueWorkContract(
         )
     },
     replay=purge_replay,
+    retry=partial(task_failure_limit, "purge"),
     handoffs=(PUBLISH_PAGE,),
     handoff_delivery=WORKER,
     handoff_gaps={

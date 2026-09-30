@@ -69,7 +69,9 @@ from saleor.checkout.tasks import (
 from saleor.checkout.tests.utils import add_variant_to_checkout
 from saleor.core.notify import NotifyEventType
 from saleor.graphql.core.utils import to_global_id_or_none
+from saleor.order.fetch import fetch_order_info
 from saleor.order.models import Order
+from saleor.order.notifications import send_order_confirmation
 from saleor.payment import ChargeStatus, TransactionEventType
 from saleor.payment.models import Payment, TransactionItem
 from saleor.payment.utils import recalculate_transaction_amounts
@@ -93,6 +95,7 @@ from due_work_harness import (
     KnownGap,
     NotApplicable,
     Profile,
+    ReplaySafeEffect,
     Retention,
     assert_pinned_outcomes,
     due_work_contract_suite,
@@ -409,6 +412,33 @@ def retention_of_transactions_checkouts() -> Retention:
     return _checkout_retention(charged_through_transactions)
 
 
+def confirmation_replay(prepare: Callable[[], Handle]) -> ReplaySafeEffect:
+    # ARRANGE: complete a real paid checkout; observe the confirmation callback as a separate effect.
+    # REAL PRODUCTION: Saleor's send_order_confirmation, with its real order payload and plugin manager.
+    # EXTERNAL SEAM: the notification plugin recorder from saleor_shop counts customer confirmations.
+    # OBSERVE: exact delivered confirmations; invoking the callback twice must not email twice.
+    handle = prepare()
+    complete(handle)
+    order = _order(handle[0])
+    assert order is not None
+    identity = to_global_id_or_none(order)
+    current_shop().confirmations[identity] = 0
+    return ReplaySafeEffect(
+        name="Saleor order confirmation",
+        prepare=lambda: order,
+        execute=lambda target: send_order_confirmation(
+            fetch_order_info(target), "https://www.example.com", get_plugins_manager(allow_replica=False)
+        ),
+        observe=lambda target: current_shop().confirmations[to_global_id_or_none(target)],
+        execution_count_for=lambda target: current_shop().confirmations[to_global_id_or_none(target)],
+    )
+
+
+CONFIRMATION_REPLAY_GAP = {
+    "assert_replay_converges": "Replaying the order confirmation callback sends another customer confirmation."
+}
+
+
 CHECKOUT_AS_SHIPPED = DueWorkContract(
     name="saleor checkout",
     adoption=Adoption.LEGACY,
@@ -441,9 +471,7 @@ CHECKOUT_AS_SHIPPED = DueWorkContract(
             "no product state records that an order is still to be confirmed, so no recovery can derive the "
             "obligation the lost callback held"
         ),
-        Profile.H: Decline(
-            "nothing in Saleor replays a lost confirmation (profile A), so there is no replay to make safe"
-        ),
+        Profile.H: Claim(gaps=CONFIRMATION_REPLAY_GAP),
         Profile.J: NotApplicable("the post-commit callbacks are not retried"),
         Profile.G: NotApplicable(
             "Order callbacks are immediately eligible after commit; no admitted callback waits on a product prerequisite."
@@ -453,6 +481,7 @@ CHECKOUT_AS_SHIPPED = DueWorkContract(
             detect=partial(assert_crash_at_every_commit_converges, SALEOR, COMPLETE_CHECKOUT),
         ),
     },
+    replay=partial(confirmation_replay, pay_with_the_payments_api),
     retention=retention_of_payments_api_checkouts,
     handoffs=(COMPLETE_CHECKOUT,),
     handoff_delivery=SALEOR,
@@ -716,7 +745,7 @@ CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
         Profile.F: Decline(
             "the obligation is the fully paid checkout itself, which automatic completion selects from product state"
         ),
-        Profile.H: Decline("completing an already completed checkout returns its existing order"),
+        Profile.H: Claim(gaps=CONFIRMATION_REPLAY_GAP),
         Profile.J: NotApplicable("automatic completion retries on the beat schedule, unbounded"),
         Profile.G: NotApplicable(
             "An order becomes owed only when the checkout is fully paid; an unpaid cart is not an already-admitted order obligation."
@@ -727,6 +756,7 @@ CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
         ),
     },
     sweep=automatic_completion_sweep,
+    replay=partial(confirmation_replay, pay_with_transactions),
     retention=retention_of_transactions_checkouts,
     handoffs=(COMPLETE_PAID_CHECKOUT,),
     handoff_delivery=SALEOR,

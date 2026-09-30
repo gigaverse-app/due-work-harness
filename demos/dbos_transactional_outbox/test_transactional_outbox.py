@@ -48,6 +48,7 @@ from due_work_harness import (
     LossIsAbsorbedElsewhere,
     NotApplicable,
     Profile,
+    ReplaySafeEffect,
     Retention,
     due_work_contract_suite,
 )
@@ -330,6 +331,26 @@ def order_admission() -> Iterator[AdmissionAtomicity[list[str]]]:
             observer.dispose()
 
 
+@contextmanager
+def notification_replay() -> Iterator[ReplaySafeEffect]:
+    # ARRANGE: a real admitted order with its queue listener held back.
+    # REAL PRODUCTION: invoke the demo's decorated notification step, outside workflow checkpoint deduplication.
+    # EXTERNAL SEAM: the demo's simulated notification port records each delivered message.
+    # OBSERVE: notification count for this order; repeating a send is customer-visible.
+    sends: list[float] = []
+    with (
+        the_demo_without_its_listener(sends.append),
+        hosted(Host(production_packages=frozenset({"transactional-outbox", "transactional_enqueue", "dbos"}))),
+    ):
+        yield ReplaySafeEffect(
+            name="DBOS order notification step",
+            prepare=lambda: demo.insert_order("replay customer", "widget", 1),
+            execute=lambda identity: demo.send_order_notification(identity, "replay customer", "widget"),
+            observe=lambda _identity: len(sends),
+            execution_count_for=lambda _identity: len(sends),
+        )
+
+
 PLACE_ORDER_CONTRACT = DueWorkContract(
     name="DBOS transactional-outbox: place order",
     adoption=Adoption.LEGACY,
@@ -354,9 +375,10 @@ PLACE_ORDER_CONTRACT = DueWorkContract(
             "the obligation is the workflow DBOS enqueues in the order's own transaction, not a fact derived "
             "from orders"
         ),
-        Profile.H: KnownGap(
-            "the notification step is not idempotent: replaying it notifies the customer again (profile C "
-            "shows the replay happen)"
+        Profile.H: Claim(
+            gaps={
+                "assert_replay_converges": "The actual notification step sends a second customer notification on replay."
+            }
         ),
         Profile.J: Claim(),
         Profile.G: NotApplicable(
@@ -365,6 +387,7 @@ PLACE_ORDER_CONTRACT = DueWorkContract(
         Profile.I: Claim(),
     },
     admission={"place order": order_admission},
+    replay=notification_replay,
     retry=the_notifications_retry,
     retention=the_demos_retention,
     # Placing an order survives a death before the notification: a process handoff of its own.
