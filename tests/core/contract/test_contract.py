@@ -1134,24 +1134,16 @@ def _generated_case_count() -> int:
     return len(suite_cases(REFERENCE_CONTRACT))
 
 
-def test_suite_cases_are_exactly_what_the_suite_decorator_generates() -> None:
-    # The public list an adopter can count or filter is the one the decorator installs, covered cases included.
-    source = DueWorkSource(_reference_due_work_source, unrecoverable_because=WHY)
-
-    @due_work_contract_suite(REFERENCE_CONTRACT, covers=(source,))
-    class Generated:
-        pass
-
-    installed = [
-        param.id
-        # The generated method is installed at run time, so the checker cannot see it on the class.
-        for mark in vars(Generated)["test_due_work_contract"].pytestmark
-        if mark.name == "parametrize"
-        for param in mark.args[1]
-    ]
-    assert installed == [param.id for param in suite_cases(REFERENCE_CONTRACT, covers=(source,))]
+def test_suite_cases_are_exactly_what_pytest_collects_from_the_generated_suite() -> None:
+    # The oracle is a child pytest session's own collection of the decorated class, not the decorator's
+    # arguments: the public list an adopter counts or filters must be what actually runs, in the same order.
+    _, output, code = _run_reference_cases("conforming", "--collect-only")
+    assert code == pytest.ExitCode.OK, output
+    collected = re.findall(r"::test_due_work_contract\[(.+)\]$", output, flags=re.MULTILINE)
+    assert collected == [param.id for param in suite_cases(REFERENCE_CONTRACT)], output
     assert REFERENCE_CONTRACT.safety is not None
-    assert {param.id for param in safety_contract_cases(REFERENCE_CONTRACT.safety)} <= set(installed)
+    safety = [param.id for param in safety_contract_cases(REFERENCE_CONTRACT.safety)]
+    assert safety and collected[-len(safety) :] == safety
 
 
 def test_the_conforming_reference_suite_passes_every_generated_case() -> None:
