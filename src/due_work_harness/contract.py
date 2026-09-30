@@ -143,7 +143,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from enum import Enum
 from functools import wraps
-from typing import Any
+from typing import Any, TypeAlias
 
 import pytest
 from pydantic import Field, InstanceOf, SkipValidation
@@ -401,8 +401,8 @@ def _adopter_annotation_defect(owner: str, binding: Callable[..., Any]) -> str |
 
 
 #: One factory per independent effect; named bindings reuse the same profile engine.
-type ReplayBinding = Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]]
-type RetryBinding = Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]]
+ReplayBinding: TypeAlias = Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]]
+RetryBinding: TypeAlias = Callable[[], BoundedRetry | AbstractContextManager[BoundedRetry]]
 
 
 class SafetyContract(HarnessModel):

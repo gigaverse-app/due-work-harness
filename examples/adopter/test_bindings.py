@@ -13,7 +13,7 @@ from functools import partial
 from itertools import combinations
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, TypeAlias
 
 from adopter_app.catalog import Catalog
 from pydantic import InstanceOf
@@ -45,7 +45,7 @@ from due_work_harness.models import HarnessModel
 from due_work_harness.profiles.catalog import ConvergenceFamily
 
 # Executor implementations are external to the application and may queue this callable.
-type Runner = Callable[[Callable[[], None]], None]
+Runner: TypeAlias = Callable[[Callable[[], None]], None]
 
 
 def inline(operation: Callable[[], None]) -> None:
