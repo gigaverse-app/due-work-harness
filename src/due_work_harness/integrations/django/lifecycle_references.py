@@ -209,6 +209,16 @@ def fail_attempt_through_a_function_then_hand_off(pk: int) -> None:
     _create_successor(LifecycleAttempt.objects.get(pk=pk))
 
 
+def fail_attempt_through_async_to_sync(pk: int) -> None:
+    """The atomic handoff, reached from sync code through async_to_sync, as an async service layer would."""
+    from asgiref.sync import async_to_sync, sync_to_async
+
+    async def fail() -> None:
+        await sync_to_async(fail_attempt_with_atomic_handoff)(pk)
+
+    async_to_sync(fail)()
+
+
 @transaction.atomic
 def fail_attempt_with_commit_hook_handoff(pk: int) -> None:
     """The failure commits; the successor is created by an on_commit hook."""

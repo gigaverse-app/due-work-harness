@@ -7,6 +7,8 @@ it does not own changes what the code under test does: a rollback that no
 longer rolls back proves nothing about the handoff being rolled back.
 """
 
+import contextlib
+import threading
 from collections.abc import Iterator
 
 import pytest
@@ -214,3 +216,22 @@ def test_a_write_in_a_called_procedure_counts_as_a_commit() -> None:
     finally:
         with connection.cursor() as cursor:
             cursor.execute("DROP PROCEDURE due_work_harness_complete(bigint)")
+
+
+def _executor_threads() -> set[threading.Thread]:
+    return {thread for thread in threading.enumerate() if thread.name.startswith("ThreadPoolExecutor")}
+
+
+def test_a_death_raised_through_async_to_sync_leaves_no_executor_thread_behind() -> None:
+    # async_to_sync runs its event loop on a one-shot executor; the death's traceback holds it in a cycle,
+    # and its idle thread would linger (and warn about sessions in later tests) until some later GC.
+    before = _executor_threads()
+    pk = _running()
+    with django_worker_killer(1) as worker:
+        # Caught inside the killer, as a crash history catches the death it injected.
+        with contextlib.suppress(WorkerDied):
+            ref.fail_attempt_through_async_to_sync(pk)
+    assert worker.dead
+    for thread in _executor_threads() - before:
+        thread.join(timeout=5)  # a collected executor's thread exits on its own, promptly
+    assert _executor_threads() <= before
