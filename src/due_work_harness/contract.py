@@ -686,10 +686,11 @@ class DueWorkContract(HarnessModel):
 
     #: Legacy findings on named handoffs, in-process or process: ``{history name:
     #: reason}``. Each becomes a strict xfail, under the same ``adoption`` policy
-    #: as gaps. When the history also declares its ``findings`` table, the xfail
-    #: accepts only the histories diverging as that table says
-    #: (:class:`~due_work_harness.crash_histories.HistoriesDiverged`): a binding
-    #: that breaks, or a finding that moved, fails the case.
+    #: as gaps. The xfail accepts only a divergence
+    #: (:class:`~due_work_harness.crash_histories.HistoriesDiverged`), and when the
+    #: history declares its ``findings`` table, only the divergence that table
+    #: pins: a binding that breaks, a positive control that fails, or a finding
+    #: that moved, fails the case.
     handoff_gaps: Mapping[str, str] = Field(default_factory=dict)
 
     #: Pytest fixtures every generated behavioral test must request.
@@ -1349,12 +1350,15 @@ def _handoff_runner(delivery: Delivery, history: HandoffHistory[Any, Any]) -> Ca
 
 
 def _gap_mark(contract: DueWorkContract, history: HandoffHistory[Any, Any] | ProcessHistory[Any, Any]) -> list[Any]:
-    """A declared handoff gap's strict xfail: for the divergence alone once the history pins its findings."""
+    """
+    A declared handoff gap's strict xfail, for the divergence alone.
+
+    Findings or not, only :class:`HistoriesDiverged` is the known gap: a broken
+    binding, a positive control that fails or a finding that moved fails the case.
+    """
     reason = contract.handoff_gaps.get(history.name)
     if reason is None:
         return []
-    if history.findings is None:
-        return [pytest.mark.xfail(strict=True, reason=reason)]
     return [pytest.mark.xfail(strict=True, reason=reason, raises=HistoriesDiverged)]
 
 

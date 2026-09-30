@@ -154,11 +154,11 @@ class HistoriesDiverged(AssertionError):
     """
     The differential verdict's failure: some history reached another outcome than normal operation.
 
-    Raised only for a history that declares its :class:`Findings` (others raise
-    a plain ``AssertionError``, as before). A declared gap on such a history is
-    a strict xfail for this exception only, so a binding that breaks, or a
-    positive control that fails, is reported as the failure it is instead of as
-    the known gap.
+    Raised for every divergence, whether or not the history declares its
+    :class:`Findings`. A declared gap is a strict xfail for this exception only,
+    so a binding that breaks, a positive control that fails, a table whose
+    finding moved or a design error is reported as the failure it is (a plain
+    ``AssertionError``) instead of passing as the known gap.
     """
 
 
@@ -692,7 +692,7 @@ def crash_histories(delivery: Delivery, history: HandoffHistory[Any, Any]) -> li
 
 
 def assert_histories_converge(
-    name: str, runs: list[HistoryRun], *, divergence: type[AssertionError] = AssertionError
+    name: str, runs: list[HistoryRun], *, divergence: type[AssertionError] = HistoriesDiverged
 ) -> None:
     """
     The differential verdict: every interrupted history reaches normal operation's outcome.
@@ -702,8 +702,8 @@ def assert_histories_converge(
     themselves and hand the runs here (see :mod:`due_work_harness.process_histories`);
     the verdict and its positive controls stay with the harness.
 
-    A divergence raises ``divergence``: :class:`HistoriesDiverged` for a history
-    that declares its findings, so its gap's xfail can accept that alone.
+    A divergence raises ``divergence``, :class:`HistoriesDiverged` by default, so
+    a gap's xfail can accept that alone; every other failure is a plain assertion.
     """
     delivered, interrupted = runs[0], runs[1:]
     assert delivered.after != delivered.before, (
@@ -740,12 +740,7 @@ def assert_crash_at_every_commit_converges(delivery: Delivery, history: HandoffH
     name = f"{delivery.name}: handoff {history.name!r}"
     runs = crash_histories(delivery, history)
     assert_findings_hold(name, runs, history.findings)
-    assert_histories_converge(name, runs, divergence=divergence_for(history.findings))
-
-
-def divergence_for(findings: Findings | None) -> type[AssertionError]:
-    """What a history's divergence raises: HistoriesDiverged once it declares findings, else AssertionError."""
-    return AssertionError if findings is None else HistoriesDiverged
+    assert_histories_converge(name, runs)
 
 
 def findings_from(runs: list[HistoryRun]) -> Findings:
