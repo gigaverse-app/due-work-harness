@@ -40,7 +40,7 @@ from typing import Any
 
 from due_work_harness.host import Host, PublicationBreaker, ReceiverBreaker
 from due_work_harness.integrations.clocks import time_machine_clock
-from due_work_harness.worker_death import CommitWorker
+from due_work_harness.worker_death import CommitWorker, LostCommitReplies
 
 #: Commands whose writes the server cannot report in advance.
 SCRIPT_COMMANDS = frozenset({"EVAL", "EVALSHA", "FCALL"})
@@ -137,23 +137,13 @@ def redis_worker_killer(client: Any) -> Callable[[int | None], AbstractContextMa
     return killer
 
 
-class LostReplies:
-    """The commits a crash history counts, and the connection error raised for the chosen one's reply."""
+class LostReplies(LostCommitReplies):
+    """An acknowledged write loses its reply with the driver's connection error."""
 
     def __init__(self, lose_at: int | None) -> None:
-        self._lose_at = lose_at
-        self.count = 0
-        self.failure: Exception | None = None
-
-    def committed(self) -> None:
         from redis.exceptions import ConnectionError as RedisConnectionError
 
-        self.count += 1
-        if self.count == self._lose_at:
-            self.failure = RedisConnectionError(
-                f"Connection closed by server (the reply to commit {self.count} was lost; the write landed)"
-            )
-            raise self.failure
+        super().__init__(lose_at, lambda count: RedisConnectionError(f"Connection closed by server (the reply to commit {count} was lost; the write landed)"))
 
 
 def redis_reply_breaker(client: Any) -> Callable[[int | None], AbstractContextManager[LostReplies]]:

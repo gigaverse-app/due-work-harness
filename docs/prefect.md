@@ -22,3 +22,9 @@ application registers; reconstructing its cron in the test would miss drift.
 
 The tests pair working bindings and schedules with paused, inactive, missing,
 slow, wrong-flow and wrong-entrypoint controls.
+
+The binding rejects deferred results from both synchronous and asynchronous flow
+bodies. Awaiting the outer coroutine is insufficient when it returns a generator
+or another awaitable. Schedule evidence checks the first **three future** runs,
+excluding a tick exactly at `start`; it is a bounded declaration check, not proof
+that an RRule continues forever or that a deployed worker executes those runs.
