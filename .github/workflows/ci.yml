@@ -193,22 +193,28 @@ jobs:
         run: uv run --no-sync --project ../.. pytest --reuse-db --due-work-verify --durations=15
       - name: the README's demo GIF prints what the harness prints
         run: uv run --no-sync pytest demos/test_readme_gif.py -p no:django --durations=15
+      # One wheel for the three checks below, instead of the action building this checkout each time.
+      - name: Build the harness once
+        id: harness
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/harness"
+          echo "wheel=$(ls "$RUNNER_TEMP"/harness/*.whl)" >> "$GITHUB_OUTPUT"
       # Each demo is an adopter: its handoffs are checked the way an adopter's CI checks them.
       - name: procrastinate demo_django, every handoff accounted for
         uses: ./check
         with:
           working-directory: demos/procrastinate_demo_django
-          package: ${{ github.workspace }}
+          package: ${{ steps.harness.outputs.wheel }}
       - name: DBOS transactional-outbox, every handoff accounted for
         uses: ./check
         with:
           working-directory: demos/dbos_transactional_outbox
-          package: ${{ github.workspace }}
+          package: ${{ steps.harness.outputs.wheel }}
       - name: Wagtail on django-tasks-db, every handoff accounted for
         uses: ./check
         with:
           working-directory: demos/wagtail_tasks
-          package: ${{ github.workspace }}
+          package: ${{ steps.harness.outputs.wheel }}
 
   saleor:
     # Saleor's checkout, unmodified, in Saleor's own environment built from its uv.lock.
