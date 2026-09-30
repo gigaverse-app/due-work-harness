@@ -152,6 +152,52 @@ def referenced_columns(expression: str, candidates: Collection[str]) -> set[str]
     return names & set(candidates)
 
 
+#: A column compared by a range operator (not ``<>``), as PostgreSQL prints plan expressions.
+_RANGE_COMPARISON = re.compile(r"(\w+)\)?(?:::[\w ]+?)?\s*(?:<=|>=|<(?![>=])|(?<![<-])>(?!=))")
+#: A column compared by any operator an index condition prints.
+_COMPARISON = re.compile(r"(\w+)\)?(?:::[\w ]+?)?\s*(?:<=|>=|<>|=|<|>|~~)")
+
+
+def bitmap_overturns_the_walk(
+    walked: dict[str, Any], bitmap: dict[str, Any], *, table: str, predicate_indexes: PredicateIndexes = ()
+) -> bool:
+    """
+    Whether a bitmap-only plan shows an index narrows the selection after the walked plan said none does.
+
+    On a tiny table every index walk costs about the same, so with sequential
+    scans off the planner may walk an unrelated index (a unique key) and filter
+    the due-time bound, whichever statistics autovacuum left. Asked again with
+    plain index scans off too, it must build a bitmap, which needs an index
+    condition (or a named partial predicate) to narrow at all. The bitmap
+    overturns the walked verdict only when it passes the same verdict and its
+    index conditions cover every column the walked scan filtered by a range: a
+    bitmap over a state index that still filters the due time reads the whole
+    index, and is not narrowing. A walk that filters no range bound is not a
+    costing artifact, and is never overturned.
+    """
+    bounded = _columns(_expressions(walked, table, "Filter"), _RANGE_COMPARISON)
+    if not bounded:
+        return False
+    if index_served_verdict(bitmap, table=table, predicate_indexes=predicate_indexes) is not None:
+        return False
+    return bounded <= _columns(_expressions(bitmap, table, "Index Cond"), _COMPARISON)
+
+
+def _expressions(plan: dict[str, Any], table: str, key: str) -> list[str]:
+    """``key`` expressions of every scan on ``table``, and of the index scans feeding its bitmaps."""
+    found: list[str] = []
+    for node in iter_plan_nodes(plan):
+        if node.get("Relation Name") != table:
+            continue
+        feeding = [scan for scan in iter_plan_nodes(node) if scan.get("Node Type") == "Bitmap Index Scan"]
+        found.extend(str(candidate[key]) for candidate in [node, *feeding] if key in candidate)
+    return found
+
+
+def _columns(expressions: list[str], comparison: re.Pattern[str]) -> set[str]:
+    return {match.group(1) for expression in expressions for match in comparison.finditer(expression)}
+
+
 def assert_plan_is_index_served(
     *, name: str, plan: dict[str, Any], table: str, predicate_indexes: PredicateIndexes = ()
 ) -> None:

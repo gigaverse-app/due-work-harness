@@ -12,7 +12,11 @@ answers them for a ``due_work`` binding that returns a Django ``QuerySet``:
   the tiny tables a test database has, the planner would pick a sequential scan
   for anything, so cost comparison proves nothing. With sequential scans
   disabled, PostgreSQL falls back to one only when no usable index exists, which
-  makes the plan structural evidence rather than a costing artifact;
+  makes the plan structural evidence rather than a costing artifact. When that
+  plan walks an unrelated index and filters a range bound, the plan is asked
+  again with plain index scans off too, and
+  :func:`~due_work_harness.integrations.postgres_plans.bitmap_overturns_the_walk`
+  decides;
 * **replica read** — the database alias the QuerySet is routed to, compared
   against the aliases that are replicas;
 * **scan counts** — ``EXPLAIN ANALYZE (FORMAT JSON)``, read by
@@ -37,6 +41,7 @@ from django.test.utils import CaptureQueriesContext
 from due_work_harness.host import ReadCosts
 from due_work_harness.integrations.django.writes import require_postgresql
 from due_work_harness.integrations.postgres_plans import (
+    bitmap_overturns_the_walk,
     index_served_verdict,
     read_cost,
     referenced_columns,
@@ -51,19 +56,29 @@ def _plan(explained: str | list[Any]) -> dict[str, Any]:
     return document[0]["Plan"]
 
 
-def explain_index_eligibility(queryset: QuerySet[Any]) -> dict[str, Any]:
+#: Planner methods disabled to ask whether an index can serve the selection at all.
+_WITHOUT_SEQUENTIAL_SCANS = ("enable_seqscan",)
+#: ...and to ask whether one narrows it: a bitmap needs an index condition or a matching partial predicate.
+_BITMAP_ONLY = ("enable_seqscan", "enable_indexscan", "enable_indexonlyscan")
+
+
+def explain_index_eligibility(queryset: QuerySet[Any], *, bitmap_only: bool = False) -> dict[str, Any]:
     """Probe index eligibility without executing the selected query or leaking settings."""
     require_postgresql(queryset.db, "the index-served proof", "it reads EXPLAIN plans")
     database = connections[queryset.db]
+    disabled = _BITMAP_ONLY if bitmap_only else _WITHOUT_SEQUENTIAL_SCANS
     # A successful nested atomic block releases a savepoint, not SET LOCAL.
     # Restore explicitly on success; rollback owns restoration on SQL failure.
     # Use the queryset's actual connection for both EXPLAIN and its settings.
     with transaction.atomic(using=database.alias), database.cursor() as cursor:
-        cursor.execute("SHOW enable_seqscan")
-        previous = cursor.fetchone()[0]
-        cursor.execute("SET LOCAL enable_seqscan = off")
+        previous = {}
+        for setting in disabled:
+            cursor.execute(f"SHOW {setting}")
+            previous[setting] = cursor.fetchone()[0]
+            cursor.execute(f"SET LOCAL {setting} = off")
         plan = _plan(queryset.explain(format="json"))
-        cursor.execute("SELECT set_config('enable_seqscan', %s, true)", [previous])
+        for setting, value in previous.items():
+            cursor.execute("SELECT set_config(%s, %s, true)", [setting, value])
     return plan
 
 
@@ -141,12 +156,15 @@ class DjangoSelectionInspector(HarnessModel):
     def index_served(self, selection: object) -> tuple[bool, str]:
         queryset = self._queryset(selection)
         table = queryset.model._meta.db_table
+        named = _verified_partial_indexes(queryset.db, table, self.partial_indexes)
         plan = explain_index_eligibility(queryset)
-        verdict = index_served_verdict(
-            plan, table=table, predicate_indexes=_verified_partial_indexes(queryset.db, table, self.partial_indexes)
-        )
+        verdict = index_served_verdict(plan, table=table, predicate_indexes=named)
         if verdict is None:
             return True, json.dumps(plan, indent=2)
+        # A tiny table may make the planner walk an unrelated index; the bitmap-only plan decides then.
+        bitmap = explain_index_eligibility(queryset, bitmap_only=True)
+        if bitmap_overturns_the_walk(plan, bitmap, table=table, predicate_indexes=named):
+            return True, json.dumps(bitmap, indent=2)
         return False, verdict
 
     def replica_read(self, selection: object) -> str | None:

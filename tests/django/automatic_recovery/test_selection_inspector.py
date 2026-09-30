@@ -31,7 +31,8 @@ from due_work_harness.host import Host, hosted
 from due_work_harness.integrations.celery import celery_beat_evidence, celery_beat_interval, celery_publications
 from due_work_harness.integrations.django import django_host
 from due_work_harness.integrations.django import lifecycle_references as ref
-from due_work_harness.integrations.django.selection import DjangoSelectionInspector
+from due_work_harness.integrations.django.selection import DjangoSelectionInspector, explain_index_eligibility
+from due_work_harness.integrations.postgres_plans import iter_plan_nodes
 from due_work_harness.profiles.automatic_recovery import (
     DueWorkSweep,
     assert_idle_tick_is_cheap,
@@ -397,3 +398,61 @@ def test_a_named_partial_index_that_narrows_the_history_passes_the_history_proof
     # The conforming claim: the index's WHERE leaves the settled history out, so its bitmap reads little.
     _index_served_with(bitmap_over_a_partial_index)
     _history_proof()
+
+
+# --- A tiny table walking an unrelated index -------------------------------------------
+
+_WALKED = {
+    "Node Type": "Index Scan",
+    "Relation Name": _TABLE,
+    "Index Name": f"{_TABLE}_pkey",
+    "Filter": "(((status)::text = ANY ('{requested,running}'::text[])) AND (updated_at <= $1))",
+}
+
+
+@pytest.mark.parametrize(
+    ("index_cond", "served"), [("(updated_at <= $1)", True), ("((status)::text = 'requested')", False)]
+)
+def test_the_inspector_asks_the_bitmap_plan_when_the_first_walks_an_unrelated_index(
+    monkeypatch: pytest.MonkeyPatch, index_cond: str, served: bool
+) -> None:
+    # The planner's first pick is scripted (it depends on statistics a test cannot pin); the inspector's
+    # second question and its verdict are what is under test.
+    from due_work_harness.integrations.django import selection
+
+    bitmap = {
+        "Node Type": "Bitmap Heap Scan",
+        "Relation Name": _TABLE,
+        "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "due_ix", "Index Cond": index_cond}],
+    }
+    asked: list[bool] = []
+
+    def scripted(queryset: QuerySet[Any], *, bitmap_only: bool = False) -> dict[str, Any]:
+        asked.append(bitmap_only)
+        return bitmap if bitmap_only else _WALKED
+
+    monkeypatch.setattr(selection, "explain_index_eligibility", scripted)
+    verdict, _evidence = DjangoSelectionInspector().index_served(ref.due_for_recovery())
+    assert (verdict, asked) == (served, [False, True])
+
+
+def test_the_bitmap_only_probe_disables_plain_index_scans_and_restores_every_setting() -> None:
+    _add_due_index()
+    observed: dict[str, str] = {}
+    original = QuerySet.explain
+
+    def explain(queryset: QuerySet[Any], *args: Any, **kwargs: Any) -> str:
+        with connection.cursor() as cursor:
+            for setting in ("enable_seqscan", "enable_indexscan", "enable_indexonlyscan"):
+                cursor.execute(f"SHOW {setting}")
+                observed[setting] = cursor.fetchone()[0]
+        return original(queryset, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(QuerySet, "explain", explain)
+        plan = explain_index_eligibility(ref.due_for_recovery(), bitmap_only=True)
+    assert observed == {"enable_seqscan": "off", "enable_indexscan": "off", "enable_indexonlyscan": "off"}
+    assert any(node.get("Node Type") == "Bitmap Index Scan" for node in iter_plan_nodes(plan))
+    with connection.cursor() as cursor:
+        cursor.execute("SHOW enable_indexscan")
+        assert cursor.fetchone()[0] == "on"

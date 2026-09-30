@@ -12,6 +12,7 @@ import pytest
 from due_work_harness.host import ReadCost
 from due_work_harness.integrations.postgres_plans import (
     assert_plan_is_index_served,
+    bitmap_overturns_the_walk,
     index_served_verdict,
     iter_plan_nodes,
     read_cost,
@@ -336,3 +337,80 @@ def test_a_literal_in_the_filter_is_not_a_column() -> None:
     assert_plan_is_index_served(
         name="literal", plan=plan, table=_TABLE, predicate_indexes={"active_ix": frozenset({"status"})}
     )
+
+
+# On a tiny table every index walk costs about the same, so with sequential scans off the planner
+# may walk an unrelated index (a unique key) and filter the due-time bound. The bitmap-only plan
+# then decides: a bitmap needs an index condition, or a named partial predicate, to narrow at all.
+
+_WALKS_AN_UNRELATED_INDEX = _index_scan(Filter="((state = 'ready') AND (available_at <= $1))")
+_BITMAP_OVER_THE_DUE_INDEX = {
+    "Node Type": "Bitmap Heap Scan",
+    "Relation Name": _TABLE,
+    "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "due_ix", "Index Cond": "(available_at <= $1)"}],
+}
+_BITMAP_OVER_A_STATE_INDEX_READING_EVERY_STATE = {
+    "Node Type": "Bitmap Heap Scan",
+    "Relation Name": _TABLE,
+    "Recheck Cond": "(state = ANY ('{ready,queued,claimed,retryable,unknown}'::text[]))",
+    "Filter": "(available_at <= $1)",
+    "Plans": [
+        {
+            "Node Type": "Bitmap Index Scan",
+            "Index Name": "state_ix",
+            "Index Cond": "(state = ANY ('{ready,queued,claimed,retryable,unknown}'::text[]))",
+        }
+    ],
+}
+_BITMAP_WITHOUT_AN_INDEX_CONDITION = {
+    "Node Type": "Bitmap Heap Scan",
+    "Relation Name": _TABLE,
+    "Recheck Cond": "(state = 'ready')",
+    "Filter": "(available_at <= $1)",
+    "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "some_index"}],
+}
+
+
+@pytest.mark.parametrize(
+    ("bitmap", "overturns"),
+    [
+        (_BITMAP_OVER_THE_DUE_INDEX, True),
+        (_WALKS_AN_UNRELATED_INDEX, False),
+        # A bitmap is not narrowing by being a bitmap: this one reads the whole state index and
+        # still filters the due-time bound the walked scan filtered.
+        (_BITMAP_OVER_A_STATE_INDEX_READING_EVERY_STATE, False),
+        (_BITMAP_WITHOUT_AN_INDEX_CONDITION, False),
+    ],
+    ids=["a-narrowing-index-exists", "no-narrowing-index", "bitmap-leaves-the-due-bound-unindexed", "no-index-cond"],
+)
+def test_a_tiny_table_walking_an_unrelated_index_is_judged_by_the_bitmap_plan(
+    bitmap: dict[str, object], overturns: bool
+) -> None:
+    assert index_served_verdict(_WALKS_AN_UNRELATED_INDEX, table=_TABLE) is not None
+    assert bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, bitmap, table=_TABLE) is overturns
+
+
+def test_a_walk_that_filters_no_range_bound_is_not_overturned() -> None:
+    # Only a range bound on a tiny table makes the walk a costing artifact; an equality filter is no excuse.
+    walked = _index_scan(Filter="(state = 'ready')")
+    bitmap = {
+        "Node Type": "Bitmap Heap Scan",
+        "Relation Name": _TABLE,
+        "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "state_ix", "Index Cond": "(state = 'ready')"}],
+    }
+    assert bitmap_overturns_the_walk(walked, bitmap, table=_TABLE) is False
+
+
+def test_the_bitmap_is_judged_with_the_named_partial_indexes() -> None:
+    # A named partial index needs no Index Cond for the verdict, but the range bound must still be indexed.
+    bitmap = {
+        "Node Type": "Bitmap Heap Scan",
+        "Relation Name": _TABLE,
+        "Plans": [
+            {"Node Type": "Bitmap Index Scan", "Index Name": "ready_due_ix", "Index Cond": "(available_at <= $1)"}
+        ],
+    }
+    named = {"ready_due_ix": frozenset({"state"})}
+    assert bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, bitmap, table=_TABLE, predicate_indexes=named)
+    unbounded = {**bitmap, "Plans": [{"Node Type": "Bitmap Index Scan", "Index Name": "ready_due_ix"}]}
+    assert not bitmap_overturns_the_walk(_WALKS_AN_UNRELATED_INDEX, unbounded, table=_TABLE, predicate_indexes=named)
