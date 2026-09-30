@@ -264,8 +264,8 @@ jobs:
       - name: Saleor's test databases, migrated once
         run: demos/saleor_checkout/run.sh --prepare-db 4
       # The durations are the evidence for the next change to this job's speed. --dist worksteal was
-      # measured slower (84 s and 95 s against 74 s): its three long crash histories then run at once
-      # and every case slows on the runner's four CPUs, the static inventory scan included.
+      # tried: pytest took 75 s and 80 s, inside the 66 to 91 s this step takes with the default on the
+      # same code, as runners vary. No gain was measurable, so the default stays.
       - name: Saleor checkout
         run: demos/saleor_checkout/run.sh -rxX --due-work-verify -n 4 --reuse-db --durations=15
 
