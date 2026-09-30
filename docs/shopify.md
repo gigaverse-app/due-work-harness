@@ -23,10 +23,12 @@ status_body = ShopifyBulkOperation(
 ).graphql_response()
 # {"data": {"node": {"status": "CANCELED", "objectCount": "4", ...}}}
 
-result_body = shopify_jsonl([
-    {"id": "gid://shopify/Product/1", "title": "one"},
-    {"id": "gid://shopify/ProductVariant/2", "__parentId": "gid://shopify/Product/1"},
-])
+result_body = shopify_jsonl(
+    [
+        {"id": "gid://shopify/Product/1", "title": "one"},
+        {"id": "gid://shopify/ProductVariant/2", "__parentId": "gid://shopify/Product/1"},
+    ]
+)
 
 exchange = ShopifyBulkExchange(
     operation=ShopifyBulkOperation(
