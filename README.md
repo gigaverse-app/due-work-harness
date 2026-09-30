@@ -153,6 +153,9 @@ histories as `process_handoffs`, beside `handoffs`.
 
 ## Six ways due work goes missing: lifecycle profiles
 
+Every domain adoption **must** use `DueWorkContract` and
+`@due_work_contract_suite(CONTRACT)`; standalone histories or ordinary tests do
+not complete adoption. See [the required adoption shape](ADOPTING.md#required-adoption-shape).
 A crash history proves one handoff. A declarative `DueWorkContract` binds your
 production selection, tick and transitions, and asks for a disposition (claim,
 decline with a reason, not applicable, or known gap) for each of six profiles:
@@ -190,6 +193,8 @@ every proof measure the copy, and it stays green forever. So the harness:
 
 The full catalogue of lies it refuses: [false greens](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/false-greens.md).
 
+Cases are generated at pytest collection time, not written as Python files.
+Use `--junitxml=<artifact-path>` for a machine-readable run artifact.
 A contract class is empty in the source, so `pytest --due-work-summary` lists
 what each one generated after the run: every case with its outcome, and each
 declared gap's reason beside its strict xfail.
@@ -264,6 +269,7 @@ configure(django_host(production_packages={"myapp"}))
 | `[dbos]` | restarting an app through its own startup for process-level crash histories |
 | `[redis]` | `redis_host()`: a commit counter for a queue kept in Redis (each pipeline or write command a commit, judged by the server's own command flags), and a reply breaker that lets a write land and loses its answer |
 | `[rq]` | RQ's worker as the transition and as recovery (later workers' maintenance, with the clock moved on), its ownership bound to profile B, a breaker for job callbacks, and `worker_contract()`: RQ's whole contract for any adopter's jobs |
+| `[mongodb]` | `mongodb_host(client, production_packages)`: acknowledged writes and transaction commits, worker death and lost replies on PyMongo 4.9–4.17; pass `motor_client.delegate` for Motor. See [MongoDB boundaries](docs/mongodb.md). |
 
 ## Finding weaknesses in a project of your own or someone else's
 

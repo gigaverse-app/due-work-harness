@@ -40,7 +40,7 @@ from typing import Any
 
 from due_work_harness.host import Host, PublicationBreaker, ReceiverBreaker
 from due_work_harness.integrations.clocks import time_machine_clock
-from due_work_harness.worker_death import WorkerDied
+from due_work_harness.worker_death import CommitWorker, LostCommitReplies
 
 #: Commands whose writes the server cannot report in advance.
 SCRIPT_COMMANDS = frozenset({"EVAL", "EVALSHA", "FCALL"})
@@ -122,26 +122,7 @@ def _watching(client: Any, before: Callable[[], None], committed: Callable[[], N
         yield
 
 
-class RedisWorker:
-    """The worker a crash history interrupts: its commit count and whether it died."""
-
-    def __init__(self, kill_after: int | None) -> None:
-        self._kill_after = kill_after
-        self.commits = 0
-        self.dead = False
-
-    def committed(self) -> None:
-        self.commits += 1
-        if self.commits == self._kill_after:
-            self.kill_now(f"worker died right after commit {self.commits}")
-
-    def kill_now(self, reason: str) -> None:
-        self.dead = True
-        raise WorkerDied(reason)
-
-    def refuse_if_dead(self) -> None:
-        if self.dead:
-            raise WorkerDied("the worker is dead; its connection sends nothing more")
+RedisWorker = CommitWorker
 
 
 def redis_worker_killer(client: Any) -> Callable[[int | None], AbstractContextManager[RedisWorker]]:
@@ -156,23 +137,18 @@ def redis_worker_killer(client: Any) -> Callable[[int | None], AbstractContextMa
     return killer
 
 
-class LostReplies:
-    """The commits a crash history counts, and the connection error raised for the chosen one's reply."""
+class LostReplies(LostCommitReplies):
+    """An acknowledged write loses its reply with the driver's connection error."""
 
     def __init__(self, lose_at: int | None) -> None:
-        self._lose_at = lose_at
-        self.count = 0
-        self.failure: Exception | None = None
-
-    def committed(self) -> None:
         from redis.exceptions import ConnectionError as RedisConnectionError
 
-        self.count += 1
-        if self.count == self._lose_at:
-            self.failure = RedisConnectionError(
-                f"Connection closed by server (the reply to commit {self.count} was lost; the write landed)"
-            )
-            raise self.failure
+        super().__init__(
+            lose_at,
+            lambda count: RedisConnectionError(
+                f"Connection closed by server (the reply to commit {count} was lost; the write landed)"
+            ),
+        )
 
 
 def redis_reply_breaker(client: Any) -> Callable[[int | None], AbstractContextManager[LostReplies]]:

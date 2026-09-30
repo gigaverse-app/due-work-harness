@@ -1,3 +1,6 @@
+from collections.abc import Callable
+
+
 class WorkerDied(BaseException):
     """A worker died: nothing it would have done next happens. A BaseException, so ordinary error handling cannot swallow it."""
 
@@ -22,3 +25,41 @@ class ReceiverFailed(Exception):  # noqa: N818 - named for what happened, like W
     ``Signal.send`` propagates it to the sender and skips the receivers after
     it; ``send_robust`` logs it and carries on.
     """
+
+
+class CommitWorker:
+    """Count a client's durable writes and fence every later operation after death."""
+
+    def __init__(self, kill_after: int | None) -> None:
+        self._kill_after = kill_after
+        self.commits = 0
+        self.dead = False
+
+    def committed(self) -> None:
+        self.commits += 1
+        if self.commits == self._kill_after:
+            self.kill_now(f"worker died right after commit {self.commits}")
+
+    def kill_now(self, reason: str) -> None:
+        self.dead = True
+        raise WorkerDied(reason)
+
+    def refuse_if_dead(self) -> None:
+        if self.dead:
+            raise WorkerDied("the worker is dead; its connection sends nothing more")
+
+
+class LostCommitReplies:
+    """Count acknowledged commits and lose one reply using the adapter's driver error."""
+
+    def __init__(self, lose_at: int | None, failure: Callable[[int], Exception]) -> None:
+        self._lose_at = lose_at
+        self._failure = failure
+        self.count = 0
+        self.failure: Exception | None = None
+
+    def committed(self) -> None:
+        self.count += 1
+        if self.count == self._lose_at:
+            self.failure = self._failure(self.count)
+            raise self.failure

@@ -11,7 +11,10 @@ The rules that shape every step:
 
 - **Expose, don't fix.** The deliverable is a test that fails for a stated reason, and a contract that
   finds it. A fix is theirs to shape.
-- **Every PR carries the real contract**, not only a plain test. The plain test proves one bug; the
+- **Every adoption PR MUST carry `DueWorkContract` and a collected
+  `@due_work_contract_suite(CONTRACT)` class**, as specified by
+  [the required adoption shape](../ADOPTING.md#required-adoption-shape). Direct
+  crash-helper calls and ordinary tests alone are incomplete adoption. The plain test proves one bug; the
   contract shows the project how to find the next one.
 - **Every probe strengthens the harness.** When a probe needs something the harness lacks, that goes into
   the harness first (steps 6 and 8), as a general capability, not as a hack in the fork.

@@ -14,7 +14,14 @@ order, and the rules that are not negotiable.
 
 - **Expose, don't fix.** Deliver a test that fails for a stated reason and a contract that finds it. Never
   propose or write the fix in an issue or PR.
-- **Every PR carries the real contract**, with a plain test beside it; a plain test alone is not enough.
+- **Every adoption PR MUST carry `DueWorkContract` and a collected
+  `@due_work_contract_suite(CONTRACT)` class.** Follow the
+  [required adoption shape](../../../ADOPTING.md#required-adoption-shape): declare
+  all lifecycle/safety profiles, put histories in the contract, execute the generated
+  cases, and link the declaration, suite and `--due-work-summary` report. Ordinary
+  tests and direct crash-helper calls are supporting evidence, never a substitute.
+  The decorator generates pytest cases, not Python files; use `--junitxml` when a
+  generated result file is needed and retain it as a CI artifact.
 - **Claim only what you ran.** A sentence in a report is either measured or marked as code reading. Agents'
   findings (including your own from an earlier turn) are hypotheses until step 5.
 - **Posting is outward-facing.** Issues, PRs, comments and releases go out under the user's account.
@@ -72,7 +79,8 @@ Work in a scratch directory, not in a checkout that matters. Track the steps as 
 
 - [ ] their own suite ran green here first; the baseline is known
 - [ ] each finding has an independent reproduction, and only measured claims are in the text
-- [ ] contract, `Findings`, gaps, plain test, and the magic comment are in the pushed commit
+- [ ] `DueWorkContract`, its decorated collected class, `Findings`, gaps, plain test, and the magic comment are in the pushed commit
+- [ ] generated node IDs were collected and executed; the PR links the declaration, class, and summary/artifact, with gaps counted separately
 - [ ] the harness gap (if any) is fixed, tested in CI on that stack, released, and the pins raised
 - [ ] issues, PR and plain-language comments are posted with the self-identification line, no fix offered
 - [ ] CI is green, or its red is explained with evidence

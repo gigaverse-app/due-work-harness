@@ -5,6 +5,30 @@ when background work can be lost or repeated". A complete, minimal adopter lives
 in [`examples/adopter/`](examples/adopter/); the harness's own CI runs it through
 the GitHub Actions below.
 
+## Required adoption shape
+
+Every due-work domain adoption **MUST** declare a `DueWorkContract` and expose a
+collected class decorated with `@due_work_contract_suite(CONTRACT)`. Declare all
+six lifecycle profiles and both safety profiles with truthful dispositions;
+bind claimed profiles to production code. Put crash histories in `handoffs=` or
+`process_handoffs=` so the generated suite owns their execution and reporting.
+
+A file of ordinary tests, a `HandoffHistory`, direct calls to
+`assert_crash_at_every_commit_converges`, or a helper named `contract()` returning
+something else **does not satisfy this requirement**. Those are useful supporting
+regressions or exploratory probes, not a completed domain adoption. Harness
+self-tests and independently scoped safety/selection/exemption suites retain
+their own APIs; they must not be presented as a full due-work domain contract.
+
+The decorator generates **pytest cases at collection time**, not Python source
+files. Verify the generated node IDs with `pytest --collect-only`, then run with
+`--due-work-summary`. For a machine-readable generated file, pass pytest's
+`--junitxml=<artifact-path>` and retain it as a CI artifact. Link the declarations,
+suite classes, and run report in the PR. Report passes, declared gaps, declines,
+and exclusions separately; collection alone is not execution evidence. Do not
+invent a claim or misuse `Decline` to hide unfinished bindings. Legacy gaps must
+remain explicit; new-feature contracts cannot waive gaps.
+
 ## 1. Install
 
 ```bash
@@ -121,8 +145,10 @@ class TestOrderNotificationsDueWork:
     pass
 ```
 
-Start small: a `HandoffHistory` with `assert_crash_at_every_commit_converges` is
-often the first proof worth having. See [the README](README.md) and
+Start small by declaring a `HandoffHistory` in the contract's `handoffs=` with
+its real `handoff_delivery=`; the suite generates the crash proof. Direct helper
+calls may help discovery, but must be incorporated into the declaration before
+calling adoption complete. See [the README](README.md) and
 [what a green result means](docs/what-a-green-result-means.md).
 
 If the work can be owed but *blocked* by a product decision (a dependency has
