@@ -143,7 +143,9 @@ class MongoDBLostReplies(LostCommitReplies):
     def __init__(self, lose_at: int | None) -> None:
         from pymongo.errors import ConnectionFailure
 
-        super().__init__(lose_at, lambda count: ConnectionFailure(f"MongoDB reply to write {count} lost; the write landed"))
+        super().__init__(
+            lose_at, lambda count: ConnectionFailure(f"MongoDB reply to write {count} lost; the write landed")
+        )
 
 
 def mongodb_reply_breaker(client: Any) -> Callable[[int | None], AbstractContextManager[MongoDBLostReplies]]:
