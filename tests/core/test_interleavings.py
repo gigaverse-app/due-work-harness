@@ -519,3 +519,19 @@ def test_evidence_components_validate_callbacks_without_invoking_them(retry: boo
         with pytest.raises(ValidationError, match="callable"):
             EvidenceArrival.model_validate({"publish": None, "consume": component.consume})
     assert not invoked
+
+
+def test_binding_cleanup_cannot_turn_a_failed_history_into_a_pass() -> None:
+    from contextlib import suppress
+
+    @contextmanager
+    def swallowing() -> Iterator[InFlightSession[int, str, str]]:
+        with suppress(InterleavingFailure), reference(forget=True) as session:
+            yield session
+
+    broken = scenario().model_copy(update={"bind": swallowing})
+    history = next(h for h in broken.histories() if h.id == "IF.two-orders/write/late")
+    with pytest.raises(InterleavingFailure, match="convergence") as caught:
+        broken.run(history)
+    trace = HistoryTrace.model_validate_json(caught.value.__notes__[-1])
+    assert trace.history == history

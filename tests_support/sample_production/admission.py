@@ -10,6 +10,7 @@ AdmissionFault = Literal[
     "none",
     "no_transaction",
     "partial_commit",
+    "left_open",
     "publish_early",
     "publish_on_failure",
     "external_effect",
@@ -54,6 +55,8 @@ class Command(MutableHarnessModel):
             self.db.commit()
         except InterruptedAdmission:
             self.db.rollback()
+            if self.fault == "left_open":
+                self.db.execute("BEGIN")
             if self.fault == "publish_on_failure":
                 self.publish()
             raise

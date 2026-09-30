@@ -96,3 +96,12 @@ proof green, the proof was about to tell you something.
 - **Observation width.** An `observe` that omits what the handoff creates, or
   what the external system saw, weakens every "nothing changed" and every crash
   history to nothing.
+
+## Cleanup swallowing a verdict
+
+An adopter's binding, admission fault, or publication recorder may accidentally
+suppress an assertion in `__exit__`. The shared `proof_context` lets the original
+exception reach cleanup, then re-raises it if it was suppressed. Flat profile
+proofs and interleaving histories share this boundary; replay notes and the
+exact failing invariant survive. A fault fixture cannot turn a failed rollback
+check into a passing admission proof by cleaning up leaked state afterwards.

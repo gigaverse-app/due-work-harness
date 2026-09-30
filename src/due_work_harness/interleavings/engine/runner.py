@@ -6,6 +6,7 @@ from contextvars import copy_context
 from threading import Thread
 
 from ...binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
+from ...helpers import proof_context
 from ..bindings import EvidenceArrival, EvidenceConfluence, EvidenceSession, InFlightConvergence, Scenario
 from ..model import History, HistoryTrace, InterleavingFailure, require
 from ..model import Operation as Op
@@ -56,7 +57,7 @@ def replay_history(scenario: Scenario, trace: HistoryTrace) -> None:
 
 def run_in_flight[H, V, O](scenario: InFlightConvergence[H, V, O], history: History) -> None:
     scenario.validate_definition()
-    with scenario.bind() as session, traced(scenario, history) as position:
+    with proof_context(scenario.bind()) as session, traced(scenario, history) as position:
         assert set(session.intents) == set(scenario.intents), "session intents differ from collection metadata"
         assert (session.retire is not None) == scenario.retirement, "retirement seam mismatch"
         assert (session.transport is not None) == scenario.transport, "transport seam mismatch"
@@ -236,7 +237,7 @@ def validate_evidence_session[O](scenario: EvidenceConfluence[O], session: Evide
 
 def run_evidence[O](scenario: EvidenceConfluence[O], history: History) -> None:
     scenario.validate_definition()
-    with scenario.bind() as session, traced(scenario, history) as position:
+    with proof_context(scenario.bind()) as session, traced(scenario, history) as position:
         validate_evidence_session(scenario, session)
         seen: set[str] = set()
         retried = False

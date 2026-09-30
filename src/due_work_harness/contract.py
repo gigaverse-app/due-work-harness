@@ -146,7 +146,7 @@ from functools import wraps
 from typing import Any
 
 import pytest
-from pydantic import Field, SkipValidation
+from pydantic import Field, InstanceOf, SkipValidation
 
 from due_work_harness.binding import (
     assert_test_binding_delegates_to_production,
@@ -166,9 +166,10 @@ from due_work_harness.crash_histories import (
     HistoriesDiverged,
     assert_crash_at_every_commit_converges,
 )
+from due_work_harness.helpers import proof_context
 from due_work_harness.host import current_host
 from due_work_harness.interleavings.adapters import integration as interleaving_integration
-from due_work_harness.interleavings.bindings import Scenario
+from due_work_harness.interleavings.bindings import EvidenceConfluence, InFlightConvergence
 from due_work_harness.models import MISSING, DueWorkContractDesignError, HarnessModel, with_positional
 from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge
 from due_work_harness.profiles.automatic_recovery import (
@@ -586,8 +587,8 @@ class DueWorkContract(HarnessModel):
     profiles: Mapping[Profile, Disposition]
 
     #: Competing-event E families; each scenario owns its deterministic histories.
-    in_flight: Mapping[str, Scenario] = Field(default_factory=dict)
-    evidence_confluence: Mapping[str, Scenario] = Field(default_factory=dict)
+    in_flight: Mapping[str, InstanceOf[InFlightConvergence]] = Field(default_factory=dict)
+    evidence_confluence: Mapping[str, InstanceOf[EvidenceConfluence]] = Field(default_factory=dict)
     #: H: replay one logical operation and observe its external result.
     replay: Callable[[], ReplaySafeEffect | AbstractContextManager[ReplaySafeEffect]] | None = None
     #: J: drive transient failures until the production retry budget is exhausted.
@@ -1116,7 +1117,7 @@ def _entered(factory: Callable[[], Any]) -> Iterator[Any]:
     """The binding a factory produces, entering it when it is a context manager."""
     built = factory()
     if isinstance(built, AbstractContextManager):
-        with built as binding:
+        with proof_context(built) as binding:
             yield binding
     else:
         yield built

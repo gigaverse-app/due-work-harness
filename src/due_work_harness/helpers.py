@@ -20,7 +20,8 @@ For what a passing or failing proof does and does not tell you, see
 """
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from typing import Any
 
 import pytest
@@ -180,3 +181,22 @@ def wait_until(settled: Callable[[], bool], *, timeout: float = 60.0, what: str,
     while not settled():
         assert time.monotonic() < deadline, f"{what} within {timeout}s"
         time.sleep(poll)
+
+
+@contextmanager
+def proof_context[T](scope: AbstractContextManager[T]) -> Iterator[T]:
+    """Enter adopter resources without allowing cleanup to turn a failed proof green.
+
+    The original exception still reaches __exit__ so rollback and cleanup keep
+    their normal semantics. If the context suppresses it, re-raise that same
+    exception afterwards, including its replay notes and invariant identity.
+    """
+    failure: BaseException | None = None
+    with scope as binding:
+        try:
+            yield binding
+        except BaseException as error:
+            failure = error
+            raise
+    if failure is not None:
+        raise failure

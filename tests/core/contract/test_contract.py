@@ -1485,3 +1485,22 @@ def test_eligibility_cases_carry_the_hosts_database_marks(marking_host: Host) ->
         if param.id.startswith("eligibility-")
     ]
     assert marks and all(found["database"].kwargs == {"transaction": True} for found in marks)
+
+
+def test_binding_cleanup_cannot_swallow_a_failed_generated_proof() -> None:
+    from collections.abc import Iterator
+    from contextlib import contextmanager, suppress
+
+    @contextmanager
+    def swallowing_binding() -> Iterator[StateDerived]:
+        # ARRANGE — the reference genuinely loses unrecorded obligations.
+        # REAL PRODUCTION — root-owned reference transitions exercise the actual generated proof.
+        # EXTERNAL SEAM — deliberately dishonest fixture cleanup suppresses its assertion.
+        # OBSERVE — the original behavioral failure must still escape the generated case.
+        with suppress(AssertionError):
+            yield materialising_derivation_binding(EdgeTriggeredDeriver())
+
+    contract = _contract(derivation=swallowing_binding)
+    case = _params_by_id(contract_cases(contract))["F-assert_unrecorded_obligation_is_discovered"]
+    with pytest.raises(AssertionError, match="not discovered"):
+        case.values[0].run()

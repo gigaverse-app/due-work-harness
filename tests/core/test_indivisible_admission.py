@@ -81,6 +81,7 @@ def test_command_owned_atomic_admission_passes(proof: Callable[[AdmissionAtomici
     [
         ("no_transaction", "leaked or deleted obligations"),
         ("partial_commit", "leaked or deleted obligations"),
+        ("left_open", "left its transaction open"),
         ("publish_early", "published a wakeup"),
         ("publish_on_failure", "published a wakeup"),
         ("external_effect", "external effect"),

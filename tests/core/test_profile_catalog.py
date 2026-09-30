@@ -97,3 +97,29 @@ def test_family_gap_cannot_waive_missing_proofs() -> None:
                 }
             }
         )
+
+
+def test_a_history_binding_cannot_certify_the_wrong_convergence_family() -> None:
+    from pydantic import ValidationError
+
+    from due_work_harness import DueWorkContract
+    from due_work_harness.interleavings import InFlightConvergence
+    from due_work_harness.interleavings.testing.reference import reference
+    from tests.core.contract.declarations import REFERENCE_CONTRACT
+
+    revision = InFlightConvergence(
+        name="revisions",
+        bind=reference,
+        intents=("A", "B", "C"),
+        seams=("write",),
+        independent=True,
+        no_transport_because="Root control has no broker.",
+    )
+    with pytest.raises(ValidationError, match="EvidenceConfluence"):
+        DueWorkContract(
+            name="wrong family",
+            profiles=REFERENCE_CONTRACT.profiles,
+            snapshot=REFERENCE_CONTRACT.snapshot,
+            derivation=REFERENCE_CONTRACT.derivation,
+            evidence_confluence={revision.name: revision},  # type: ignore[bad-argument-type] - runtime boundary
+        )

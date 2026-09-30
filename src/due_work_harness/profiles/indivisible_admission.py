@@ -11,6 +11,7 @@ from contextlib import AbstractContextManager
 import pytest
 
 from due_work_harness.binding import TRANSITION_AUTHORING_OPERATIONS, assert_binding_reaches_production
+from due_work_harness.helpers import proof_context
 from due_work_harness.host import current_host
 from due_work_harness.models import HarnessModel
 
@@ -77,20 +78,18 @@ def _assert_admission(binding: AdmissionAtomicity, *, interrupt: bool) -> None:
         assert binding.observe() != before, "fault did not reach partial product writes"
         reached = True
 
-    checked = False
-    with binding.publications() as publications:
+    with proof_context(binding.publications()) as publications:
         if interrupt:
-            with binding.during(checkpoint):
+            with proof_context(binding.during(checkpoint)):
                 assert not in_transaction(), "fault fixture must not supply admission's transaction"
                 with pytest.raises(binding.expected_error):
                     tuple(binding.admit())
                 assert reached, "injected failure never reached the admission checkpoint"
+                assert not in_transaction(), "admission left its transaction open before fault teardown"
                 assert set(binding.obligations()) == existing, "interrupted admission leaked or deleted obligations"
                 assert binding.observe() == before, "interrupted admission leaked product intent"
                 assert not publications, "interrupted admission published a wakeup"
                 assert binding.effects() == effects, "admission performed an external effect"
-                checked = True
-            assert checked, "fault teardown swallowed the rollback assertion"
         else:
             admitted = tuple(binding.admit())
             assert admitted and len(set(admitted)) == len(admitted), "admission returned no unique new obligations"
@@ -100,9 +99,7 @@ def _assert_admission(binding: AdmissionAtomicity, *, interrupt: bool) -> None:
             assert binding.observe() == binding.expected, "successful admission did not commit product intent"
             assert all(not event.in_transaction for event in publications), "wakeup published before commit"
             assert binding.effects() == effects, "admission performed an external effect"
-            checked = True
         assert not in_transaction(), "admission left its transaction open"
-    assert checked, "publication recorder swallowed the admission assertion"
 
 
 def assert_successful_admission_commits(binding: AdmissionAtomicity) -> None:
