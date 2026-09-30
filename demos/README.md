@@ -29,6 +29,10 @@ Each demo **adopts the harness the way a project does**:
 If upstream changes a demo, a strict xfail turns red and the write-up here must
 change with it.
 
+The [executed capability map](../docs/adopter-capabilities.md) records the full
+profile scope, including payment-report evidence and crash/race findings,
+automatic-crop supersession, per-effect replay and retry, and follow-up admission.
+
 A new demo, or a report to the project a demo found something in, follows the
 [upstream playbook](../docs/upstream-playbook.md).
 

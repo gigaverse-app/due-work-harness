@@ -38,7 +38,9 @@ SHOWN = {
     "pytest demos/procrastinate_demo_django -k 'Fixes and handoff' -v": [
         "TestTheDemoWithItsFixes::test_due_work_contract[handoff-create book-assert_crash_at_every_commit_converges] "
         "PASSED",
-        "1 passed",
+        "TestTheDemoWithItsFixes::test_due_work_contract[handoff-index_book admits set_indexed-"
+        "assert_crash_at_every_commit_converges] PASSED",
+        "2 passed",
     ],
     "pytest demos/dbos_transactional_outbox -p no:django -k C-known_gap --xfail-tb -q": [
         "XFAILURES",
