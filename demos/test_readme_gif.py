@@ -30,7 +30,8 @@ ENV = ROOT / "docs" / "demo_env.sh"
 SHOWN = {
     "pytest demos/procrastinate_demo_django -k 'Shipped and handoff' --xfail-tb -q": [
         "XFAILURES",
-        "AssertionError: procrastinate demo_django: handoff 'create book': normal operation reaches [True], "
+        "due_work_harness.HistoriesDiverged: procrastinate demo_django: handoff 'create book': normal operation "
+        "reaches [True], "
         "but these histories reach something else: {'worker died after commit 1': [False]}. Work was lost or repeated.",
         "1 xfailed",
     ],
@@ -41,7 +42,8 @@ SHOWN = {
     ],
     "pytest demos/dbos_transactional_outbox -p no:django -k C-known_gap --xfail-tb -q": [
         "XFAILURES",
-        "AssertionError: place order: normal operation reaches ('SENT', 1), but these histories reach something else: "
+        "due_work_harness.HistoriesDiverged: place order: normal operation reaches ('SENT', 1), but these histories "
+        "reach something else: "
         "{'died at after_send': ('SENT', 2)}. Work was lost or repeated.",
         "1 xfailed",
     ],

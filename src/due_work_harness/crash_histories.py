@@ -178,6 +178,10 @@ class HistoriesDiverged(AssertionError):
     """
 
 
+# Reported under the name it is imported by, as pytest prints it on every divergence.
+HistoriesDiverged.__module__ = "due_work_harness"
+
+
 class HandoffHistory[HandleT, ObservationT](HarnessModel):
     """
     One production transition that commits work and hands work off.
