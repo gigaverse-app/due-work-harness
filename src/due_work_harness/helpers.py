@@ -22,11 +22,13 @@ For what a passing or failing proof does and does not tell you, see
 import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 
 from due_work_harness.host import current_host
+
+T = TypeVar("T")
 
 
 def contract_params(
@@ -184,7 +186,7 @@ def wait_until(settled: Callable[[], bool], *, timeout: float = 60.0, what: str,
 
 
 @contextmanager
-def proof_context[T](scope: AbstractContextManager[T]) -> Iterator[T]:
+def proof_context(scope: AbstractContextManager[T]) -> Iterator[T]:
     """Enter adopter resources without allowing cleanup to turn a failed proof green.
 
     The original exception still reaches __exit__ so rollback and cleanup keep

@@ -37,7 +37,7 @@ own sweep.
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractContextManager
 from datetime import timedelta
-from typing import Any
+from typing import Any, Generic, TypeAlias, TypeVar
 
 from due_work_harness.binding import (
     INVOCATION_AUTHORING_OPERATIONS,
@@ -48,8 +48,12 @@ from due_work_harness.binding import (
 from due_work_harness.models import DueWorkContractDesignError, HarnessModel
 from due_work_harness.profiles.automatic_recovery import DueWorkSweep
 
+IdentityT = TypeVar("IdentityT")
+SnapshotT = TypeVar("SnapshotT")
+ObservationT = TypeVar("ObservationT")
 
-class ExecutionGate[IdentityT, SnapshotT, ObservationT](HarnessModel):
+
+class ExecutionGate(HarnessModel, Generic[IdentityT, SnapshotT, ObservationT]):
     """One blocked, already time-due obligation, described so the proofs can drive it."""
 
     name: str
@@ -151,7 +155,7 @@ MAX_CLOCK_RESOLUTION = timedelta(seconds=1)
 
 #: One binding shape shared by native lifecycles and work-table adapters: a factory
 #: called fresh per generated case, returning the gate or a context manager yielding it.
-type ExecutionGateBinding = Callable[[], ExecutionGate | AbstractContextManager[ExecutionGate]]
+ExecutionGateBinding: TypeAlias = Callable[[], ExecutionGate | AbstractContextManager[ExecutionGate]]
 
 
 def assert_gate_bindings_are_production_bound(gate: ExecutionGate) -> None:

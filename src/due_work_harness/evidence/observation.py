@@ -16,15 +16,15 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeAlias, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, FieldSerializationInfo, field_serializer
 
 from due_work_harness.models import HarnessModel, MutableHarnessModel
 
-type ObservationOutcome = Literal["passed", "failed", "skipped", "xfail", "xpass"]
-type ObservationPhase = Literal["setup", "call", "teardown"]
-type ObservationKind = Literal["generated", "application"]
+ObservationOutcome: TypeAlias = Literal["passed", "failed", "skipped", "xfail", "xpass"]
+ObservationPhase: TypeAlias = Literal["setup", "call", "teardown"]
+ObservationKind: TypeAlias = Literal["generated", "application"]
 
 
 class ObservationCheck(HarnessModel):
@@ -72,7 +72,7 @@ class ObservedTest(MutableHarnessModel):
 
 
 # Repeated node IDs (xdist --dist=each, reruns) own separate executions, not one overwritten outcome.
-type ObservationReport = dict[str, list[ObservedTest]]
+ObservationReport: TypeAlias = dict[str, list[ObservedTest]]
 
 
 _recording: ContextVar[list[ObservationCheck] | None] = ContextVar("durable_observations", default=None)
@@ -92,7 +92,10 @@ def _model_field_names(model: BaseModel) -> list[str]:
     return list(type(model).model_fields)
 
 
-def assert_observation[T](actual: T, expected: T, *, because: str) -> None:
+T = TypeVar("T")
+
+
+def assert_observation(actual: T, expected: T, *, because: str) -> None:
     """
     Assert the whole observation; record field names without reading values for reporting.
 

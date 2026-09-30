@@ -241,7 +241,7 @@ ORDER_WEBHOOKS = (
     WebhookEventAsyncType.ORDER_CONFIRMED,
 )
 
-type Handle = tuple[UUID, Any]
+Handle = tuple[UUID, Any]
 
 
 def _checkout() -> tuple[Checkout, Any]:

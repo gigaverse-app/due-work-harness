@@ -84,7 +84,7 @@ pip install "due-work-harness[django]"  # plus the Django/PostgreSQL integration
 ```
 
 Or `uv add --dev due-work-harness`. The extras are `[django]`, `[celery]`,
-`[procrastinate]`, `[dbos]`, `[redis]` and `[rq]`; combine as needed. Python 3.12+.
+`[procrastinate]`, `[dbos]`, `[redis]` and `[rq]`; combine as needed. Python 3.11+.
 
 ## Kill it on purpose: crash histories
 
@@ -297,7 +297,7 @@ runs the cycle for you.
 
 Alpha. The proofs were extracted from a production codebase, where they guard
 its background workflows in CI; the public API may still change before 1.0.
-Python 3.12+. How it's built: [ARCHITECTURE.md](https://github.com/gigaverse-app/due-work-harness/blob/main/ARCHITECTURE.md).
+Python 3.11+. How it's built: [ARCHITECTURE.md](https://github.com/gigaverse-app/due-work-harness/blob/main/ARCHITECTURE.md).
 
 ## Development
 

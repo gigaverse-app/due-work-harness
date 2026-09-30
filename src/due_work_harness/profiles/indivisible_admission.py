@@ -7,6 +7,7 @@ cleanup must never manufacture the rollback being certified.
 
 from collections.abc import Callable, Hashable, Iterable, Sequence
 from contextlib import AbstractContextManager
+from typing import Generic, TypeVar
 
 import pytest
 
@@ -14,6 +15,8 @@ from due_work_harness.binding import TRANSITION_AUTHORING_OPERATIONS, assert_bin
 from due_work_harness.helpers import proof_context
 from due_work_harness.host import current_host
 from due_work_harness.models import HarnessModel
+
+ObservationT = TypeVar("ObservationT")
 
 
 class AdmissionPublication(HarnessModel):
@@ -23,7 +26,7 @@ class AdmissionPublication(HarnessModel):
     """True if publication happened before the admission transaction committed."""
 
 
-class AdmissionAtomicity[ObservationT](HarnessModel):
+class AdmissionAtomicity(HarnessModel, Generic[ObservationT]):
     """One freshly arranged standalone command, fault boundary, and independent observations."""
 
     name: str
