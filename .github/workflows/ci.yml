@@ -127,8 +127,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv sync --locked --no-default-groups --extra rq --extra celery
-      - run: uv run --no-sync pytest tests/rq tests/celery_worker -p no:django -rxX
+      - run: uv sync --locked --no-default-groups --extra rq --extra celery --group xdist
+      # Each xdist worker takes its own four Redis databases (tests/redis_databases.py), so cases that
+      # empty theirs cannot wipe another worker's; four workers use all 16 of the service's databases.
+      - run: uv run --no-sync pytest tests/rq tests/celery_worker -p no:django -rxX -n 4 --durations=10
 
   demos:
     runs-on: ubuntu-latest

@@ -1,15 +1,16 @@
 """The reference Celery application the worker self-tests run: a task that sends a message, its link, its errback."""
 
-import os
 from typing import Any
 
 import redis
 from celery import Celery
 
-BROKER = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/10")
-BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/11")
+from tests.redis_databases import redis_url
+
+BROKER = redis_url("celery broker")
+BACKEND = redis_url("celery backend")
 #: What the tasks did, readable from the test process and every worker process.
-RECORDS = redis.Redis.from_url(os.environ.get("CELERY_RECORDS_URL", "redis://localhost:6379/12"), decode_responses=True)
+RECORDS = redis.Redis.from_url(redis_url("celery records"), decode_responses=True)
 
 app = Celery("due_work_reference", broker=BROKER, backend=BACKEND)
 app.conf.update(task_acks_late=True, worker_prefetch_multiplier=1)
