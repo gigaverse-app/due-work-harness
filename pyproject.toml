@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "due-work-harness"
 # The version is the release tag (vX.Y.Z), written by release-please; see RELEASING.md.
 dynamic = ["version"]
-description = "Find lost work, duplicate effects, and recovery bugs with standardized tests generated from your application's DueWorkContract."
+description = "A pytest plugin, a library for writing tests, a test generator, and a harness test runner for finding lost work, duplicate effects, and recovery bugs with your application's DueWorkContract."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
