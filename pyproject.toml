@@ -6,13 +6,19 @@ build-backend = "hatchling.build"
 name = "due-work-harness"
 # The version is the release tag (vX.Y.Z), written by release-please; see RELEASING.md.
 dynamic = ["version"]
-description = "Conformance proofs for background work that must survive lost messages, dead workers and uncertain external calls."
+description = "A pytest plugin, a library for writing tests, a test generator, and a harness test runner for finding lost work, duplicate effects, and recovery bugs with your application's DueWorkContract."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "Gigaverse" }]
-keywords = ["background jobs", "task queue", "durable execution", "testing", "pytest", "crash testing", "outbox", "rq", "redis"]
+keywords = [
+    "pytest", "pytest plugin", "generated tests", "DueWorkContract",
+    "fault injection", "crash testing", "recovery testing", "idempotency",
+    "lost tasks", "duplicate processing", "background jobs", "task queue",
+    "durable execution", "transactional outbox", "celery", "django",
+    "postgresql", "mongodb", "kafka", "prefect", "rq", "redis",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: Pytest",
@@ -23,6 +29,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
 ]
 # The core imports no framework: its dependencies are pytest and pydantic. Every
 # integration lives behind an extra and is imported only when its framework is installed.
@@ -43,6 +50,9 @@ aiokafka = ["aiokafka>=0.12,<0.15"]
 
 [project.urls]
 Homepage = "https://github.com/gigaverse-app/due-work-harness"
+Documentation = "https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md"
+Source = "https://github.com/gigaverse-app/due-work-harness"
+Changelog = "https://github.com/gigaverse-app/due-work-harness/blob/main/CHANGELOG.md"
 Issues = "https://github.com/gigaverse-app/due-work-harness/issues"
 
 [project.scripts]

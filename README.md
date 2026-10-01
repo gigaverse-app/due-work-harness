@@ -5,6 +5,8 @@
 [![CI](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/due-work-harness)](https://pypi.org/project/due-work-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/due-work-harness)](https://pypi.org/project/due-work-harness/)
+[![pytest plugin](https://img.shields.io/badge/pytest-plugin-0A9EDC?logo=pytest&logoColor=white)](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md)
+[![Typed](https://img.shields.io/badge/typing-py.typed-blue)](https://typing.python.org/en/latest/spec/distributing.html)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ## Don’t lose orders, money, receipts, or work when the happy path breaks
@@ -14,14 +16,24 @@ receipt, publish to Kafka, or call Shopify. A worker can die one line later; a
 broker reply can be lost; a retry can run the external effect twice. Ordinary
 tests usually exercise only the path where none of that happens.
 
-**Due Work Harness gives your coding agent a repeatable way to find those
-bugs before production does.** Bind a `DueWorkContract` to your real workflow
-and recovery path, and it generates standardized pytest cases that interrupt
-commits, workers, messages, and external calls. It then checks whether the
-workflow converges on the right outcome—without lost work or duplicate effects.
+**Due Work Harness generates tests for work your application cannot afford to
+lose or repeat.** Bind a `DueWorkContract` to your real workflow and recovery
+path, yourself or with a coding agent. The harness generates standardized tests
+for crashes, retries, lost messages, and competing operations, exposing failure
+cases you might never think to write by hand. Its fault injection interrupts
+commits, workers, messages, and external calls, then checks whether recovery
+reaches the right outcome without lost work or duplicate effects.
 The agent can use the same fault-injection infrastructure to add focused tests
 for your application's particular risks. The core accepts plain Python
 callables: it assumes no framework, database, queue, or business domain.
+
+It integrates as a pytest plugin in your existing test suite and CI. Read the
+[pytest plugin guide](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md)
+for automatic discovery, test selection, reports, and configuration.
+
+Coming from distributed systems and familiar with Jepsen? Due Work Harness
+brings a similar approach to your application's workflows. Read
+[Jepsen-style fault testing for application work](docs/jepsen-analogy.md).
 
 ## What it finds
 
@@ -97,6 +109,17 @@ pip install due-work-harness
 uv add --dev due-work-harness
 poetry add --group dev due-work-harness
 ```
+
+Optional integrations:
+
+[![Django integration](https://img.shields.io/badge/integration-Django-092E20?logo=django&logoColor=white)](docs/integrations.md)
+[![PostgreSQL integration](https://img.shields.io/badge/integration-PostgreSQL-4169E1?logo=postgresql&logoColor=white)](docs/integrations.md)
+[![Celery integration](https://img.shields.io/badge/integration-Celery-37814A?logo=celery&logoColor=white)](docs/integrations.md)
+[![MongoDB integration](https://img.shields.io/badge/integration-MongoDB-47A248?logo=mongodb&logoColor=white)](docs/mongodb.md)
+[![Redis and RQ integration](https://img.shields.io/badge/integration-Redis%20%2F%20RQ-DC382D?logo=redis&logoColor=white)](docs/integrations.md)
+[![Prefect integration](https://img.shields.io/badge/integration-Prefect-024DFD?logo=prefect&logoColor=white)](docs/prefect.md)
+[![Kafka aiokafka integration](https://img.shields.io/badge/integration-Kafka%20%28aiokafka%29-231F20?logo=apachekafka&logoColor=white)](docs/aiokafka.md)
+[![Hypothesis optional exploration](https://img.shields.io/badge/optional%20exploration-Hypothesis-6B4C9A)](docs/interleavings.md#optional-search)
 
 For example, use `"due-work-harness[django]"` with any of the commands above
 for the Django/PostgreSQL integration. Other extras include `[celery]`, `[rq]`,
