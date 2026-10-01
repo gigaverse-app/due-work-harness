@@ -5,6 +5,8 @@
 [![CI](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/due-work-harness)](https://pypi.org/project/due-work-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/due-work-harness)](https://pypi.org/project/due-work-harness/)
+[![pytest plugin](https://img.shields.io/badge/pytest-plugin-0A9EDC?logo=pytest&logoColor=white)](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md)
+[![Typed](https://img.shields.io/badge/typing-py.typed-blue)](https://typing.python.org/en/latest/spec/distributing.html)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ## Don’t lose orders, money, receipts, or work when the happy path breaks
@@ -14,14 +16,17 @@ receipt, publish to Kafka, or call Shopify. A worker can die one line later; a
 broker reply can be lost; a retry can run the external effect twice. Ordinary
 tests usually exercise only the path where none of that happens.
 
-**Due Work Harness gives your coding agent a repeatable way to find those
-bugs before production does.** Bind a `DueWorkContract` to your real workflow
+**Due Work Harness is a pytest plugin that generates tests for work you cannot
+afford to lose or repeat.** Your coding agent can bind a `DueWorkContract` to your real workflow
 and recovery path, and it generates standardized pytest cases that interrupt
 commits, workers, messages, and external calls. It then checks whether the
 workflow converges on the right outcome—without lost work or duplicate effects.
 The agent can use the same fault-injection infrastructure to add focused tests
 for your application's particular risks. The core accepts plain Python
 callables: it assumes no framework, database, queue, or business domain.
+
+It runs in your existing pytest suite and CI. Read the [pytest plugin guide](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md)
+for automatic discovery, test selection, reports, and configuration.
 
 ## What it finds
 
