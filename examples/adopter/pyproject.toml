@@ -1,7 +1,7 @@
 [project]
 name = "adopter-example"
 version = "0.0.0"
-description = "A minimal project adopting due-work-harness, used by the harness's own CI to exercise its GitHub Actions."
+description = "A minimal project adopting pytest-obligation, used by the harness's own CI to exercise its GitHub Actions."
 requires-python = ">=3.12"
 dependencies = []
 

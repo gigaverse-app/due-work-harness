@@ -1,6 +1,6 @@
-name: due-work-harness test
+name: pytest-obligation test
 description: >-
-  Run the suites due-work-harness generates for the project (contracts, safety
+  Run the suites pytest-obligation generates for the project (contracts, safety
   profiles, exemptions: every case marked due_work) with the project's own uv
   environment, and summarize them. Databases or brokers the suites need are the
   calling job's services.

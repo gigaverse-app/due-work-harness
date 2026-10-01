@@ -8,6 +8,10 @@ the Python package supplies the pytest integration and fault-injection engine.
 
 ## Install and discover
 
+Previously published as `due-work-harness`; see the
+[migration and release-status note](../README.md#get-started) before installing.
+The rename preserves `due_work_harness` imports and existing pytest options.
+
 Install in the Python environment that runs your application's tests:
 
 ```bash
