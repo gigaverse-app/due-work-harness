@@ -9,7 +9,7 @@ from typing import TypeVar
 from ...binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from ...helpers import proof_context
 from ..bindings import EvidenceArrival, EvidenceConfluence, EvidenceSession, InFlightConvergence, Scenario
-from ..model import History, HistoryTrace, InterleavingFailure, require
+from ..model import Fault, History, HistoryTrace, InterleavingFailure, require
 from ..model import Operation as Op
 from .causality import reachable_fact_sets
 
@@ -78,11 +78,13 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
         handles: dict[str, H] = {}
         expected: dict[str, ObservedT] = {}
         identities: dict[str, str] = {}
+        receipt_targets: set[str] = set()
 
         def recover() -> None:
             session.advance(scenario.bounds.interval_seconds)
             session.recover()
             session.account_faults()
+            check_receipts()
 
         def check_effects() -> None:
             if not scenario.replay_safe:
@@ -92,16 +94,44 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                     "an uncertain or accepted occurrence was sent again",
                 )
 
-        def is_settled(alias: str) -> bool:
-            handle = handles[alias]
-            if session.observe(handle) != expected[alias]:
-                return False
+        def acknowledged(alias: str) -> bool:
             if session.desired_identity is None or session.acknowledged_identity is None:
                 return True
+            handle = handles[alias]
             # Equal payloads do not prove the right revision won (A -> B -> A).
             # Pin the commanded identity too: two drifting DB fields must not
             # certify each other during convergence or the quiet tail.
             return session.desired_identity(handle) == identities[alias] == session.acknowledged_identity(handle)
+
+        def is_settled(alias: str) -> bool:
+            return session.observe(handles[alias]) == expected[alias] and acknowledged(alias)
+
+        def refuse_confirmed_receipt(alias: str) -> None:
+            assert session.desired_identity is not None
+            # A recovery turn cannot silently replace the commanded obligation
+            # and thereby make its missing confirmation disappear.
+            require(
+                session.desired_identity(handles[alias]) == identities[alias],
+                "revision",
+                f"{alias} changed its commanded revision without a change or retirement command",
+            )
+            # A receipt alone cannot confirm an absent effect. A replay-safe
+            # writer may already have retried and verified application before
+            # START returns; judge that through the independent provider oracle.
+            require(
+                not acknowledged(alias) or session.observe(handles[alias]) == expected[alias],
+                "acknowledged-not-applied",
+                f"{alias} is confirmed but the provider only acknowledged receipt and never applied it; "
+                "this seam is declared acknowledgement-only, so its reply does not confirm the effect",
+            )
+
+        def check_receipts() -> None:
+            # Once a receipt checkpoint is reached, every observable transition
+            # of that work must preserve the invariant. In particular, check
+            # EACH recovery turn before a later turn can conceal a false receipt.
+            # Other handles and declarations without receipt histories are untouched.
+            for alias in sorted(receipt_targets):
+                refuse_confirmed_receipt(alias)
 
         def settle(alias: str) -> None:
             for attempt in range(scenario.bounds.recovery_steps + 1):
@@ -120,6 +150,10 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
         for item in history.steps:
             match item.operation:
                 case Op.ARM:
+                    assert (
+                        item.fault != Fault.ACKNOWLEDGE_WITHOUT_APPLYING
+                        or item.seam in scenario.acknowledgement_only_seams
+                    ), f"{item.seam} is not declared acknowledgement-only"
                     session.provider.arm(item.seam, item.fault)
                 case Op.ADMIT:
                     assert item.target not in handles, "history reused an admission alias"
@@ -172,6 +206,13 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                         "settled-churn",
                         "recovery repeated settled provider work",
                     )
+                case Op.UNCONFIRMED:
+                    assert session.desired_identity and session.acknowledged_identity, "revision seams missing"
+                    assert session.provider.unapplied_acknowledgements, "history never reached an unapplied receipt"
+                    # Checked before recovery can repair a premature confirmation;
+                    # already-applied, independently verified work may be confirmed.
+                    # Unresolved, ambiguous or evidence-derived dispositions conform.
+                    receipt_targets.add(item.target)
                 case Op.DROP:
                     assert session.transport
                     session.transport.drop(item.value == "on")
@@ -182,6 +223,7 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                     raise AssertionError(f"invalid in-flight operation: {item.operation}")
             session.account_faults()
             check_effects()
+            check_receipts()
             position[0] += 1
         session.provider.assert_reached()
         assert all(request.completed for request in session.provider.pending), (

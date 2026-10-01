@@ -36,6 +36,8 @@ def in_flight_histories(
     independent: bool,
     transport: bool,
     repair_seams: tuple[str, ...] = (),
+    acknowledgement_only_seams: tuple[str, ...] = (),
+    replay_safe: bool = True,
 ) -> tuple[History, ...]:
     histories = []
     admit = step(Op.ADMIT, value=intents[0])
@@ -46,6 +48,15 @@ def in_flight_histories(
 
     def add(family: str, variant: str, steps: list[Step]) -> None:
         histories.append(History(id=f"{family}/{variant}", families=(family,), steps=tuple(steps)))
+
+    def receipt_history(variant: str, prefix: list[Step], converged: list[Step]) -> None:
+        # One owner for checkpoint/retry policy across initial writes, updates
+        # and ABA. Retirement cannot expose an early identity.
+        unconfirmed = step(Op.UNCONFIRMED)
+        early = [] if retirement else [unconfirmed]
+        suffix = "" if replay_safe else "/no-replay"
+        tail = converged if replay_safe else [step(Op.RECOVER), unconfirmed]
+        add("IF.ack-without-apply", f"{variant}{suffix}", [*prefix, *early, *tail])
 
     add("IF.control", "normal", [admit, start, settle, changed, settle, quiet])
     for seam in seams:
@@ -82,6 +93,20 @@ def in_flight_histories(
             f"{seam}/response-lost",
             [admit, step(Op.ARM, seam=seam, fault=Fault.LOSE_RESPONSE), start, settle, changed, settle, quiet],
         )
+        if seam in acknowledgement_only_seams:
+            # Only for seams whose provider acknowledges receipt, not completion.
+            # The reply must not confirm before recovery could repair it; then
+            # replay-safe work converges, and replay-unsafe work stays unconfirmed.
+            acknowledged = step(Op.ARM, seam=seam, fault=Fault.ACKNOWLEDGE_WITHOUT_APPLYING)
+            if replay_safe or not retirement:
+                receipt_history(seam, [admit, acknowledged, start], [settle, changed, settle, quiet])
+                if not retirement:
+                    receipt_history(f"{seam}/update", [admit, start, settle, acknowledged, changed], [settle, quiet])
+                    receipt_history(
+                        f"{seam}/return-to-value",
+                        [admit, start, settle, changed, settle, acknowledged, step(Op.CHANGE, value=intents[0])],
+                        [settle, quiet],
+                    )
         if retirement:
             add(
                 "IF.retire-between-resources",

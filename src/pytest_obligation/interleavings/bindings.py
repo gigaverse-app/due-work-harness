@@ -263,6 +263,13 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
     seams: tuple[_Alias, ...] = Field(
         description="External provider seam names where held/refused/response-lost faults can be injected."
     )
+    acknowledgement_only_seams: tuple[_Alias, ...] = Field(
+        default=(),
+        description=(
+            "Opt-in subset of seams whose provider acknowledges receipt without guaranteeing application "
+            "(e.g. an HTTP 202 event API); generates acknowledgement-without-application histories for them only."
+        ),
+    )
     repair_seams: tuple[_Alias, ...] = Field(
         default=(),
         description="External repair seam names exercised after retirement; empty when the domain has no repair seam.",
@@ -297,7 +304,14 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
         from .engine.catalog import in_flight_histories
 
         return in_flight_histories(
-            self.intents, self.seams, self.retirement, self.independent, self.transport, self.repair_seams
+            self.intents,
+            self.seams,
+            self.retirement,
+            self.independent,
+            self.transport,
+            self.repair_seams,
+            self.acknowledgement_only_seams,
+            self.replay_safe,
         )
 
     def limitations(self) -> Mapping[str, str]:
@@ -312,12 +326,22 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
             result["lost/duplicate notifications"] = self.no_transport_because
         if self.retirement and not self.repair_seams:
             result["repair fails once"] = self.no_repair_because
+        if self.acknowledgement_only_seams and self.retirement and not self.replay_safe:
+            result["acknowledgement without application"] = (
+                "Retirement exposes no acknowledgement identity, and replay-unsafe work cannot re-send, "
+                "so confirming from a receipt is indistinguishable from leaving it unresolved."
+            )
         return result
 
     def validate_definition(self) -> None:
         assert self.intents and self.seams and len(set(self.seams)) == len(self.seams)
         assert len(set(self.intents)) == len(self.intents)
         assert self.retirement or len(self.intents) >= 2, "revision bindings require a legal transition"
+        undeclared = [seam for seam in self.acknowledgement_only_seams if seam not in self.seams]
+        assert not undeclared, f"acknowledgement_only_seams names undeclared seams: {undeclared}"
+        assert len(set(self.acknowledgement_only_seams)) == len(self.acknowledgement_only_seams), (
+            "acknowledgement_only_seams repeats a seam"
+        )
         super().validate_definition()
 
     def run(self, history: History) -> None:

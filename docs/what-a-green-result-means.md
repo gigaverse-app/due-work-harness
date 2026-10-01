@@ -260,11 +260,24 @@ approval.
    at all. That was wrong. The difference between "a contract cannot express
    this" and "nobody has written it yet" is exactly the kind of thing a
    contract should not be trusted to judge about itself.
-3. **Provider reconciliation is out of scope.** Profile C proves that late
-   evidence *can* resolve an ambiguous attempt and that terminal state is
-   monotonic. How a domain obtains that evidence (a provider's message IDs, a
-   listing of recent posts, a deterministic external identifier) is
-   domain-specific and cannot be contracted.
+3. **How a domain reconciles with its provider is its own.** Profile C proves
+   that late evidence *can* resolve an ambiguous attempt and that terminal
+   state is monotonic. For a seam declared in `acknowledgement_only_seams`
+   (an API whose reply acknowledges receipt, like Shopify's HTTP 202 for
+   billing events, rather than guaranteeing completion, like an acknowledged
+   MongoDB write), Profile E injects a reply that was never applied and fails
+   a writer that confirms an absent effect at a command/recovery boundary,
+   even if a later recovery turn repairs it. Initial, update and return-to-value
+   histories exercise these checks. A transient violation repaired entirely
+   within one callback needs finer adopter instrumentation. Seams
+   that are not declared are trusted as their contract promises. What the
+   harness cannot supply is how a domain obtains provider evidence (a
+   provider's message IDs, a listing of recent posts, an aggregate meter, a
+   deterministic external identifier), nor provider rules such as a rejected
+   idempotency key that can never succeed again: the injected fault is
+   one-shot, and such rules belong in the adopter's simulator. The check is
+   only as wide as `observe`: an observation that reads the application's own
+   row instead of provider state cannot see an unapplied receipt.
 4. **Deterministic-identity convergence has no profile.** Some domains converge
    by deriving the external object's identity deterministically (for example
    one identifier per revision) rather than by rejecting stale writes. Profile E

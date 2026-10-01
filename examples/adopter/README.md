@@ -33,6 +33,10 @@ The generated catalog covers:
 - E in-flight: held, refused and lost provider responses; three revisions and
   return to an earlier value; every completion order; independent progress;
   retirement and failed repair; lost and duplicate notifications.
+  The example's remote store applies a write before it replies, so its seam is
+  not declared in `acknowledgement_only_seams` and gets no
+  acknowledgement-without-application histories; a provider that only
+  acknowledges receipt (an HTTP 202 event API) would be declared there.
 - E evidence: partial receipts, permutations, duplicate receipts, batch partitions,
   separate actor connections (inline executor), and old receipts replayed during
   a new sender turn. Prior-attempt evidence remains immutable.

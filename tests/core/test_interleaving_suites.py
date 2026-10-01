@@ -88,3 +88,24 @@ class TestSafety:
     result = pytester.runpytest_subprocess("-q", "--due-work-require-assessed")
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines(["*safety*H*not assessed*"])
+
+
+@pytest.mark.parametrize("package", ["pytest_obligation", "due_work_harness"])
+@pytest.mark.parametrize(
+    ("counterfeit", "failures"),
+    [("", 0), (", trust_receipts_from_revision=2", 2), (", confirm_receipt_during_recovery=True", 3)],
+    ids=["verified", "trusts-update", "confirms-during-recovery"],
+)
+def test_receipt_invariants_are_enforced_through_public_pytest_collection(
+    pytester: pytest.Pytester, package: str, counterfeit: str, failures: int
+) -> None:
+    source = "from functools import partial\n" + DECLARATION.replace(
+        "bind=reference,", f"bind=partial(reference, receipt_only=True{counterfeit}),"
+    ).replace('seams=("write",),', 'seams=("write",), acknowledgement_only_seams=("write",),')
+    if package == "due_work_harness":
+        source = source.replace("pytest_obligation", package).replace("ObligationContract", "DueWorkContract")
+    pytester.makepyfile(source)
+    result = pytester.runpytest_subprocess("-q", "-k", "ack-without-apply", "--due-work-explore=off")
+    result.assert_outcomes(passed=3 - failures, failed=failures)
+    if failures:
+        result.stdout.fnmatch_lines(["*acknowledged-not-applied*"])
