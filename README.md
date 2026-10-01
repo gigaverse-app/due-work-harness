@@ -17,8 +17,8 @@ broker reply can be lost; a retry can run the external effect twice. Ordinary
 tests usually exercise only the path where none of that happens.
 
 **Due Work Harness is a pytest plugin that generates tests for work you cannot
-afford to lose or repeat.** Your coding agent can bind a `DueWorkContract` to your real workflow
-and recovery path, and it generates standardized pytest cases that interrupt
+afford to lose or repeat.** Your coding agent can bind a `DueWorkContract` to
+your real workflow and recovery path. The harness generates standardized pytest cases that interrupt
 commits, workers, messages, and external calls. It then checks whether the
 workflow converges on the right outcome—without lost work or duplicate effects.
 The agent can use the same fault-injection infrastructure to add focused tests
