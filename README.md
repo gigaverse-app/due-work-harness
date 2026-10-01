@@ -16,16 +16,19 @@ receipt, publish to Kafka, or call Shopify. A worker can die one line later; a
 broker reply can be lost; a retry can run the external effect twice. Ordinary
 tests usually exercise only the path where none of that happens.
 
-**Due Work Harness is a pytest plugin that generates tests for work you cannot
-afford to lose or repeat.** Your coding agent can bind a `DueWorkContract` to
-your real workflow and recovery path. The harness generates standardized pytest cases that interrupt
-commits, workers, messages, and external calls. It then checks whether the
-workflow converges on the right outcome—without lost work or duplicate effects.
+**Due Work Harness generates tests for work your application cannot afford to
+lose or repeat.** Bind a `DueWorkContract` to your real workflow and recovery
+path, yourself or with a coding agent. The harness generates standardized tests
+for crashes, retries, lost messages, and competing operations, exposing failure
+cases you might never think to write by hand. Its fault injection interrupts
+commits, workers, messages, and external calls, then checks whether recovery
+reaches the right outcome without lost work or duplicate effects.
 The agent can use the same fault-injection infrastructure to add focused tests
 for your application's particular risks. The core accepts plain Python
 callables: it assumes no framework, database, queue, or business domain.
 
-It runs in your existing pytest suite and CI. Read the [pytest plugin guide](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md)
+It integrates as a pytest plugin in your existing test suite and CI. Read the
+[pytest plugin guide](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md)
 for automatic discovery, test selection, reports, and configuration.
 
 ## What it finds
