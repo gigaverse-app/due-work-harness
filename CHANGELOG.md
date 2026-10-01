@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.7.0...v0.8.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* port backend interleavings and unified A–J profiles ([#34](https://github.com/gigaverse-app/due-work-harness/issues/34))
+
+### Features
+
+* add Due Work Harness plugin for Codex and Claude ([#39](https://github.com/gigaverse-app/due-work-harness/issues/39)) ([5091717](https://github.com/gigaverse-app/due-work-harness/commit/50917176363768ca2ccff86ad5f6f4addaa01b42))
+* exercise generated guarantees across shipped adopters ([#36](https://github.com/gigaverse-app/due-work-harness/issues/36)) ([f4de472](https://github.com/gigaverse-app/due-work-harness/commit/f4de47278c3f068c80eb3b5b8713b0d055fc1698))
+* port backend interleavings and unified A–J profiles ([#34](https://github.com/gigaverse-app/due-work-harness/issues/34)) ([599b183](https://github.com/gigaverse-app/due-work-harness/commit/599b1839fb2b6dfce12152673dbf1f707c156525))
+
+
+### Documentation
+
+* promote pytest plugin adoption and discovery ([#41](https://github.com/gigaverse-app/due-work-harness/issues/41)) ([6258939](https://github.com/gigaverse-app/due-work-harness/commit/6258939c58f1acf8bd065e163aa6a45b3de64efe))
+
 ## [0.7.0](https://github.com/gigaverse-app/due-work-harness/compare/v0.6.0...v0.7.0) (2026-09-30)
 
 
