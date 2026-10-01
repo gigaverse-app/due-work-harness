@@ -103,6 +103,10 @@ Or `uv add --dev due-work-harness`. The extras are `[django]`, `[celery]`,
 `[procrastinate]`, `[dbos]`, `[redis]`, `[rq]`, `[mongodb]`, `[prefect]`, and
 `[aiokafka]`; combine as needed. Python 3.11+.
 
+The A–J profile catalog below is on `main`. PyPI `v0.7.0` predates that
+migration; when installing from PyPI, use the adoption guide for the installed
+release until an A–J release is published.
+
 ## Coding-agent plugin
 
 The [Due Work Harness plugin](plugins/due-work-harness/) helps Codex and Claude
