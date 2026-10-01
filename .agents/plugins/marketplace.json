@@ -1,0 +1,20 @@
+{
+  "name": "due-work-harness",
+  "interface": {
+    "displayName": "Due Work Harness"
+  },
+  "plugins": [
+    {
+      "name": "due-work-harness",
+      "source": {
+        "source": "local",
+        "path": "../../plugins/due-work-harness"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

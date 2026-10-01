@@ -10,6 +10,11 @@ on when you reach it. The copy-and-fill templates are in
 [docs/upstream-templates/](../../../docs/upstream-templates/). This file is the runbook: what to do, in
 order, and the rules that are not negotiable.
 
+The installable plugin's [probe-upstream-due-work](../../../plugins/due-work-harness/skills/probe-upstream-due-work/SKILL.md)
+skill is the portable route for people working outside this repository. This repository-local skill
+retains the maintainer-specific release and disclosure workflow below; neither skill replaces
+gigaverse-backend's own due-work runtime and conformance instructions.
+
 ## Rules that do not bend
 
 - **Expose, don't fix.** Deliver a test that fails for a stated reason and a contract that finds it. Never
@@ -17,7 +22,7 @@ order, and the rules that are not negotiable.
 - **Every adoption PR MUST carry `DueWorkContract` and a collected
   `@due_work_contract_suite(CONTRACT)` class.** Follow the
   [required adoption shape](../../../ADOPTING.md#required-adoption-shape): declare
-  all lifecycle/safety profiles, put histories in the contract, execute the generated
+  all A–J profiles for the current source (or the installed release's matching catalog), put histories in the contract, execute the generated
   cases, and link the declaration, suite and `--due-work-summary` report. Ordinary
   tests and direct crash-helper calls are supporting evidence, never a substitute.
   The decorator generates pytest cases, not Python files; use `--junitxml` when a
