@@ -46,7 +46,11 @@ otherwise `None`), never runs `perform`, and counts the call in
 from the reply:
 
 - It is checked right after the reply, before any recovery, so a writer that
-  confirms from the receipt and later repairs itself still fails.
+  confirms from the receipt while the provider observation still differs from
+  the reviewed expectation fails, even if later recovery repairs it. A replay-safe
+  writer that retries and independently verifies application before its start
+  operation returns may already be confirmed at this checkpoint. Replay-unsafe
+  calls still cannot be repeated, even if the repeated call applies successfully.
 - With `replay_safe=True` (the default) the history must then settle to the
   reviewed expectation. `observe` reads provider state, so that needs recovery
   that checks the provider or sends again.

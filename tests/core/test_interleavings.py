@@ -670,6 +670,39 @@ def test_a_receipt_only_writer_confirms_from_provider_state_across_the_whole_cat
         declaration.run(each)
 
 
+@contextmanager
+def synchronously_verified_writer() -> Iterator[InFlightSession[int, str, str]]:
+    with reference(receipt_only=True) as session:
+        assert session.desired_identity is not None
+        assert session.acknowledged_identity is not None
+        desired_identity = session.desired_identity
+        acknowledged_identity = session.acknowledged_identity
+
+        def start(handle: int) -> None:
+            session.start(handle)
+            if acknowledged_identity(handle) != desired_identity(handle):
+                # Retry through the same writer: confirmation still requires
+                # its independent provider-applied revision, never the receipt.
+                session.start(handle)
+
+        yield session.model_copy(update={"start": start})
+
+
+@pytest.mark.parametrize("replay_safe", [True, False], ids=["replay-safe", "replay-unsafe"])
+def test_synchronous_verified_confirmation_respects_replay_safety(replay_safe: bool) -> None:
+    declaration = receipt_scenario(synchronously_verified_writer, replay_safe=replay_safe)
+    history = ack_without_apply(declaration)
+    if replay_safe:
+        # Application and read-back finish before START returns. The receipt
+        # checkpoint must accept a revision that really was applied and verified.
+        declaration.run(history)
+    else:
+        # Verified application must not excuse repeating a non-repeatable call.
+        with pytest.raises(InterleavingFailure) as caught:
+            declaration.run(history)
+        assert caught.value.invariant == "non-repeatable"
+
+
 def test_an_opted_in_writer_that_confirms_from_the_receipt_fails() -> None:
     from due_work_harness.interleavings.engine.runner import replay_history
 

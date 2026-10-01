@@ -105,8 +105,11 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
             return session.observe(handles[alias]) == expected[alias] and acknowledged(alias)
 
         def refuse_confirmed_receipt(alias: str) -> None:
+            # A receipt alone cannot confirm an absent effect. A replay-safe
+            # writer may already have retried and verified application before
+            # START returns; judge that through the independent provider oracle.
             require(
-                not acknowledged(alias),
+                not acknowledged(alias) or session.observe(handles[alias]) == expected[alias],
                 "acknowledged-not-applied",
                 f"{alias} is confirmed but the provider only acknowledged receipt and never applied it; "
                 "this seam is declared acknowledgement-only, so its reply does not confirm the effect",
@@ -192,7 +195,8 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                 case Op.UNCONFIRMED:
                     assert session.desired_identity and session.acknowledged_identity, "revision seams missing"
                     assert session.provider.unapplied_acknowledgements, "history never reached an unapplied receipt"
-                    # Checked before recovery can repair a premature confirmation.
+                    # Checked before recovery can repair a premature confirmation;
+                    # already-applied, independently verified work may be confirmed.
                     # Unresolved, ambiguous or evidence-derived dispositions conform.
                     refuse_confirmed_receipt(item.target)
                 case Op.DROP:
