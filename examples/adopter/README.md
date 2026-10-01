@@ -30,10 +30,13 @@ The generated catalog covers:
 - H: replay actually calls the provider twice and leaves the same remote value.
 - I: admission owns its transaction; failure after both SQL writes leaves neither
   committed, and notifications only leave after commit.
-- E in-flight: held, refused and lost provider responses; success replies that
-  never applied; three revisions and return to an earlier value; every
-  completion order; independent progress; retirement and failed repair; lost
-  and duplicate notifications.
+- E in-flight: held, refused and lost provider responses; three revisions and
+  return to an earlier value; every completion order; independent progress;
+  retirement and failed repair; lost and duplicate notifications.
+  The example's remote store applies a write before it replies, so its seam is
+  not declared in `acknowledgement_only_seams` and gets no
+  acknowledgement-without-application histories; a provider that only
+  acknowledges receipt (an HTTP 202 event API) would be declared there.
 - E evidence: partial receipts, permutations, duplicate receipts, batch partitions,
   separate actor connections (inline executor), and old receipts replayed during
   a new sender turn. Prior-attempt evidence remains immutable.
