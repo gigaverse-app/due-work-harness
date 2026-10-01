@@ -1,0 +1,30 @@
+{
+  "name": "due-work-harness",
+  "version": "0.1.0",
+  "description": "Prove that important Python background work survives crashes, retries, lost messages, and uncertain external calls.",
+  "author": {
+    "name": "Gigaverse",
+    "url": "https://github.com/gigaverse-app"
+  },
+  "homepage": "https://github.com/gigaverse-app/due-work-harness",
+  "repository": "https://github.com/gigaverse-app/due-work-harness",
+  "license": "Apache-2.0",
+  "keywords": ["durable-work", "background-jobs", "crash-testing", "celery", "django", "mongodb", "postgresql", "kafka", "prefect", "queues"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Due Work Harness",
+    "shortDescription": "Crash-test background work",
+    "longDescription": "Find and prove failure paths in Python workflows where a crash, lost message, retry, stale worker, or uncertain external call could lose or repeat an order, payment, receipt, notification, data import, or other owed effect. Guides repository analysis and due-work-harness pytest contracts across supported integrations. Running proofs requires a coding environment with the target repository and test services.",
+    "developerName": "Gigaverse",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/gigaverse-app/due-work-harness",
+    "defaultPrompt": [
+      "Check whether this order flow can lose a payment or receipt after a crash.",
+      "Prove this queue worker survives retries, lost replies, and stale owners.",
+      "Find work that may disappear between a database commit and job dispatch."
+    ],
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg"
+  }
+}

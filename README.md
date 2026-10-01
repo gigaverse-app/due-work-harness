@@ -84,7 +84,28 @@ pip install "due-work-harness[django]"  # plus the Django/PostgreSQL integration
 ```
 
 Or `uv add --dev due-work-harness`. The extras are `[django]`, `[celery]`,
-`[procrastinate]`, `[dbos]`, `[redis]` and `[rq]`; combine as needed. Python 3.12+.
+`[procrastinate]`, `[dbos]`, `[redis]`, `[rq]`, `[mongodb]`, `[prefect]`, and
+`[aiokafka]`; combine as needed. Python 3.12+.
+
+## Coding-agent plugin
+
+The [Due Work Harness plugin](plugins/due-work-harness/) gives Codex and Claude
+Code a focused workflow for finding owed work, choosing the real failure
+boundary, and writing and running a `DueWorkContract`. It is useful when an
+order, payment, receipt, message, data import, or other effect must survive a
+crash, retry, lost acknowledgement, or stale worker. It contains a skill, not a
+remote service; the project under test still installs the pytest library.
+
+For Claude Code, add this repository as a marketplace and install the plugin:
+
+```bash
+claude plugin marketplace add gigaverse-app/due-work-harness
+claude plugin install due-work-harness@due-work-harness
+```
+
+The same plugin is packaged for Codex and can be submitted to the shared
+ChatGPT/Codex directory. Execution needs a coding environment with the target
+repository and its test services.
 
 ## Kill it on purpose: crash histories
 

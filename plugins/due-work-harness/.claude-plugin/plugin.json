@@ -1,0 +1,10 @@
+{
+  "name": "due-work-harness",
+  "version": "0.1.0",
+  "description": "Prove that important Python background work survives crashes, retries, lost messages, and uncertain external calls.",
+  "author": {"name": "Gigaverse", "url": "https://github.com/gigaverse-app"},
+  "homepage": "https://github.com/gigaverse-app/due-work-harness",
+  "repository": "https://github.com/gigaverse-app/due-work-harness",
+  "license": "Apache-2.0",
+  "keywords": ["durable-work", "background-jobs", "crash-testing", "queues", "celery", "django"]
+}
