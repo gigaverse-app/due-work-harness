@@ -20,6 +20,8 @@ def reference(
     quiet_corruption: Literal["acknowledgement", "desired-revision"] | None = None,
     replay_safe: bool = True,
     receipt_only: bool = False,
+    trust_receipts_from_revision: int = 0,
+    confirm_receipt_during_recovery: bool = False,
 ) -> Iterator[InFlightSession[int, str, str]]:
     """
     Conforming writer unless a counterfeit flag is set.
@@ -29,6 +31,8 @@ def reference(
     provider's applied revision, as an acknowledgement-only seam requires.
     forget skips handles believed finished during recovery. replay_safe=False
     sends each revision at most once.
+    Receipt counterfeits either trust update replies from a chosen revision or
+    defer premature confirmation to a recovery turn before a later repair.
     """
     desired: dict[int, str] = {}
     remote: dict[int, str] = {}
@@ -37,6 +41,7 @@ def reference(
     ack: dict[int, int] = {}
     finished: set[int] = set()
     sent: set[str] = set()
+    receipts: set[int] = set()
     provider = ProviderControl(accept=lambda apply: AcceptedProviderRequest(apply=apply))
 
     def apply(handle: int, value: str, revision: int) -> None:
@@ -59,8 +64,10 @@ def reference(
         except TimeoutError:
             return
         finished.add(handle)
-        if receipt_only:
+        if receipt_only and not (trust_receipts_from_revision and revision >= trust_receipts_from_revision):
             reconcile(handle)
+            if confirm_receipt_during_recovery and applied.get(handle) != revision:
+                receipts.add(handle)
         else:
             ack[handle] = revision  # The reply confirms completion.
 
@@ -77,6 +84,10 @@ def reference(
 
     def recover() -> None:
         for handle in desired:
+            if handle in receipts:
+                ack[handle] = revisions[handle]  # Counterfeit receipt consumer.
+                receipts.remove(handle)
+                continue
             if (forget or (forget_at and revisions[handle] >= forget_at)) and handle in finished:
                 continue
             if not replay_safe:

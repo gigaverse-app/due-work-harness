@@ -78,11 +78,13 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
         handles: dict[str, H] = {}
         expected: dict[str, ObservedT] = {}
         identities: dict[str, str] = {}
+        receipt_targets: set[str] = set()
 
         def recover() -> None:
             session.advance(scenario.bounds.interval_seconds)
             session.recover()
             session.account_faults()
+            check_receipts()
 
         def check_effects() -> None:
             if not scenario.replay_safe:
@@ -105,6 +107,14 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
             return session.observe(handles[alias]) == expected[alias] and acknowledged(alias)
 
         def refuse_confirmed_receipt(alias: str) -> None:
+            assert session.desired_identity is not None
+            # A recovery turn cannot silently replace the commanded obligation
+            # and thereby make its missing confirmation disappear.
+            require(
+                session.desired_identity(handles[alias]) == identities[alias],
+                "revision",
+                f"{alias} changed its commanded revision without a change or retirement command",
+            )
             # A receipt alone cannot confirm an absent effect. A replay-safe
             # writer may already have retried and verified application before
             # START returns; judge that through the independent provider oracle.
@@ -115,6 +125,14 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                 "this seam is declared acknowledgement-only, so its reply does not confirm the effect",
             )
 
+        def check_receipts() -> None:
+            # Once a receipt checkpoint is reached, every observable transition
+            # of that work must preserve the invariant. In particular, check
+            # EACH recovery turn before a later turn can conceal a false receipt.
+            # Other handles and declarations without receipt histories are untouched.
+            for alias in sorted(receipt_targets):
+                refuse_confirmed_receipt(alias)
+
         def settle(alias: str) -> None:
             for attempt in range(scenario.bounds.recovery_steps + 1):
                 if is_settled(alias):
@@ -122,10 +140,6 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                 if attempt < scenario.bounds.recovery_steps:
                     recover()
                     check_effects()
-            # An acknowledgement-only seam replied without applying, and production
-            # still holds that reply as its confirmation after recovery.
-            if session.provider.unapplied_acknowledgements and session.observe(handles[alias]) != expected[alias]:
-                refuse_confirmed_receipt(alias)
             require(
                 False,
                 "convergence",
@@ -198,7 +212,7 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                     # Checked before recovery can repair a premature confirmation;
                     # already-applied, independently verified work may be confirmed.
                     # Unresolved, ambiguous or evidence-derived dispositions conform.
-                    refuse_confirmed_receipt(item.target)
+                    receipt_targets.add(item.target)
                 case Op.DROP:
                     assert session.transport
                     session.transport.drop(item.value == "on")
@@ -209,6 +223,7 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                     raise AssertionError(f"invalid in-flight operation: {item.operation}")
             session.account_faults()
             check_effects()
+            check_receipts()
             position[0] += 1
         session.provider.assert_reached()
         assert all(request.completed for request in session.provider.pending), (

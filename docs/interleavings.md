@@ -38,19 +38,28 @@ billing = InFlightConvergence(
 ```
 
 Each named seam must be one of `seams`. For each, the catalog adds
-`IF.ack-without-apply/<seam>`, which arms `Fault.ACKNOWLEDGE_WITHOUT_APPLYING`:
+`IF.ack-without-apply/<seam>` for the initial write and, for revision bindings,
+`/update` and `/return-to-value` variants. These arm the fault before a new
+revision and an A → B → A transition, so a correct creation path cannot hide
+an update path that trusts receipts. They arm `Fault.ACKNOWLEDGE_WITHOUT_APPLYING`:
 the provider returns an ordinary reply (the seam's `reply()` when it passes one,
 otherwise `None`), never runs `perform`, and counts the call in
 `ProviderControl.unapplied_acknowledgements` instead of `effects`. The invariant,
 `acknowledged-not-applied`, is that production does not confirm that revision
 from the reply:
 
-- It is checked right after the reply, before any recovery, so a writer that
+- It is checked after the start/change command returns, before any recovery, so a writer that
   confirms from the receipt while the provider observation still differs from
   the reviewed expectation fails, even if later recovery repairs it. A replay-safe
   writer that retries and independently verifies application before its start
   operation returns may already be confirmed at this checkpoint. Replay-unsafe
   calls still cannot be repeated, even if the repeated call applies successfully.
+- Once checked, that handle remains checked after every subsequent history step
+  and every recovery turn (including those inside bounded settlement). A recovery
+  turn cannot confirm an absent effect and let a later turn repair it unnoticed.
+  Recovery also cannot replace the commanded revision to escape the check.
+  Checks observe callback boundaries; a transient incorrect confirmation repaired
+  inside a single callback requires finer adopter-side instrumentation to detect.
 - With `replay_safe=True` (the default) the history must then settle to the
   reviewed expectation. `observe` reads provider state, so that needs recovery
   that checks the provider or sends again.
@@ -64,8 +73,11 @@ from the reply:
 
 A declaration without `acknowledgement_only_seams` generates exactly the catalog,
 limitations and diagnostics it generated before this option existed, and not
-opting in produces no warning, gap or required explanation. Exploration does not
-arm this fault; if it ever does, the same opt-in will bound it.
+opting in produces no warning, gap or required explanation. Revision exploration
+with three or more intents currently explores held completions; the fallback
+strategy for other shapes samples declared histories and may select these new
+histories only when the declaration opted in. Saved-trace replay enforces the
+same seam opt-in guard.
 
 The fault is one-shot, like the others: once consumed, the next invocation at the
 seam may apply normally. It does not model a provider that permanently rejects an

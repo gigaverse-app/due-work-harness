@@ -598,7 +598,7 @@ def ack_without_apply(declaration: InFlightConvergence[int, str, str]) -> Histor
 @pytest.mark.parametrize("name", sorted(PRE_FEATURE_CATALOGS))
 @pytest.mark.parametrize("replay_safe", [True, False], ids=["replay-safe", "replay-unsafe"])
 def test_a_declaration_that_does_not_opt_in_keeps_its_pre_feature_catalog(name: str, replay_safe: bool) -> None:
-    from due_work_harness.interleavings.engine.catalog import in_flight_histories
+    from pytest_obligation.interleavings.engine.catalog import in_flight_histories
 
     (intents, seams, retirement, independent, transport, repair), count, digest = PRE_FEATURE_CATALOGS[name]
     histories = in_flight_histories(intents, seams, retirement, independent, transport, repair, replay_safe=replay_safe)
@@ -631,8 +631,14 @@ def test_only_the_opted_in_seam_of_two_gets_acknowledgement_histories() -> None:
     )
     unchanged = scenario().model_copy(update={"seams": ("send_billing_event", "store_snapshot")})
     added = [h for h in declaration.histories() if h not in unchanged.histories()]
-    assert [h.id for h in added] == ["IF.ack-without-apply/send_billing_event"]
-    assert all(s.seam == "send_billing_event" for s in added[0].steps if s.fault == Fault.ACKNOWLEDGE_WITHOUT_APPLYING)
+    assert [h.id for h in added] == [
+        "IF.ack-without-apply/send_billing_event",
+        "IF.ack-without-apply/send_billing_event/update",
+        "IF.ack-without-apply/send_billing_event/return-to-value",
+    ]
+    assert all(
+        s.seam == "send_billing_event" for h in added for s in h.steps if s.fault == Fault.ACKNOWLEDGE_WITHOUT_APPLYING
+    )
     retirement = declaration.model_copy(
         update={"retirement": True, "replay_safe": False, "no_repair_because": "Collection-only declaration."}
     )
@@ -704,7 +710,7 @@ def test_synchronous_verified_confirmation_respects_replay_safety(replay_safe: b
 
 
 def test_an_opted_in_writer_that_confirms_from_the_receipt_fails() -> None:
-    from due_work_harness.interleavings.engine.runner import replay_history
+    from pytest_obligation.interleavings.engine.runner import replay_history
 
     declaration = receipt_scenario(partial(reference, forget=True))
     history = ack_without_apply(declaration)
@@ -744,3 +750,72 @@ def test_without_replay_an_unapplied_receipt_must_stay_unconfirmed() -> None:
     with pytest.raises(InterleavingFailure) as resent:
         resending.run(history)
     assert resent.value.invariant == "non-repeatable"
+
+
+@pytest.mark.parametrize("explicit_recovery", [False, True], ids=["settle-loop", "explicit-recover"])
+@pytest.mark.parametrize("replay_safe", [True, False], ids=["replay-safe", "replay-unsafe"])
+def test_receipt_confirmation_is_rejected_on_each_recovery_turn(explicit_recovery: bool, replay_safe: bool) -> None:
+    from pytest_obligation.interleavings.engine.catalog import step
+    from pytest_obligation.interleavings.engine.runner import replay_history
+
+    declaration = receipt_scenario(
+        partial(reference, receipt_only=True, replay_safe=replay_safe, confirm_receipt_during_recovery=True),
+        replay_safe=replay_safe,
+    )
+    history = ack_without_apply(declaration)
+    if explicit_recovery:
+        steps = list(history.steps)
+        steps.insert(4, step(Operation.RECOVER))
+        history = history.model_copy(update={"steps": tuple(steps)})
+    correct = receipt_scenario(partial(reference, receipt_only=True, replay_safe=replay_safe), replay_safe=replay_safe)
+    correct.run(history)
+    with pytest.raises(InterleavingFailure) as caught:
+        declaration.run(history)
+    assert caught.value.invariant == "acknowledged-not-applied"
+    trace = HistoryTrace.model_validate_json(caught.value.__notes__[-1])
+    assert trace.completed_steps == 4
+    with pytest.raises(InterleavingFailure, match="acknowledged-not-applied"):
+        replay_history(declaration, trace)
+
+
+@pytest.mark.parametrize("replay_safe", [True, False], ids=["replay-safe", "replay-unsafe"])
+@pytest.mark.parametrize("first_bad_revision", [2, 3], ids=["updates", "return-to-value"])
+def test_receipt_histories_cover_updates_and_return_to_previous_values(
+    replay_safe: bool, first_bad_revision: int
+) -> None:
+    from pytest_obligation.interleavings.engine.runner import replay_history
+
+    correct = receipt_scenario(partial(reference, receipt_only=True, replay_safe=replay_safe), replay_safe=replay_safe)
+    histories = [h for h in correct.histories() if "IF.ack-without-apply" in h.families]
+    assert len(histories) == 3  # Initial write, update, and A -> B -> A.
+    broken = correct.model_copy(
+        update={
+            "bind": partial(
+                reference, receipt_only=True, replay_safe=replay_safe, trust_receipts_from_revision=first_bad_revision
+            )
+        }
+    )
+    for history in histories:
+        correct.run(history)
+    for history in histories[: first_bad_revision - 1]:
+        broken.run(history)  # Earlier revisions still verify the provider.
+    for history in histories[first_bad_revision - 1 :]:
+        with pytest.raises(InterleavingFailure) as caught:
+            broken.run(history)
+        assert caught.value.invariant == "acknowledged-not-applied"
+        trace = HistoryTrace.model_validate_json(caught.value.__notes__[-1])
+        with pytest.raises(InterleavingFailure, match="acknowledged-not-applied"):
+            replay_history(broken, trace)
+
+
+def test_unconfirmed_receipts_cannot_erase_the_commanded_revision_during_recovery() -> None:
+    declaration = receipt_scenario(
+        partial(reference, receipt_only=True, replay_safe=False, quiet_corruption="desired-revision"),
+        replay_safe=False,
+    )
+    history = ack_without_apply(declaration)
+    correct = receipt_scenario(partial(reference, receipt_only=True, replay_safe=False), replay_safe=False)
+    correct.run(history)
+    with pytest.raises(InterleavingFailure) as caught:
+        declaration.run(history)
+    assert caught.value.invariant == "revision"

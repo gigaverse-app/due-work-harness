@@ -266,7 +266,10 @@ approval.
    (an API whose reply acknowledges receipt, like Shopify's HTTP 202 for
    billing events, rather than guaranteeing completion, like an acknowledged
    MongoDB write), Profile E injects a reply that was never applied and fails
-   a writer that confirms from it, even if recovery repairs it later. Seams
+   a writer that confirms an absent effect at a command/recovery boundary,
+   even if a later recovery turn repairs it. Initial, update and return-to-value
+   histories exercise these checks. A transient violation repaired entirely
+   within one callback needs finer adopter instrumentation. Seams
    that are not declared are trusted as their contract promises. What the
    harness cannot supply is how a domain obtains provider evidence (a
    provider's message IDs, a listing of recent posts, an aggregate meter, a
