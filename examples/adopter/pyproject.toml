@@ -6,17 +6,17 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-exploration = ["due-work-harness[exploration]"]
+exploration = ["pytest-obligation[exploration]"]
 
 [dependency-groups]
-dev = ["due-work-harness"]
+dev = ["pytest-obligation"]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-# A real project depends on the released package: `uv add --dev "due-work-harness[django]"`.
-due-work-harness = { path = "../..", editable = true }
+# A real project depends on the released package: `uv add --dev "pytest-obligation[django]"`.
+pytest-obligation = { path = "../..", editable = true }
 
 [tool.due-work-harness]
 production-packages = ["adopter_app"]

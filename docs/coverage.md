@@ -34,5 +34,5 @@ jobs commit with product data are not reported. This is a place to investigate,
 not a verdict: the publication might not depend on the transaction's writes,
 and calls inside another function are outside this lexical scan.
 
-In GitHub Actions, `gigaverse-app/due-work-harness/check@v0` runs the static
-check and `gigaverse-app/due-work-harness/test@v0` runs generated suites.
+In GitHub Actions, `gigaverse-app/pytest-obligation/check@v0` runs the static
+check and `gigaverse-app/pytest-obligation/test@v0` runs generated suites.

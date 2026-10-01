@@ -1,6 +1,6 @@
 # Prefect flow bodies and recurrence
 
-Install `due-work-harness[prefect]` for Prefect 3.7.
+Install `pytest-obligation[prefect]` for Prefect 3.7.
 
 `prefect_flow_call(flow, runner)` turns a real `prefect.Flow` into a synchronous
 history binding. It executes `flow.fn`, awaits the entire coroutine on the

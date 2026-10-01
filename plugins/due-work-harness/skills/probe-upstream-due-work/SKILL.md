@@ -1,13 +1,13 @@
 ---
 name: probe-upstream-due-work
-description: Use due-work-harness to investigate an external open-source Python project's lost or duplicate background work, verify a concrete failure, and prepare an upstream issue or test-only PR when requested. Not for adopting the harness in your own application, ordinary code review, or gigaverse-backend's internal due-work harness.
+description: Use pytest-obligation to investigate an external open-source Python project's lost or duplicate background work, verify a concrete failure, and prepare an upstream issue or test-only PR when requested. Not for adopting the harness in your own application, ordinary code review, or gigaverse-backend's internal due-work harness.
 ---
 
 # Probe due-work failures upstream
 
 Use this skill when the user asks to find due-work bugs in another project or to disclose a verified finding. For adoption in the user's own project, use [prove-due-work](../prove-due-work/SKILL.md). If the target has its own due-work instructions, read and follow them before choosing a harness; gigaverse-backend has a separate internal harness and [repo-local skill](https://github.com/gigaverse-app/gigaverse-backend/blob/main/.agents/skills/due-work/SKILL.md).
 
-The [upstream playbook](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/upstream-playbook.md) owns the detailed cycle and [disclosure templates](https://github.com/gigaverse-app/due-work-harness/tree/main/docs/upstream-templates). Read the relevant step when you reach it. This skill packages the portable decision points, not a second copy of that runbook.
+The [upstream playbook](https://github.com/gigaverse-app/pytest-obligation/blob/main/docs/upstream-playbook.md) owns the detailed cycle and [disclosure templates](https://github.com/gigaverse-app/pytest-obligation/tree/main/docs/upstream-templates). Read the relevant step when you reach it. This skill packages the portable decision points, not a second copy of that runbook.
 
 1. Choose an application or framework with consequential background work, a runnable test environment, and a recovery mechanism worth probing. Check contribution and AI policies, issue history, and the project's baseline tests before attributing a failure to it. Keep experiments in an isolated fork or scratch checkout.
 2. Map each candidate from the user-visible action to its durable fact, database/queue handoff, external effect, and actual recovery. `due-work-harness sites` and `in-transaction` can surface handoffs when configured; their output is a candidate list, not proof of a bug.

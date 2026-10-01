@@ -1043,124 +1043,6 @@ wheels = [
 ]
 
 [[package]]
-name = "due-work-harness"
-source = { editable = "." }
-dependencies = [
-    { name = "pydantic" },
-    { name = "pytest" },
-]
-
-[package.optional-dependencies]
-aiokafka = [
-    { name = "aiokafka" },
-]
-celery = [
-    { name = "celery" },
-]
-dbos = [
-    { name = "dbos" },
-]
-django = [
-    { name = "django", version = "5.2.17", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pytest-django" },
-    { name = "time-machine" },
-]
-exploration = [
-    { name = "hypothesis" },
-]
-mongodb = [
-    { name = "motor" },
-    { name = "pymongo" },
-]
-prefect = [
-    { name = "prefect" },
-]
-procrastinate = [
-    { name = "procrastinate" },
-]
-redis = [
-    { name = "redis" },
-    { name = "time-machine" },
-]
-rq = [
-    { name = "redis" },
-    { name = "rq" },
-    { name = "time-machine" },
-]
-
-[package.dev-dependencies]
-demos = [
-    { name = "dbos" },
-    { name = "django-tasks-db" },
-    { name = "fastapi", extra = ["standard"] },
-    { name = "wagtail" },
-]
-dev = [
-    { name = "celery-types" },
-    { name = "django-stubs" },
-    { name = "pyrefly" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-]
-lint = [
-    { name = "celery-types" },
-    { name = "django-stubs" },
-    { name = "pyrefly" },
-    { name = "ruff" },
-]
-xdist = [
-    { name = "pytest-xdist" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiokafka", marker = "extra == 'aiokafka'", specifier = ">=0.12,<0.15" },
-    { name = "celery", marker = "extra == 'celery'", specifier = ">=5.3" },
-    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.0" },
-    { name = "django", marker = "extra == 'django'", specifier = ">=4.2" },
-    { name = "hypothesis", marker = "extra == 'exploration'", specifier = ">=6.112" },
-    { name = "motor", marker = "extra == 'mongodb'", specifier = ">=3.7,<4" },
-    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7,<3.8" },
-    { name = "procrastinate", marker = "extra == 'procrastinate'", specifier = ">=3.0" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'django'", specifier = ">=3.1" },
-    { name = "pydantic", specifier = ">=2.11" },
-    { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.9,<4.18" },
-    { name = "pytest", specifier = ">=8" },
-    { name = "pytest-django", marker = "extra == 'django'", specifier = ">=4.8" },
-    { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0" },
-    { name = "redis", marker = "extra == 'rq'", specifier = ">=5.0" },
-    { name = "rq", marker = "extra == 'rq'", specifier = ">=2.6" },
-    { name = "time-machine", marker = "extra == 'django'", specifier = ">=2.10" },
-    { name = "time-machine", marker = "extra == 'redis'", specifier = ">=2.10" },
-    { name = "time-machine", marker = "extra == 'rq'", specifier = ">=2.10" },
-]
-provides-extras = ["aiokafka", "celery", "dbos", "django", "exploration", "mongodb", "prefect", "procrastinate", "redis", "rq"]
-
-[package.metadata.requires-dev]
-demos = [
-    { name = "dbos", specifier = "==3.1.0" },
-    { name = "django-tasks-db", specifier = "==0.13.0" },
-    { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
-    { name = "wagtail", specifier = "==8.0" },
-]
-dev = [
-    { name = "celery-types", specifier = ">=0.22" },
-    { name = "django-stubs", specifier = ">=5.1" },
-    { name = "pyrefly", specifier = ">=1.0,<2" },
-    { name = "pytest-xdist", specifier = ">=3.6" },
-    { name = "ruff", specifier = ">=0.8" },
-]
-lint = [
-    { name = "celery-types", specifier = ">=0.22" },
-    { name = "django-stubs", specifier = ">=5.1" },
-    { name = "pyrefly", specifier = ">=1.0,<2" },
-    { name = "ruff", specifier = ">=0.8" },
-]
-xdist = [{ name = "pytest-xdist", specifier = ">=3.6" }]
-
-[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1697,6 +1579,13 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/56/4acd0d778bab818c9ea336fcba768bf43bc70db7f84cc373579298df4641/hypothesis-6.168.3-cp310-abi3-win32.whl", hash = "sha256:dc66390fb12d80585aa9222bf538ce8b7aa22cf5d118250647355a1c9e8f62f4", size = 678211, upload-time = "2026-09-28T05:19:23.355Z" },
     { url = "https://files.pythonhosted.org/packages/b0/db/0a02b146ad1c30f9716362f2e1a379dfd6b0f7be03ac1e22c9da24c9e2a9/hypothesis-6.168.3-cp310-abi3-win_amd64.whl", hash = "sha256:92325b276360fe86c5bf71a568c0d53a6d140b0de36dcf029f9164a17803bb24", size = 684906, upload-time = "2026-09-28T05:18:35.099Z" },
     { url = "https://files.pythonhosted.org/packages/a3/c0/958deaf726848f96f52250740bf39f13f476b068e22f73e2b358eaa07532/hypothesis-6.168.3-cp310-abi3-win_arm64.whl", hash = "sha256:3cf6f1eeaf41cd8d60cf1f88fde905ca1dd77c906929a507d6ac7f66f2ccba2a", size = 683292, upload-time = "2026-09-28T05:19:57.404Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/ab/443208c2988a24eaafbfbd6791b897ad9a8a1dd7f870d5b455d7d15a28ad/hypothesis-6.168.3-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:9029775dc2e25e3e8e596c4306926f0079158353631c7c52c285bbc5c8073c2b", size = 792239, upload-time = "2026-09-28T05:19:59.144Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/7b/619c1a76c52de2d3cfd68a2f9876c09464d63097db5bf86a28b62dc37bb1/hypothesis-6.168.3-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:0e1d91530cefdb9e0b6467c203eb509c61a11d70480a37db59cb53a2f9913102", size = 788113, upload-time = "2026-09-28T05:19:17.145Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/dd/33841e8833105f850214a486d83740ba52041892ca94e687a05829c0ce83/hypothesis-6.168.3-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0df00cbe8133aa220308d11fa28e3add996cf5102a39b279c1d711015fd9114b", size = 1124241, upload-time = "2026-09-28T05:18:37.589Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/43/c84a7900feced6a420e824ab61d316e4f59a6887d991bc143ecc294a09ed/hypothesis-6.168.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fd7f75a2e23288ee82ee965a952473d9c5447c2cbc1afc94be09d2402201774e", size = 1170406, upload-time = "2026-09-28T05:19:46.365Z" },
+    { url = "https://files.pythonhosted.org/packages/47/5d/6e2a32b9c3020af7a06b00fe446a2c5155ae76ac468c0b68d7188e524002/hypothesis-6.168.3-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:bc2b1c37631f2231dd0d077225aa5908fc2bd34a4c3faf475053b0bc2eb24c95", size = 1300339, upload-time = "2026-09-28T05:20:31.968Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/78/19f3c9eb9a5c215b9fbde57be18ef7c1c78afa509b460d4e8f86026d741a/hypothesis-6.168.3-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:73960a58f6efc8cbc57d8ad0647955f7c5b25f3d562e3eaa57afa1c69894f7aa", size = 1336484, upload-time = "2026-09-28T05:19:02.841Z" },
+    { url = "https://files.pythonhosted.org/packages/88/bb/d46c4519e989e022667705d8a56e83a09ad4ea50eae07ca4bb0f4708dd23/hypothesis-6.168.3-cp311-cp311-win_amd64.whl", hash = "sha256:3f1122223759acc0fe5301c1ae505d762ee61af91db7b191a791ccdbcd965462", size = 684646, upload-time = "2026-09-28T05:20:00.842Z" },
     { url = "https://files.pythonhosted.org/packages/7a/56/44a17266bcf1add5fba7c3df5c3920396a5e924d917fb0534a6f9e2b9b9a/hypothesis-6.168.3-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:bff12e036b67abc5ded682f724f4d7afaff5223190270a0763695f218c079068", size = 793313, upload-time = "2026-09-28T05:20:22.045Z" },
     { url = "https://files.pythonhosted.org/packages/d8/18/1a25b11e9133cb54c02ee6cf99a61296ad461aabc7aae3399e1d0ff1f095/hypothesis-6.168.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:c73c6188056e6dc110260e39d141c69c3d02f23e3ba1d8610c7a8b6f2510ec96", size = 784855, upload-time = "2026-09-28T05:19:34.496Z" },
     { url = "https://files.pythonhosted.org/packages/8b/da/728d3210f0b0089337f37206a100d31ef546d1f99839e709f0a9ca443f8e/hypothesis-6.168.3-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:bb1063cb794765097b8c0add598bd34a904f44dc15db81275dd1f0ed1ac567ed", size = 1123043, upload-time = "2026-09-28T05:19:05.468Z" },
@@ -1744,6 +1633,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/7d/d419841b8f65481ea1a50c4ba36f2670d48b8c7a51e4e8586089564cf7f6/hypothesis-6.168.3-cp315-abi3.abi3t-win32.whl", hash = "sha256:d28e3a6b511a74ce37df5274b51f36c2b274fea7365e00b16f0c81e22acd5957", size = 675394, upload-time = "2026-09-28T05:19:55.237Z" },
     { url = "https://files.pythonhosted.org/packages/d8/d2/1de6a2ad100e44817f2e9a8e8ba3eeaf4769621f4f87f2d4966c4971fcc4/hypothesis-6.168.3-cp315-abi3.abi3t-win_amd64.whl", hash = "sha256:7b9638789548361a57d984f56619ac694a914c328181d911271618409261ff4a", size = 681699, upload-time = "2026-09-28T05:19:09.957Z" },
     { url = "https://files.pythonhosted.org/packages/c0/79/be3370fd02734d6b1d950183ae9224580d19fa8d356b95348d60f1e3eeb7/hypothesis-6.168.3-cp315-abi3.abi3t-win_arm64.whl", hash = "sha256:65d78e4357ec48ed2c67825f06740ee3599be4cfe770a6092bed07108d679ac5", size = 679849, upload-time = "2026-09-28T05:19:06.884Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/0e/27960db1d45a94497e1681fb9d7b9140b44da4e655ba20f0d82f95d10230/hypothesis-6.168.3-pp311-pypy311_pp73-macosx_10_12_x86_64.whl", hash = "sha256:101531b4ccf7fa12965a6b295d10b64c2f8a8fab61e1f9b18c55335d8fb02575", size = 793135, upload-time = "2026-09-28T05:19:14.056Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/cb/be08379286c1925fcd651b92ed835f470a83b859b5c484b3431da9d851f5/hypothesis-6.168.3-pp311-pypy311_pp73-macosx_11_0_arm64.whl", hash = "sha256:41e0120814de5c3a6b58d8cb27cb11b8873ab33fba130cd09855a27f5a12a1ca", size = 788995, upload-time = "2026-09-28T05:20:34.164Z" },
+    { url = "https://files.pythonhosted.org/packages/38/7b/6d885d139b2ed76e2f4908cf10eae56acc73bf05cbef286357c4559c9a04/hypothesis-6.168.3-pp311-pypy311_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9d120009d145697909f2f0c532f2d568558ddd6990707f8cba6576bfb9770696", size = 1124974, upload-time = "2026-09-28T05:19:49.903Z" },
+    { url = "https://files.pythonhosted.org/packages/05/cc/b302ae809b48254830cae57801d0af0b66783df515b5dd56b9f21c8dfa86/hypothesis-6.168.3-pp311-pypy311_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:818b3d09bba60ef90463e47a4bc87275dba1e8aeb184d3102888440ca7c7837d", size = 1171967, upload-time = "2026-09-28T05:20:12.295Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/ab/51031080a6600f5b07adf5f9dfa117345c2adda07a5c24bda523e70bd1e9/hypothesis-6.168.3-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:9e3c36eba80e089ecfa28ec08049723223cb41d3cfe4d9988169cf98440e402b", size = 685641, upload-time = "2026-09-28T05:19:44.609Z" },
 ]
 
 [[package]]
@@ -2868,6 +2762,124 @@ sdist = { url = "https://files.pythonhosted.org/packages/44/f6/3851312120c2bf2f1
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9c/03/850bffad2b581c440ca51c039d74504d5a422c94bda0bdb8a8ba5068d48b/pytest_django-4.14.0-py3-none-any.whl", hash = "sha256:c533b08d89cc675efcd5398eea270b34547e35f9a3608e2c9748dd88428ea187", size = 27067, upload-time = "2026-08-10T14:13:06.998Z" },
 ]
+
+[[package]]
+name = "pytest-obligation"
+source = { editable = "." }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pytest" },
+]
+
+[package.optional-dependencies]
+aiokafka = [
+    { name = "aiokafka" },
+]
+celery = [
+    { name = "celery" },
+]
+dbos = [
+    { name = "dbos" },
+]
+django = [
+    { name = "django", version = "5.2.17", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "django", version = "6.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pytest-django" },
+    { name = "time-machine" },
+]
+exploration = [
+    { name = "hypothesis" },
+]
+mongodb = [
+    { name = "motor" },
+    { name = "pymongo" },
+]
+prefect = [
+    { name = "prefect" },
+]
+procrastinate = [
+    { name = "procrastinate" },
+]
+redis = [
+    { name = "redis" },
+    { name = "time-machine" },
+]
+rq = [
+    { name = "redis" },
+    { name = "rq" },
+    { name = "time-machine" },
+]
+
+[package.dev-dependencies]
+demos = [
+    { name = "dbos" },
+    { name = "django-tasks-db" },
+    { name = "fastapi", extra = ["standard"] },
+    { name = "wagtail" },
+]
+dev = [
+    { name = "celery-types" },
+    { name = "django-stubs" },
+    { name = "pyrefly" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+]
+lint = [
+    { name = "celery-types" },
+    { name = "django-stubs" },
+    { name = "pyrefly" },
+    { name = "ruff" },
+]
+xdist = [
+    { name = "pytest-xdist" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiokafka", marker = "extra == 'aiokafka'", specifier = ">=0.12,<0.15" },
+    { name = "celery", marker = "extra == 'celery'", specifier = ">=5.3" },
+    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.0" },
+    { name = "django", marker = "extra == 'django'", specifier = ">=4.2" },
+    { name = "hypothesis", marker = "extra == 'exploration'", specifier = ">=6.112" },
+    { name = "motor", marker = "extra == 'mongodb'", specifier = ">=3.7,<4" },
+    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7,<3.8" },
+    { name = "procrastinate", marker = "extra == 'procrastinate'", specifier = ">=3.0" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'django'", specifier = ">=3.1" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.9,<4.18" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-django", marker = "extra == 'django'", specifier = ">=4.8" },
+    { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0" },
+    { name = "redis", marker = "extra == 'rq'", specifier = ">=5.0" },
+    { name = "rq", marker = "extra == 'rq'", specifier = ">=2.6" },
+    { name = "time-machine", marker = "extra == 'django'", specifier = ">=2.10" },
+    { name = "time-machine", marker = "extra == 'redis'", specifier = ">=2.10" },
+    { name = "time-machine", marker = "extra == 'rq'", specifier = ">=2.10" },
+]
+provides-extras = ["aiokafka", "celery", "dbos", "django", "exploration", "mongodb", "prefect", "procrastinate", "redis", "rq"]
+
+[package.metadata.requires-dev]
+demos = [
+    { name = "dbos", specifier = "==3.1.0" },
+    { name = "django-tasks-db", specifier = "==0.13.0" },
+    { name = "fastapi", extras = ["standard"], specifier = ">=0.115.0" },
+    { name = "wagtail", specifier = "==8.0" },
+]
+dev = [
+    { name = "celery-types", specifier = ">=0.22" },
+    { name = "django-stubs", specifier = ">=5.1" },
+    { name = "pyrefly", specifier = ">=1.0,<2" },
+    { name = "pytest-xdist", specifier = ">=3.6" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+lint = [
+    { name = "celery-types", specifier = ">=0.22" },
+    { name = "django-stubs", specifier = ">=5.1" },
+    { name = "pyrefly", specifier = ">=1.0,<2" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+xdist = [{ name = "pytest-xdist", specifier = ">=3.6" }]
 
 [[package]]
 name = "pytest-xdist"

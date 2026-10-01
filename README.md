@@ -1,11 +1,11 @@
-# due-work-harness
+# pytest-obligation
 
-<img src="plugins/due-work-harness/assets/icon.svg" alt="Due Work Harness logo" width="96">
+<img src="plugins/due-work-harness/assets/icon.svg" alt="pytest-obligation logo" width="96">
 
-[![CI](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/due-work-harness)](https://pypi.org/project/due-work-harness/)
-[![Python](https://img.shields.io/pypi/pyversions/due-work-harness)](https://pypi.org/project/due-work-harness/)
-[![pytest plugin](https://img.shields.io/badge/pytest-plugin-0A9EDC?logo=pytest&logoColor=white)](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md)
+[![CI](https://github.com/gigaverse-app/pytest-obligation/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gigaverse-app/pytest-obligation/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/pytest-obligation)](https://pypi.org/project/pytest-obligation/)
+[![Python](https://img.shields.io/pypi/pyversions/pytest-obligation)](https://pypi.org/project/pytest-obligation/)
+[![pytest plugin](https://img.shields.io/badge/pytest-plugin-0A9EDC?logo=pytest&logoColor=white)](https://github.com/gigaverse-app/pytest-obligation/blob/main/docs/pytest-plugin.md)
 [![Typed](https://img.shields.io/badge/typing-py.typed-blue)](https://typing.python.org/en/latest/spec/distributing.html)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -16,7 +16,7 @@ receipt, publish to Kafka, or call Shopify. A worker can die one line later; a
 broker reply can be lost; a retry can run the external effect twice. Ordinary
 tests usually exercise only the path where none of that happens.
 
-**Due Work Harness generates tests for work your application cannot afford to
+**pytest-obligation generates tests for work your application cannot afford to
 lose or repeat.** Bind a `DueWorkContract` to your real workflow and recovery
 path, yourself or with a coding agent. The harness generates standardized tests
 for crashes, retries, lost messages, and competing operations, exposing failure
@@ -28,10 +28,10 @@ for your application's particular risks. The core accepts plain Python
 callables: it assumes no framework, database, queue, or business domain.
 
 It integrates as a pytest plugin in your existing test suite and CI. Read the
-[pytest plugin guide](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md)
+[pytest plugin guide](https://github.com/gigaverse-app/pytest-obligation/blob/main/docs/pytest-plugin.md)
 for automatic discovery, test selection, reports, and configuration.
 
-Coming from distributed systems and familiar with Jepsen? Due Work Harness
+Coming from distributed systems and familiar with Jepsen? pytest-obligation
 brings a similar approach to your application's workflows. Read
 [Jepsen-style fault testing for application work](docs/jepsen-analogy.md).
 
@@ -100,14 +100,21 @@ not a verified guarantee. [Read the reporting guide](ADOPTING.md#required-adopti
 
 ## Get started
 
+Formerly **due-work-harness**. The package is being renamed to
+**pytest-obligation**; until its first PyPI release, install `due-work-harness`
+for the last published version. Do not install both distributions in the same
+environment: they provide the same Python modules. Python imports remain
+`due_work_harness`, and `DueWorkContract`, `--due-work-*` options, the
+`due-work-harness` command, and `[tool.due-work-harness]` configuration are unchanged.
+
 Install the Python test library **in the application you want to test** (Python
 3.11+). Choose your package manager; add an optional extra only for an
 integration you use:
 
 ```bash
-pip install due-work-harness
-uv add --dev due-work-harness
-poetry add --group dev due-work-harness
+pip install pytest-obligation
+uv add --dev pytest-obligation
+poetry add --group dev pytest-obligation
 ```
 
 Optional integrations:
@@ -121,7 +128,7 @@ Optional integrations:
 [![Kafka aiokafka integration](https://img.shields.io/badge/integration-Kafka%20%28aiokafka%29-231F20?logo=apachekafka&logoColor=white)](docs/aiokafka.md)
 [![Hypothesis optional exploration](https://img.shields.io/badge/optional%20exploration-Hypothesis-6B4C9A)](docs/interleavings.md#optional-search)
 
-For example, use `"due-work-harness[django]"` with any of the commands above
+For example, use `"pytest-obligation[django]"` with any of the commands above
 for the Django/PostgreSQL integration. Other extras include `[celery]`, `[rq]`,
 `[mongodb]`, `[prefect]`, and `[aiokafka]`; [see integration scope](docs/integrations.md).
 The current source has A–J profiles. Check the adoption guide matching your
@@ -131,15 +138,15 @@ Then add the **coding-agent plugin** (it provides instructions, not the Python
 library). For Claude Code:
 
 ```bash
-claude plugin marketplace add gigaverse-app/due-work-harness
-claude plugin install due-work-harness@due-work-harness
+claude plugin marketplace add gigaverse-app/pytest-obligation
+claude plugin install pytest-obligation@pytest-obligation
 ```
 
 For Codex, add the repository marketplace, then open the Plugins Directory,
-select **Due Work Harness**, and install the plugin:
+select **pytest-obligation**, and install the plugin:
 
 ```bash
-codex plugin marketplace add gigaverse-app/due-work-harness --sparse .agents/plugins
+codex plugin marketplace add gigaverse-app/pytest-obligation --sparse .agents/plugins
 ```
 
 It is not yet in the public plugin directory. The plugin works without a remote

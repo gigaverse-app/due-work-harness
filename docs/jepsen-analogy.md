@@ -1,6 +1,6 @@
 # Coming from Jepsen: fault testing for application work
 
-If you work on distributed systems and know Jepsen, Due Work Harness should
+If you work on distributed systems and know Jepsen, pytest-obligation should
 feel familiar: execute real operations, introduce failures, observe what
 happened, and check whether the result respects the system's promises.
 It applies that approach to the work your application owes—orders, payments,
@@ -22,7 +22,7 @@ death after sending the receipt but before recording completion can make
 recovery send it twice. Database consistency alone cannot establish that the
 whole workflow finishes correctly.
 
-Due Work Harness binds the real transition, observable effects, and production
+pytest-obligation binds the real transition, observable effects, and production
 recovery path to a `DueWorkContract`. It generates standardized tests that
 challenge those boundaries and check what remains after recovery. The
 [Saleor and DBOS demonstrations](../demos/README.md) reproduce concrete
@@ -36,7 +36,7 @@ and correctness checkers. Its Clojure test programs commonly orchestrate
 distributed clusters and test behavior during crashes, partitions, and other
 faults. Its scope also includes queues and task schedulers.
 
-| Concept | Due Work Harness counterpart |
+| Concept | pytest-obligation counterpart |
 | --- | --- |
 | Workload and client operations | Production transitions and application commands bound by the adopter |
 | Fault injection | Supported commit deaths, lost publications/replies, callback failures, external-call faults, and controlled competing operations |
@@ -44,7 +44,7 @@ faults. Its scope also includes queues and task schedulers.
 | Correctness checker | Generated A–J profile tests and application invariants |
 | Analysis and reproducer | Divergent outcomes, strict known-gap cases, executed profile reports, and supported trace replay |
 
-This is a methodological analogy. Due Work Harness is an independent Python
+This is a methodological analogy. pytest-obligation is an independent Python
 project; it does not use Jepsen as its engine or imply affiliation. It provides
 application contracts and pytest integration rather than Jepsen's general
 cluster orchestration and database consistency analysis. In particular, its
@@ -68,7 +68,7 @@ Read [what a green result means](what-a-green-result-means.md) and
 ## Try it on one workflow
 
 Start with a workflow that must finish after a crash and must not repeat an
-external effect. In Claude Code or Codex, with the Due Work Harness skill
+external effect. In Claude Code or Codex, with the pytest-obligation skill
 installed, ask:
 
 > Use `prove-due-work` to create a `DueWorkContract` for our order workflow.

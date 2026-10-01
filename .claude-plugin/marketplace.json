@@ -1,10 +1,10 @@
 {
-  "name": "due-work-harness",
+  "name": "pytest-obligation",
   "description": "Generate DueWorkContract tests and investigate lost or duplicate work in Python projects.",
   "owner": {"name": "Gigaverse"},
   "plugins": [
     {
-      "name": "due-work-harness",
+      "name": "pytest-obligation",
       "source": "./plugins/due-work-harness",
       "description": "Generate DueWorkContract tests in your app or verify due-work bugs in open-source projects."
     }

@@ -19,7 +19,7 @@ version number by hand.
    attached to the GitHub release.
 
 Each release also moves the floating major tag (`v0` for 0.x) to it, so projects using
-`gigaverse-app/due-work-harness/check@v0` follow the latest compatible release.
+`gigaverse-app/pytest-obligation/check@v0` follow the latest compatible release.
 
 The package version is the tag itself (`hatch-vcs`): nothing in `pyproject.toml`
 or `uv.lock` changes at release time, and an untagged commit builds as a `.devN`
@@ -43,11 +43,16 @@ release on their own.
 
 The workflow depends on settings outside the code:
 
-1. **PyPI Trusted Publisher.** The PyPI project `due-work-harness` trusts
-   owner `gigaverse-app`, repository `due-work-harness`, workflow `release.yml`,
+1. **PyPI Trusted Publisher.** Before publishing the renamed package, configure
+   a pending publisher for PyPI project `pytest-obligation` with
+   owner `gigaverse-app`, repository `pytest-obligation`, workflow `release.yml`,
    environment `pypi`. For a project that does not exist yet this is a
    *pending publisher* (pypi.org → Account → Publishing). test.pypi.org has the
    same entry with environment `testpypi` for rehearsals.
+   The old project's publisher does not authorize the new project. Do not merge
+   the next release PR until this setup is complete. Keep historical releases
+   under `due-work-harness`; users migrating to the new distribution must remove
+   the old one first because both own the `due_work_harness` import package.
 2. **GitHub environments.** `pypi` accepts deployments from `main` only, which
    is where both release-please and a manual re-publish run; `testpypi` is
    unrestricted. Adding required reviewers to `pypi` makes every publish wait
