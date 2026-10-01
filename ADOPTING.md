@@ -33,7 +33,7 @@ remain explicit; new-feature contracts cannot waive gaps.
 
 This version requires Pydantic 2.11 or newer; the minimum is exercised in CI.
 The canonical names and enum values now follow the A–J vocabulary in the
-[profile table](README.md#ten-guarantees-profiles-aj). This is an API migration:
+[profile table](docs/how-it-works.md#the-a-j-guarantees). This is an API migration:
 
 - Move nested `safety.profiles` into `DueWorkContract.profiles`: old
   `SafetyProfile.REPLAY_SAFE_EXECUTION` becomes `Profile.HARMLESS_REPLAY` (H),

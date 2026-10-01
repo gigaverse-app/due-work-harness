@@ -18,8 +18,8 @@ Each demo **adopts the harness the way a project does**:
   check at the pinned upstream, and a baseline for the handoffs no contract
   insures yet: `due-work-harness check --root demos/<demo>` passes, and CI runs
   it through the `check` action;
-- a `DueWorkContract` for the obligation, with a disposition for every profile
-  and both safety profiles, its handoffs and their delivery, decorated with
+- a `DueWorkContract` for the obligation, with a disposition for every A–J
+  profile, its handoffs and their delivery, decorated with
   `@due_work_contract_suite(..., covers=(DueWorkSource(<the site>),))`. What
   the harness finds is declared as legacy gaps (`KnownGap`, `handoff_gaps`, an
   `ExtraProof`'s `gap`), each generated as a **strict xfail** carrying its
