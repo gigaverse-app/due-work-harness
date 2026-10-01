@@ -9,13 +9,22 @@
 [![types: Pyrefly](https://img.shields.io/badge/types-Pyrefly-blue)](https://pyrefly.org/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
-**Find lost background jobs and duplicate side effects before your users do.**
-Did a Celery task disappear after a Django transaction committed? Can a retry
-charge a customer twice, resend a receipt, or process a Kafka message again?
-`due-work-harness` turns those questions into pytest crash-and-retry proofs
-against your application's real transition and recovery path. It checks work
-that can go missing or run twice across database commits, queues, dead workers,
-and uncertain external calls—and checks that the proof itself isn't lying.
+**Generate strong, standardized tests for work you cannot afford to lose or
+repeat.** Declare a `DueWorkContract` against your application's real code and
+the harness generates pytest cases for crash recovery, worker ownership,
+uncertain external calls, retention, convergence, and replay safety. Your coding
+agent can also use the same fault-injection infrastructure to write focused
+tests for your particular workflow. Did a Celery task disappear after a Django
+transaction committed? Can a retry charge twice, resend a receipt, or process
+a Kafka message again? These are testable questions, not assumptions that your
+queue or framework already makes the work safe.
+
+The core takes plain Python callables and assumes no particular framework,
+database, queue, or business domain. Optional adapters expose specific failure
+points in Django/PostgreSQL, django-tasks, Celery, RQ/Redis, MongoDB, Prefect,
+and aiokafka. A Shopify integration or another external API can be tested
+through the application's real Python call and observable effects; that does
+not imply a built-in Shopify adapter or coverage of every provider behavior.
 
 **What it is, in 45 seconds** (with sound):
 
@@ -94,15 +103,15 @@ Or `uv add --dev due-work-harness`. The extras are `[django]`, `[celery]`,
 ## Coding-agent plugin
 
 The [Due Work Harness plugin](plugins/due-work-harness/) helps Codex and Claude
-Code investigate questions such as "Why did this Celery task disappear?", "Can
-this order be charged twice?", and "What happens if the Kafka consumer crashes
-before committing its offset?" It traces the database-to-queue handoff,
-transactional outbox, worker, or external API call in your repository; chooses
-a supported failure boundary; then writes and runs a `DueWorkContract`. It can
-test orders, payments, receipts, notifications, imports, and other effects that
-must not be lost or repeated. It contains a skill, not a remote service; the
-project under test still installs the pytest library. An integration name does
-not imply coverage of every operation that integration offers.
+Code bind your production workflow to a `DueWorkContract` and run its generated,
+standardized pytest suite. The agent can then use the harness's crash histories,
+lost-reply simulation, and other fault-injection primitives to add focused tests
+for your application's own risks. Ask it, for example, "Why did this Celery task
+disappear?", "Can this Shopify order be charged twice?", or "What happens if
+this Kafka consumer crashes before committing its offset?" It traces the real
+database-to-queue handoff, worker, or external API call rather than assuming
+that a named framework guarantees durability. The plugin contains a skill, not
+a remote service; the project under test still installs the pytest library.
 
 For Claude Code, add this repository as a marketplace and install the plugin:
 
@@ -180,14 +189,16 @@ points with `os._exit`, restarts it the way production would, and applies the
 same verdict. That is how the DBOS demo above works; a contract declares such
 histories as `process_handoffs`, beside `handoffs`.
 
-## Six ways due work goes missing: lifecycle profiles
+## DueWorkContract generates the standardized tests
 
 Every domain adoption **must** use `DueWorkContract` and
 `@due_work_contract_suite(CONTRACT)`; standalone histories or ordinary tests do
 not complete adoption. See [the required adoption shape](ADOPTING.md#required-adoption-shape).
-A crash history proves one handoff. A declarative `DueWorkContract` binds your
-production selection, tick and transitions, and asks for a disposition (claim,
-decline with a reason, not applicable, or known gap) for each of six profiles:
+The decorator generates the suite at pytest collection time; you do not handwrite
+one test per failure mode. A crash history proves one handoff. A declarative
+`DueWorkContract` binds your production selection, tick and transitions, and
+asks for a disposition (claim, decline with a reason, not applicable, or known
+gap) for each of six lifecycle profiles:
 
 | Profile | The question it answers |
 | --- | --- |

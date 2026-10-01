@@ -1,7 +1,7 @@
 {
   "name": "due-work-harness",
   "version": "0.1.0",
-  "description": "Test Python background jobs for lost tasks, duplicate processing, and missing effects after crashes, retries, or database commits.",
+  "description": "Generate standardized DueWorkContract tests for lost work, duplicate effects, and recovery failures in Python applications.",
   "author": {
     "name": "Gigaverse",
     "url": "https://github.com/gigaverse-app"
@@ -9,12 +9,12 @@
   "homepage": "https://github.com/gigaverse-app/due-work-harness",
   "repository": "https://github.com/gigaverse-app/due-work-harness",
   "license": "Apache-2.0",
-  "keywords": ["background-jobs", "lost-tasks", "duplicate-processing", "idempotency", "transactional-outbox", "celery", "django", "mongodb", "postgresql", "kafka", "prefect", "queues"],
+  "keywords": ["dueworkcontract", "generated-tests", "background-jobs", "lost-tasks", "duplicate-processing", "idempotency", "transactional-outbox", "celery", "django", "mongodb", "postgresql", "kafka", "prefect", "queues"],
   "skills": "./skills/",
   "interface": {
     "displayName": "Due Work Harness",
-    "shortDescription": "Find lost and duplicate jobs",
-    "longDescription": "Does a Celery task disappear after a Django database commit? Can a retry charge a customer twice, resend an email, or process a Kafka message again after an offset-commit failure? Due Work Harness helps a coding agent trace the real workflow, write pytest crash-and-retry histories, and check whether orders, payments, receipts, notifications, imports, and other effects are lost or repeated. It is useful for database-to-queue handoffs, transactional outboxes, worker crashes, redelivery, uncertain API replies, and idempotency checks. The package has specific adapters for Django, Celery, MongoDB, Redis/RQ, Prefect, and aiokafka, plus a framework-free Python core; each adapter covers particular boundaries, not every feature of that system. Proofs run in a coding environment with the target repository and appropriate test services, not through a hosted MCP server.",
+    "shortDescription": "Generate crash/retry tests",
+    "longDescription": "DueWorkContract turns a Python application's real workflow and recovery path into a standardized pytest suite. It generates cases for lost work, worker crashes, uncertain external calls, duplicate effects, and other lifecycle and replay-safety failures; your coding agent can also use the harness's fault-injection tools to write focused tests for your domain. Ask whether a Celery task can disappear after a Django commit, a retry can charge twice, or a Kafka consumer can process a message twice after an offset-commit failure. The core accepts plain Python callables without assuming a framework, queue, database, or business domain. Optional adapters expose specific boundaries in Django/PostgreSQL, django-tasks, Celery, RQ/Redis, MongoDB, Prefect, and aiokafka. Shopify and other external APIs can be tested through the application's real call and observable effects; no released Shopify-specific adapter is included. Proofs require a coding environment with the target repository and appropriate test services, not a hosted MCP server.",
     "developerName": "Gigaverse",
     "category": "Developer Tools",
     "capabilities": ["Read", "Write"],

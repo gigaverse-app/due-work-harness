@@ -1,10 +1,10 @@
 {
   "name": "due-work-harness",
   "version": "0.1.0",
-  "description": "Test Python background jobs for lost tasks, duplicate processing, and missing effects after crashes, retries, or database commits.",
+  "description": "Generate standardized DueWorkContract tests for lost work, duplicate effects, and recovery failures in Python applications.",
   "author": {"name": "Gigaverse", "url": "https://github.com/gigaverse-app"},
   "homepage": "https://github.com/gigaverse-app/due-work-harness",
   "repository": "https://github.com/gigaverse-app/due-work-harness",
   "license": "Apache-2.0",
-  "keywords": ["background-jobs", "lost-tasks", "duplicate-processing", "idempotency", "transactional-outbox", "celery", "django", "mongodb", "kafka"]
+  "keywords": ["dueworkcontract", "generated-tests", "background-jobs", "lost-tasks", "duplicate-processing", "idempotency", "transactional-outbox", "celery", "django", "mongodb", "kafka"]
 }
