@@ -30,9 +30,10 @@ The generated catalog covers:
 - H: replay actually calls the provider twice and leaves the same remote value.
 - I: admission owns its transaction; failure after both SQL writes leaves neither
   committed, and notifications only leave after commit.
-- E in-flight: held, refused and lost provider responses; three revisions and
-  return to an earlier value; every completion order; independent progress;
-  retirement and failed repair; lost and duplicate notifications.
+- E in-flight: held, refused and lost provider responses; success replies that
+  never applied; three revisions and return to an earlier value; every
+  completion order; independent progress; retirement and failed repair; lost
+  and duplicate notifications.
 - E evidence: partial receipts, permutations, duplicate receipts, batch partitions,
   separate actor connections (inline executor), and old receipts replayed during
   a new sender turn. Prior-attempt evidence remains immutable.

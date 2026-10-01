@@ -260,11 +260,18 @@ approval.
    at all. That was wrong. The difference between "a contract cannot express
    this" and "nobody has written it yet" is exactly the kind of thing a
    contract should not be trusted to judge about itself.
-3. **Provider reconciliation is out of scope.** Profile C proves that late
-   evidence *can* resolve an ambiguous attempt and that terminal state is
-   monotonic. How a domain obtains that evidence (a provider's message IDs, a
-   listing of recent posts, a deterministic external identifier) is
-   domain-specific and cannot be contracted.
+3. **How a domain reconciles with its provider is its own.** Profile C proves
+   that late evidence *can* resolve an ambiguous attempt and that terminal
+   state is monotonic. Profile E's `IF.false-acceptance` history injects a
+   provider that answers success without applying anything, and fails a
+   writer that stays confirmed on that reply: a replay-safe binding must still
+   converge, and a replay-unsafe one must stay unconfirmed. What the harness
+   cannot supply is how a domain obtains provider evidence (a provider's
+   message IDs, a listing of recent posts, an aggregate meter, a deterministic
+   external identifier). That is domain-specific and cannot be contracted. The
+   check is only as wide as `observe`: an observation that reads the
+   application's own row instead of provider state cannot see a false
+   acceptance, and nothing here can tell.
 4. **Deterministic-identity convergence has no profile.** Some domains converge
    by deriving the external object's identity deterministically (for example
    one identifier per revision) rather than by rejecting stale writes. Profile E

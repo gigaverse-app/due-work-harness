@@ -9,12 +9,45 @@ profiles describe guarantees; the engine supplies schedules that challenge them.
 
 An `InFlightConvergence` declaration generates applicable histories for clean
 execution, refusal before application, applied effects with lost responses,
-accepted requests completing late, competing revisions in both completion orders,
-a return to an earlier value, retirement, independent progress, and notification
-loss/redelivery. Capabilities and explicit limitations select the catalog. Each
-history ends with bounded recovery and checks both convergence and quiet-state
-stability. A repeated visible payload does not excuse corrupt revision or
-acknowledgement identities.
+accepted requests completing late, success replies whose effect never applied,
+competing revisions in both completion orders, a return to an earlier value,
+retirement, independent progress, and notification loss/redelivery. Capabilities
+and explicit limitations select the catalog. Each history ends with bounded
+recovery and checks both convergence and quiet-state stability. A repeated
+visible payload does not excuse corrupt revision or acknowledgement identities.
+
+### A success reply is not an applied effect
+
+`Fault.ACCEPT_WITHOUT_EFFECT` makes the provider answer as if the call
+succeeded while applying nothing: no exception, no pending request, no later
+completion. Some providers really behave this way. Shopify's App Events API
+answers HTTP 202 `{"success": true}` for every billing event, including events
+it rejects later, and the only read-back is an aggregate meter in a different
+API. A writer that marks its row confirmed on that reply has recorded a reply,
+not an effect.
+
+The `IF.false-acceptance` history arms this fault at each seam. Its invariant is
+that production must not hold a confirmed state for that identity on the
+strength of the reply alone:
+
+- With `replay_safe=True` (the default) the history must still settle to the
+  reviewed expectation, and `observe` reads provider state, so the only way out
+  is recovery that checks the provider (or re-sends) instead of trusting its
+  own acknowledgement. Failing to converge while the revision is acknowledged
+  is reported as `false-acceptance`, not as a generic `convergence` failure.
+- With `replay_safe=False` re-sending is forbidden (`non-repeatable`), so the
+  provider can never apply that occurrence. The history ends with `UNCONFIRMED`
+  checkpoints after recovery: the acknowledged identity must not be the desired
+  one. An unresolved or ambiguous disposition (see Profile C) or a rejection
+  learned from provider evidence conforms; "confirmed" does not. The ordinary
+  control histories still require acknowledgement, so a writer that never
+  acknowledges anything does not pass. Retirement declarations expose no
+  acknowledgement identity, so they report this history as a limitation when
+  they are not replay-safe.
+
+How an application obtains provider evidence (a read-back, a meter, a listing)
+is its own business. The harness injects the false acceptance and checks the
+outcome. It does not supply the reconciliation.
 
 An `EvidenceConfluence` declaration generates permutations, duplicates, partial
 fact arrivals with recovery between them, and batching partitions when supported.
@@ -75,7 +108,10 @@ The core never imports Django or a queue. The configured host supplies database
 marks; generated histories request real commits where a host requires them.
 
 `ProviderControl()` uses the portable `AcceptedProviderRequest` by default; inject
-`accept=` to retain requests through an existing external fake. It counts attempted calls separately from applied effects. Its
+`accept=` to retain requests through an existing external fake. It counts attempted
+calls, effects `perform` actually applied, and false acceptances separately. Under
+`ACCEPT_WITHOUT_EFFECT` it returns `reply()` when a seam passes one (the provider's
+success-shaped answer), otherwise `None`, and never runs `perform`. Its
 `accept` callback retains an external-only completion function as a
 `PendingRequest`. Completion must change the external fake only, never acknowledge
 or repair application rows. A provider accepting a request is distinct from
