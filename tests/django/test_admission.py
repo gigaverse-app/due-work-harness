@@ -42,7 +42,8 @@ def admission(command: Callable[[int], None]) -> AdmissionAtomicity[str]:
         effects=lambda: 0,
         publications=lambda: nullcontext(()),
         during=partial(
-            interrupt_after_statement, lambda sql: sql.startswith('INSERT INTO "due_work_harness_lifecycleattempt"')
+            interrupt_after_statement,
+            lambda sql: sql.startswith(f'INSERT INTO "{ref.LifecycleAttempt._meta.db_table}"'),
         ),
         expected_error=AdmissionInterrupted,
     )
