@@ -84,7 +84,7 @@ def explore(scenario: Scenario, *, max_examples: int, max_steps: int) -> None:
     except ModuleNotFoundError as error:
         if error.name != "hypothesis":
             raise
-        raise RuntimeError("Install due-work-harness[exploration] to search generated schedules") from error
+        raise RuntimeError("Install pytest-obligation[exploration] to search generated schedules") from error
 
     scenario.validate_definition()
     assert max_examples > 0 and max_steps >= 11, "exploration requires positive examples and at least 11 steps"

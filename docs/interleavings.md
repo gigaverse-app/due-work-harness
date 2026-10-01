@@ -88,7 +88,7 @@ Fixed histories and saved replay need only the core installation. Install
 Hypothesis explicitly for additional generated schedules:
 
 ```bash
-uv add --dev 'due-work-harness[exploration]'
+uv add --dev 'pytest-obligation[exploration]'
 uv run pytest -m due_work --due-work-explore=smoke
 uv run pytest -m due_work --due-work-explore=deep
 ```

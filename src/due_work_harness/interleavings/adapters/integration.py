@@ -87,7 +87,7 @@ def install_exploration(cls: type, scenarios: Mapping[str, Scenario], fixtures: 
         except ModuleNotFoundError as error:
             if error.name != "hypothesis":
                 raise
-            raise pytest.UsageError("Install due-work-harness[exploration]") from error
+            raise pytest.UsageError("Install pytest-obligation[exploration]") from error
         examples, steps = (20, 15) if lane == "smoke" else (200, 50)
         explore(scenarios[interleaving_name], max_examples=examples, max_steps=steps)
 

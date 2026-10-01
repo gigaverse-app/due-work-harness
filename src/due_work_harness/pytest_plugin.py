@@ -76,7 +76,7 @@ def pytest_configure(config: pytest.Config) -> None:
         try:
             import_module("hypothesis")
         except ModuleNotFoundError as error:
-            raise pytest.UsageError("Install due-work-harness[exploration] to use --due-work-explore") from error
+            raise pytest.UsageError("Install pytest-obligation[exploration] to use --due-work-explore") from error
     # Under xdist, the controller receives every worker's reports and holds the verdict; a worker
     # sees only its share, and would rescan the whole project at its own session's end for nothing.
     worker = hasattr(config, "workerinput")

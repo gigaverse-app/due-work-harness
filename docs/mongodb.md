@@ -1,6 +1,6 @@
 # MongoDB histories
 
-Install `due-work-harness[mongodb]` and configure
+Install `pytest-obligation[mongodb]` and configure
 `mongodb_host(client, production_packages={"your_app"})`. For Motor, pass the
 Motor client's `.delegate`; run async application calls to completion on the
 same event loop your client uses.

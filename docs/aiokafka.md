@@ -5,7 +5,7 @@ This adapter is specific to the Python **aiokafka** client. It instruments
 client-independent Kafka adapter. Clients such as `confluent-kafka` require their
 own adapter, even though the broker-level recovery principles are the same.
 
-Install `due-work-harness[aiokafka]` and import helpers from
+Install `pytest-obligation[aiokafka]` and import helpers from
 `due_work_harness.integrations.aiokafka`. Pass a real `AIOKafkaConsumer` with
 `enable_auto_commit=False` to `aiokafka_worker_killer(consumer)` or
 `aiokafka_offset_reply_breaker(consumer)`. Both return context-manager factories

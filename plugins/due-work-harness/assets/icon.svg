@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title">
-  <title id="title">Due Work Harness</title>
+  <title id="title">pytest-obligation</title>
   <rect width="256" height="256" rx="52" fill="#0B172A"/>
   <path d="M70 58v140m0-140h29c60 0 100 27 100 70s-40 70-100 70H70" fill="none" stroke="#79D9F1" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="m105 128 19 19 37-42" fill="none" stroke="#FFC857" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>

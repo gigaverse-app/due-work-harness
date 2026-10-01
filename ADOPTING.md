@@ -70,7 +70,7 @@ The host must supply `in_transaction`; fault fixtures must not supply the transa
 ## 1. Install
 
 ```bash
-uv add --dev "due-work-harness[django]"     # or [celery], [procrastinate], [dbos]; combine as needed
+uv add --dev "pytest-obligation[django]"     # or [celery], [procrastinate], [dbos]; combine as needed
 ```
 
 The core needs only pytest and pydantic. An extra adds that framework's integration.
@@ -229,7 +229,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: gigaverse-app/due-work-harness/check@v0
+      - uses: gigaverse-app/pytest-obligation/check@v0
 
   due-work-suites:
     # The generated contract, safety and exemption suites, in your own environment.
@@ -241,7 +241,7 @@ jobs:
         ports: ["5432:5432"]
     steps:
       - uses: actions/checkout@v7
-      - uses: gigaverse-app/due-work-harness/test@v0
+      - uses: gigaverse-app/pytest-obligation/test@v0
         with:
           sync-args: --all-extras
           pytest-args: --ds=myproject.settings

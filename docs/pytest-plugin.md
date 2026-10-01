@@ -1,6 +1,6 @@
-# Due Work Harness as a pytest plugin
+# pytest-obligation as a pytest plugin
 
-Due Work Harness generates crash, retry, and recovery tests from a
+pytest-obligation generates crash, retry, and recovery tests from a
 `DueWorkContract` bound to an application's production code. The generated
 cases run alongside ordinary pytest tests, using the project's fixtures and
 test services. The Claude/Codex skills help an agent create those bindings;
@@ -8,13 +8,17 @@ the Python package supplies the pytest integration and fault-injection engine.
 
 ## Install and discover
 
+Previously published as `due-work-harness`; see the
+[migration and release-status note](../README.md#get-started) before installing.
+The rename preserves `due_work_harness` imports and existing pytest options.
+
 Install in the Python environment that runs your application's tests:
 
 ```bash
-pip install due-work-harness
+pip install pytest-obligation
 # Or choose your project's package manager:
-uv add --dev due-work-harness
-poetry add --group dev due-work-harness
+uv add --dev pytest-obligation
+poetry add --group dev pytest-obligation
 ```
 
 Pytest automatically loads installed plugins registered in the `pytest11`

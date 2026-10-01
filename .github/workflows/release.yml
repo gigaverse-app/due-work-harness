@@ -128,7 +128,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/due-work-harness/${{ needs.build.outputs.version }}/
+      url: https://pypi.org/project/pytest-obligation/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write
     steps:
@@ -146,7 +146,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/due-work-harness/${{ needs.build.outputs.version }}/
+      url: https://test.pypi.org/project/pytest-obligation/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write
     steps:
@@ -175,7 +175,7 @@ jobs:
         run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
 
   move-major-tag:
-    # `uses: gigaverse-app/due-work-harness/check@v0` follows the latest v0.x.y release.
+    # `uses: gigaverse-app/pytest-obligation/check@v0` follows the latest v0.x.y release.
     needs: [build, publish-pypi]
     if: always() && needs.publish-pypi.result == 'success' && needs.build.outputs.tag != ''
     runs-on: ubuntu-latest

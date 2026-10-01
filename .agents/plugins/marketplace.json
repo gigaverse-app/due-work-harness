@@ -1,11 +1,11 @@
 {
-  "name": "due-work-harness",
+  "name": "pytest-obligation",
   "interface": {
-    "displayName": "Due Work Harness"
+    "displayName": "pytest-obligation"
   },
   "plugins": [
     {
-      "name": "due-work-harness",
+      "name": "pytest-obligation",
       "source": {
         "source": "local",
         "path": "../../plugins/due-work-harness"

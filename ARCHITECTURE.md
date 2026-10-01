@@ -15,7 +15,7 @@ framework-free. Frameworks reach them only through one small interface, the
 2. **An integration imports its framework, and nothing imports an integration
    implicitly.** `due_work_harness.integrations.django` may import Django; the
    core never imports it. Users opt in with an extra
-   (`pip install due-work-harness[django]`) and by configuring a host.
+   (`pip install pytest-obligation[django]`) and by configuring a host.
 3. **Proofs take production callables, never framework objects.** A selection is
    `Callable[[], Iterable[Any]]`; a tick is `Callable[[], int]`; a transition is
    `Callable[[Handle], object]`. Where a proof needs a fact only the database

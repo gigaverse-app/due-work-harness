@@ -1,10 +1,10 @@
 {
-  "name": "due-work-harness",
+  "name": "pytest-obligation",
   "version": "0.1.0",
   "description": "Generate DueWorkContract tests in Python applications and investigate lost or duplicate work in open-source projects.",
   "author": {"name": "Gigaverse", "url": "https://github.com/gigaverse-app"},
-  "homepage": "https://github.com/gigaverse-app/due-work-harness",
-  "repository": "https://github.com/gigaverse-app/due-work-harness",
+  "homepage": "https://github.com/gigaverse-app/pytest-obligation",
+  "repository": "https://github.com/gigaverse-app/pytest-obligation",
   "license": "Apache-2.0",
   "keywords": ["dueworkcontract", "generated-tests", "upstream-bugs", "background-jobs", "lost-tasks", "duplicate-processing", "idempotency", "transactional-outbox", "celery", "django", "mongodb", "kafka"]
 }

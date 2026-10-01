@@ -1,7 +1,7 @@
 """
 Django integration: a host built from Django's database layer.
 
-Install with ``pip install due-work-harness[django]`` and configure once per
+Install with ``pip install pytest-obligation[django]`` and configure once per
 test session::
 
     # conftest.py

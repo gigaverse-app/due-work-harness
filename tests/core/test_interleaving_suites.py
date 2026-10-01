@@ -53,7 +53,7 @@ def test_explicit_search_without_the_optional_dependency_is_actionable(pytester:
     pytester.makepyfile(DECLARATION)
     result = pytester.runpytest_subprocess("--due-work-explore=smoke")
     assert result.ret == pytest.ExitCode.USAGE_ERROR
-    result.stderr.fnmatch_lines(["*Install due-work-harness[[]exploration[]]*"])
+    result.stderr.fnmatch_lines(["*Install pytest-obligation[[]exploration[]]*"])
 
 
 def test_assessment_gate_refuses_unassessed_families_even_when_deselected(pytester: pytest.Pytester) -> None:

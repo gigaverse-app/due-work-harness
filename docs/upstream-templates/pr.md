@@ -3,7 +3,7 @@
 Refs #{issue}, #{issue}
 
 This adds the failing tests for #{issue} and the
-[due-work-harness](https://github.com/gigaverse-app/due-work-harness) contract that found them, running
+[due-work-harness](https://github.com/gigaverse-app/pytest-obligation) contract that found them, running
 against {the project's code}. It adds no fix; the fixes are yours to shape.
 
 ### Required contract declaration
