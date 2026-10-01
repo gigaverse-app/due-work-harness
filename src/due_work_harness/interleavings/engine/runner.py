@@ -92,16 +92,25 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                     "an uncertain or accepted occurrence was sent again",
                 )
 
-        def is_settled(alias: str) -> bool:
-            handle = handles[alias]
-            if session.observe(handle) != expected[alias]:
-                return False
+        def acknowledged(alias: str) -> bool:
             if session.desired_identity is None or session.acknowledged_identity is None:
                 return True
+            handle = handles[alias]
             # Equal payloads do not prove the right revision won (A -> B -> A).
             # Pin the commanded identity too: two drifting DB fields must not
             # certify each other during convergence or the quiet tail.
             return session.desired_identity(handle) == identities[alias] == session.acknowledged_identity(handle)
+
+        def is_settled(alias: str) -> bool:
+            return session.observe(handles[alias]) == expected[alias] and acknowledged(alias)
+
+        def refuse_trusted_reply(alias: str) -> None:
+            require(
+                not acknowledged(alias),
+                "false-acceptance",
+                f"{alias} is acknowledged but the provider never applied it; a success-shaped reply is not "
+                "evidence of effect",
+            )
 
         def settle(alias: str) -> None:
             for attempt in range(scenario.bounds.recovery_steps + 1):
@@ -110,6 +119,10 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                 if attempt < scenario.bounds.recovery_steps:
                     recover()
                     check_effects()
+            # The provider answered success without applying, and production
+            # still holds that answer as its acknowledgement after recovery.
+            if session.provider.false_acceptances and session.observe(handles[alias]) != expected[alias]:
+                refuse_trusted_reply(alias)
             require(
                 False,
                 "convergence",
@@ -172,6 +185,12 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                         "settled-churn",
                         "recovery repeated settled provider work",
                     )
+                case Op.UNCONFIRMED:
+                    assert session.desired_identity and session.acknowledged_identity, "revision seams missing"
+                    assert session.provider.false_acceptances, "history never reached a false acceptance"
+                    # Re-sending is forbidden, so nothing can have applied it:
+                    # only an unresolved or evidence-derived disposition conforms.
+                    refuse_trusted_reply(item.target)
                 case Op.DROP:
                     assert session.transport
                     session.transport.drop(item.value == "on")

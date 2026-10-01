@@ -23,13 +23,14 @@ from due_work_harness.interleavings.model import (
 from due_work_harness.interleavings.testing.reference import evidence_reference, reference
 
 
-def scenario(*, forget: bool = False) -> InFlightConvergence[int, str, str]:
+def scenario(*, forget: bool = False, replay_safe: bool = True) -> InFlightConvergence[int, str, str]:
     return InFlightConvergence(
         name="root-reference",
-        bind=lambda: reference(forget=forget),
+        bind=lambda: reference(forget=forget, replay_safe=replay_safe),
         intents=("A", "B", "C"),
         seams=("write",),
         independent=True,
+        replay_safe=replay_safe,
         no_transport_because="Root control has no broker; adapter controls cover notification delivery.",
     )
 
@@ -176,13 +177,23 @@ def test_provider_controls_distinguish_acceptance_application_and_caller_return(
 
     applied: list[str] = []
     provider = ProviderControl(accept=lambda apply: AcceptedProviderRequest(apply=apply))
-    for fault in Fault:
+    for fault in (Fault.HOLD, Fault.LOSE_RESPONSE, Fault.REFUSE):
         provider.arm("write", fault)
         with pytest.raises(TimeoutError):
             provider.invoke("write", fault.value, partial(applied.append, fault.value))
+    provider.arm("write", Fault.ACCEPT_WITHOUT_EFFECT)
+
+    def perform() -> str:
+        applied.append("accepted")
+        return "applied"
+
+    reply = provider.invoke("write", "accepted", perform, lambda: "success")
+    assert reply == "success"  # The caller sees success; nothing was applied.
     assert applied == ["lose_response"]
-    assert sum(provider.calls.values()) == 3
+    assert sum(provider.calls.values()) == 4
     assert sum(provider.effects.values()) == 1
+    assert provider.false_acceptances == {("write", "accepted"): 1}
+    assert [fault for _, fault in provider.reached] == list(Fault)
     provider.complete(0)
     assert applied == ["lose_response", "hold"]
     assert sum(provider.effects.values()) == 2
@@ -535,3 +546,60 @@ def test_binding_cleanup_cannot_turn_a_failed_history_into_a_pass() -> None:
         broken.run(history)
     trace = HistoryTrace.model_validate_json(caught.value.__notes__[-1])
     assert trace.history == history
+
+
+def false_acceptance(declaration: InFlightConvergence[int, str, str]) -> History:
+    return next(h for h in declaration.histories() if "IF.false-acceptance" in h.families)
+
+
+def test_a_false_acceptance_converges_only_by_reading_provider_state() -> None:
+    from due_work_harness.interleavings.engine.runner import replay_history
+
+    history = false_acceptance(scenario())
+    assert history.id == "IF.false-acceptance/write"
+    scenario().run(history)  # Recovery re-reads the provider and re-sends the unapplied write.
+    trusting = scenario(forget=True)  # Treats the success reply as settled.
+    with pytest.raises(InterleavingFailure, match="never applied it; a success-shaped reply") as caught:
+        trusting.run(history)
+    assert caught.value.invariant == "false-acceptance"
+    trace = HistoryTrace.model_validate_json(caught.value.__notes__[-1])
+    with pytest.raises(InterleavingFailure, match="false-acceptance"):
+        replay_history(trusting, trace)
+
+
+def test_without_replay_a_false_acceptance_must_stay_unconfirmed() -> None:
+    declaration = scenario(replay_safe=False)
+    history = false_acceptance(declaration)
+    assert history.id == "IF.false-acceptance/write/no-replay"
+    assert not any(h.id == "IF.false-acceptance/write" for h in declaration.histories())
+    declaration.run(history)  # Never re-sends, never confirms from the reply.
+    with pytest.raises(InterleavingFailure, match="never applied it") as trusted:
+        scenario(forget=True, replay_safe=False).run(history)
+    assert trusted.value.invariant == "false-acceptance"
+    # Confirming by sending again is the other way out, and it is refused too.
+    resending = declaration.model_copy(update={"bind": reference})
+    with pytest.raises(InterleavingFailure) as resent:
+        resending.run(history)
+    assert resent.value.invariant == "non-repeatable"
+
+
+def test_a_false_acceptance_history_is_generated_once_per_seam_or_declined_for_retirement() -> None:
+    def declare(*, retirement: bool, replay_safe: bool) -> InFlightConvergence[int, str, str]:
+        return scenario().model_copy(
+            update={
+                "seams": ("write", "repair"),
+                "retirement": retirement,
+                "replay_safe": replay_safe,
+                "no_repair_because": "Collection-only declaration; the reference has no repair seam.",
+            }
+        )
+
+    for retirement in (False, True):
+        histories = declare(retirement=retirement, replay_safe=True).histories()
+        assert [h.id for h in histories if "IF.false-acceptance" in h.families] == [
+            "IF.false-acceptance/write",
+            "IF.false-acceptance/repair",
+        ]
+    unsafe = declare(retirement=True, replay_safe=False)
+    assert not any("IF.false-acceptance" in h.families for h in unsafe.histories())
+    assert "false acceptance" in unsafe.limitations()

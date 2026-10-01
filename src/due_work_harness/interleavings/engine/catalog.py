@@ -36,6 +36,7 @@ def in_flight_histories(
     independent: bool,
     transport: bool,
     repair_seams: tuple[str, ...] = (),
+    replay_safe: bool = True,
 ) -> tuple[History, ...]:
     histories = []
     admit = step(Op.ADMIT, value=intents[0])
@@ -82,6 +83,19 @@ def in_flight_histories(
             f"{seam}/response-lost",
             [admit, step(Op.ARM, seam=seam, fault=Fault.LOSE_RESPONSE), start, settle, changed, settle, quiet],
         )
+        # A success-shaped reply that never applied. Replay-safe work must still
+        # converge, which needs provider state rather than the reply; replay-unsafe
+        # work may not re-send, so it must stay unconfirmed instead.
+        accepted = step(Op.ARM, seam=seam, fault=Fault.ACCEPT_WITHOUT_EFFECT)
+        if replay_safe:
+            add("IF.false-acceptance", seam, [admit, accepted, start, settle, changed, settle, quiet])
+        elif not retirement:
+            unconfirmed = step(Op.UNCONFIRMED)
+            add(
+                "IF.false-acceptance",
+                f"{seam}/no-replay",
+                [admit, accepted, start, step(Op.RECOVER), unconfirmed, step(Op.RECOVER), unconfirmed],
+            )
         if retirement:
             add(
                 "IF.retire-between-resources",

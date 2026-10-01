@@ -28,6 +28,7 @@ class Operation(StrEnum):
     PREPARE = "prepare"
     RACE = "race"
     RETRY = "retry"
+    UNCONFIRMED = "unconfirmed"
 
 
 class Fault(StrEnum):
@@ -35,12 +36,14 @@ class Fault(StrEnum):
     External boundary outcomes injected by the provider controller.
 
     HOLD accepts for later completion; LOSE_RESPONSE applies then raises;
-    REFUSE raises before applying.
+    REFUSE raises before applying; ACCEPT_WITHOUT_EFFECT returns as if it
+    succeeded but never applies, so a success-shaped reply is not evidence.
     """
 
     HOLD = "hold"
     LOSE_RESPONSE = "lose_response"
     REFUSE = "refuse"
+    ACCEPT_WITHOUT_EFFECT = "accept_without_effect"
 
 
 class Step(HarnessModel):

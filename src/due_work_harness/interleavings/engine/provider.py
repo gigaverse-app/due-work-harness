@@ -2,7 +2,7 @@
 
 from collections import Counter, deque
 from collections.abc import Callable
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from pydantic import Field, InstanceOf
 
@@ -30,7 +30,9 @@ class ProviderControl(MutableHarnessModel):
     calls: Counter[tuple[str, str]] = Field(default_factory=Counter)
     """Attempted provider invocations, counted even when refused before application."""
     effects: Counter[tuple[str, str]] = Field(default_factory=Counter)
-    """Successfully applied external effects, including effects whose responses were lost."""
+    """Effects perform() actually applied to the external fake, including those whose responses were lost."""
+    false_acceptances: Counter[tuple[str, str]] = Field(default_factory=Counter)
+    """Calls answered as successful without applying; never counted in effects."""
     armed: deque[tuple[str, Fault]] = Field(default_factory=deque)
     """At most one pending injection; only the matching seam consumes it."""
     reached: list[tuple[str, Fault]] = Field(default_factory=list)
@@ -41,8 +43,13 @@ class ProviderControl(MutableHarnessModel):
         assert not self.armed, "previous injected boundary was never reached"
         self.armed.append((seam, fault))
 
-    def invoke(self, seam: str, identity: str, perform: Callable[[], T]) -> T:
-        """Invoke an external fake effect under the armed fault; perform must never mutate application state."""
+    def invoke(self, seam: str, identity: str, perform: Callable[[], T], reply: Callable[[], T] | None = None) -> T:
+        """
+        Invoke an external fake effect under the armed fault; perform must never mutate application state.
+
+        reply builds the provider's success-shaped answer without applying anything,
+        returned under ACCEPT_WITHOUT_EFFECT; seams whose perform returns None may omit it.
+        """
         key = (seam, identity)
         self.calls[key] += 1
         fault = None
@@ -51,6 +58,11 @@ class ProviderControl(MutableHarnessModel):
             self.reached.append((seam, fault))
         if fault == Fault.REFUSE:
             raise TimeoutError("interleaving: provider refused before application")
+        if fault == Fault.ACCEPT_WITHOUT_EFFECT:
+            # The caller sees an ordinary return; only the provider's state can
+            # show that nothing was applied, and perform never runs.
+            self.false_acceptances[key] += 1
+            return reply() if reply is not None else cast("T", None)
 
         def apply() -> T:
             result = perform()

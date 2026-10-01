@@ -246,7 +246,7 @@ class Scenario(HarnessModel, ABC):
 
 class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
     """
-    Profile E family generating held/lost/refused provider work against revisions or retirement.
+    Profile E family generating held/lost/refused/falsely-accepted provider work against revisions or retirement.
 
     Declaring capabilities selects root-owned histories and invariant checks;
     adopters supply commands and observations, never their own schedules.
@@ -261,7 +261,10 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
         description="Unique command aliases in canonical transition order; revision histories require at least two."
     )
     seams: tuple[_Alias, ...] = Field(
-        description="External provider seam names where held/refused/response-lost faults can be injected."
+        description=(
+            "External provider seam names where held/refused/response-lost/accepted-without-effect faults "
+            "can be injected."
+        )
     )
     repair_seams: tuple[_Alias, ...] = Field(
         default=(),
@@ -278,7 +281,10 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
     )
     replay_safe: bool = Field(
         default=True,
-        description="Whether repeating a provider call is allowed; False checks at most one call per seam/identity.",
+        description=(
+            "Whether repeating a provider call is allowed; False checks at most one call per seam/identity and "
+            "requires a falsely accepted revision to stay unconfirmed."
+        ),
     )
     # Reasons are required for domain shapes that cannot exercise revision cases.
     limited_revisions_because: str = Field(
@@ -297,7 +303,13 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
         from .engine.catalog import in_flight_histories
 
         return in_flight_histories(
-            self.intents, self.seams, self.retirement, self.independent, self.transport, self.repair_seams
+            self.intents,
+            self.seams,
+            self.retirement,
+            self.independent,
+            self.transport,
+            self.repair_seams,
+            self.replay_safe,
         )
 
     def limitations(self) -> Mapping[str, str]:
@@ -312,6 +324,11 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
             result["lost/duplicate notifications"] = self.no_transport_because
         if self.retirement and not self.repair_seams:
             result["repair fails once"] = self.no_repair_because
+        if self.retirement and not self.replay_safe:
+            result["false acceptance"] = (
+                "Retirement exposes no acknowledgement identity, and replay-unsafe work cannot re-send, "
+                "so a trusted success reply is indistinguishable from an unresolved one."
+            )
         return result
 
     def validate_definition(self) -> None:
