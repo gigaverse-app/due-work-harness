@@ -9,7 +9,7 @@ from typing import TypeVar
 from ...binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from ...helpers import proof_context
 from ..bindings import EvidenceArrival, EvidenceConfluence, EvidenceSession, InFlightConvergence, Scenario
-from ..model import History, HistoryTrace, InterleavingFailure, require
+from ..model import Fault, History, HistoryTrace, InterleavingFailure, require
 from ..model import Operation as Op
 from .causality import reachable_fact_sets
 
@@ -104,12 +104,12 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
         def is_settled(alias: str) -> bool:
             return session.observe(handles[alias]) == expected[alias] and acknowledged(alias)
 
-        def refuse_trusted_reply(alias: str) -> None:
+        def refuse_confirmed_receipt(alias: str) -> None:
             require(
                 not acknowledged(alias),
-                "false-acceptance",
-                f"{alias} is acknowledged but the provider never applied it; a success-shaped reply is not "
-                "evidence of effect",
+                "acknowledged-not-applied",
+                f"{alias} is confirmed but the provider only acknowledged receipt and never applied it; "
+                "this seam is declared acknowledgement-only, so its reply does not confirm the effect",
             )
 
         def settle(alias: str) -> None:
@@ -119,10 +119,10 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                 if attempt < scenario.bounds.recovery_steps:
                     recover()
                     check_effects()
-            # The provider answered success without applying, and production
-            # still holds that answer as its acknowledgement after recovery.
-            if session.provider.false_acceptances and session.observe(handles[alias]) != expected[alias]:
-                refuse_trusted_reply(alias)
+            # An acknowledgement-only seam replied without applying, and production
+            # still holds that reply as its confirmation after recovery.
+            if session.provider.unapplied_acknowledgements and session.observe(handles[alias]) != expected[alias]:
+                refuse_confirmed_receipt(alias)
             require(
                 False,
                 "convergence",
@@ -133,6 +133,10 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
         for item in history.steps:
             match item.operation:
                 case Op.ARM:
+                    assert (
+                        item.fault != Fault.ACKNOWLEDGE_WITHOUT_APPLYING
+                        or item.seam in scenario.acknowledgement_only_seams
+                    ), f"{item.seam} is not declared acknowledgement-only"
                     session.provider.arm(item.seam, item.fault)
                 case Op.ADMIT:
                     assert item.target not in handles, "history reused an admission alias"
@@ -187,10 +191,10 @@ def run_in_flight(scenario: InFlightConvergence[H, V, ObservedT], history: Histo
                     )
                 case Op.UNCONFIRMED:
                     assert session.desired_identity and session.acknowledged_identity, "revision seams missing"
-                    assert session.provider.false_acceptances, "history never reached a false acceptance"
-                    # Re-sending is forbidden, so nothing can have applied it:
-                    # only an unresolved or evidence-derived disposition conforms.
-                    refuse_trusted_reply(item.target)
+                    assert session.provider.unapplied_acknowledgements, "history never reached an unapplied receipt"
+                    # Checked before recovery can repair a premature confirmation.
+                    # Unresolved, ambiguous or evidence-derived dispositions conform.
+                    refuse_confirmed_receipt(item.target)
                 case Op.DROP:
                     assert session.transport
                     session.transport.drop(item.value == "on")

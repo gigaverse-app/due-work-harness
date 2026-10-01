@@ -31,8 +31,8 @@ class ProviderControl(MutableHarnessModel):
     """Attempted provider invocations, counted even when refused before application."""
     effects: Counter[tuple[str, str]] = Field(default_factory=Counter)
     """Effects perform() actually applied to the external fake, including those whose responses were lost."""
-    false_acceptances: Counter[tuple[str, str]] = Field(default_factory=Counter)
-    """Calls answered as successful without applying; never counted in effects."""
+    unapplied_acknowledgements: Counter[tuple[str, str]] = Field(default_factory=Counter)
+    """Calls acknowledged without applying; never counted in effects."""
     armed: deque[tuple[str, Fault]] = Field(default_factory=deque)
     """At most one pending injection; only the matching seam consumes it."""
     reached: list[tuple[str, Fault]] = Field(default_factory=list)
@@ -47,8 +47,9 @@ class ProviderControl(MutableHarnessModel):
         """
         Invoke an external fake effect under the armed fault; perform must never mutate application state.
 
-        reply builds the provider's success-shaped answer without applying anything,
-        returned under ACCEPT_WITHOUT_EFFECT; seams whose perform returns None may omit it.
+        reply builds the provider's acknowledgement without applying anything, returned
+        under ACKNOWLEDGE_WITHOUT_APPLYING; seams whose perform returns None may omit it.
+        The fault is one-shot: the next invocation at the seam may apply normally.
         """
         key = (seam, identity)
         self.calls[key] += 1
@@ -58,10 +59,10 @@ class ProviderControl(MutableHarnessModel):
             self.reached.append((seam, fault))
         if fault == Fault.REFUSE:
             raise TimeoutError("interleaving: provider refused before application")
-        if fault == Fault.ACCEPT_WITHOUT_EFFECT:
+        if fault == Fault.ACKNOWLEDGE_WITHOUT_APPLYING:
             # The caller sees an ordinary return; only the provider's state can
             # show that nothing was applied, and perform never runs.
-            self.false_acceptances[key] += 1
+            self.unapplied_acknowledgements[key] += 1
             return reply() if reply is not None else cast("T", None)
 
         def apply() -> T:

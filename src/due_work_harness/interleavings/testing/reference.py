@@ -19,13 +19,16 @@ def reference(
     forget_at: int = 0,
     quiet_corruption: Literal["acknowledgement", "desired-revision"] | None = None,
     replay_safe: bool = True,
+    receipt_only: bool = False,
 ) -> Iterator[InFlightSession[int, str, str]]:
     """
     Conforming writer unless a counterfeit flag is set.
 
-    forget trusts a success reply as settled: recovery skips handles it believes
-    finished. replay_safe=False sends each revision at most once and confirms only
-    from the provider's applied revision, never from the reply.
+    By default the writer confirms from the provider's reply, which is correct for
+    an API that guarantees completion. receipt_only confirms only from the
+    provider's applied revision, as an acknowledgement-only seam requires.
+    forget skips handles believed finished during recovery. replay_safe=False
+    sends each revision at most once.
     """
     desired: dict[int, str] = {}
     remote: dict[int, str] = {}
@@ -56,11 +59,10 @@ def reference(
         except TimeoutError:
             return
         finished.add(handle)
-        if replay_safe or forget:
-            # Replay-safe recovery re-reads the provider; forget trusts the reply.
-            ack[handle] = revision
-        else:
+        if receipt_only:
             reconcile(handle)
+        else:
+            ack[handle] = revision  # The reply confirms completion.
 
     def admit(value: str) -> int:
         handle = len(desired)

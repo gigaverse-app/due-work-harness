@@ -36,14 +36,14 @@ class Fault(StrEnum):
     External boundary outcomes injected by the provider controller.
 
     HOLD accepts for later completion; LOSE_RESPONSE applies then raises;
-    REFUSE raises before applying; ACCEPT_WITHOUT_EFFECT returns as if it
-    succeeded but never applies, so a success-shaped reply is not evidence.
+    REFUSE raises before applying; ACKNOWLEDGE_WITHOUT_APPLYING returns an
+    ordinary reply once without applying, for seams declared acknowledgement-only.
     """
 
     HOLD = "hold"
     LOSE_RESPONSE = "lose_response"
     REFUSE = "refuse"
-    ACCEPT_WITHOUT_EFFECT = "accept_without_effect"
+    ACKNOWLEDGE_WITHOUT_APPLYING = "acknowledge_without_applying"
 
 
 class Step(HarnessModel):

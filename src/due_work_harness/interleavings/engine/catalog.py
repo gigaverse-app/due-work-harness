@@ -36,6 +36,7 @@ def in_flight_histories(
     independent: bool,
     transport: bool,
     repair_seams: tuple[str, ...] = (),
+    acknowledgement_only_seams: tuple[str, ...] = (),
     replay_safe: bool = True,
 ) -> tuple[History, ...]:
     histories = []
@@ -83,19 +84,22 @@ def in_flight_histories(
             f"{seam}/response-lost",
             [admit, step(Op.ARM, seam=seam, fault=Fault.LOSE_RESPONSE), start, settle, changed, settle, quiet],
         )
-        # A success-shaped reply that never applied. Replay-safe work must still
-        # converge, which needs provider state rather than the reply; replay-unsafe
-        # work may not re-send, so it must stay unconfirmed instead.
-        accepted = step(Op.ARM, seam=seam, fault=Fault.ACCEPT_WITHOUT_EFFECT)
-        if replay_safe:
-            add("IF.false-acceptance", seam, [admit, accepted, start, settle, changed, settle, quiet])
-        elif not retirement:
+        if seam in acknowledgement_only_seams:
+            # Only for seams whose provider acknowledges receipt, not completion.
+            # The reply must not confirm before recovery could repair it; then
+            # replay-safe work converges, and replay-unsafe work stays unconfirmed.
+            acknowledged = step(Op.ARM, seam=seam, fault=Fault.ACKNOWLEDGE_WITHOUT_APPLYING)
             unconfirmed = step(Op.UNCONFIRMED)
-            add(
-                "IF.false-acceptance",
-                f"{seam}/no-replay",
-                [admit, accepted, start, step(Op.RECOVER), unconfirmed, step(Op.RECOVER), unconfirmed],
-            )
+            if replay_safe:
+                # Retirement has no acknowledgement identity to check early.
+                early = [] if retirement else [unconfirmed]
+                add("IF.ack-without-apply", seam, [admit, acknowledged, start, *early, settle, changed, settle, quiet])
+            elif not retirement:
+                add(
+                    "IF.ack-without-apply",
+                    f"{seam}/no-replay",
+                    [admit, acknowledged, start, unconfirmed, step(Op.RECOVER), unconfirmed],
+                )
         if retirement:
             add(
                 "IF.retire-between-resources",

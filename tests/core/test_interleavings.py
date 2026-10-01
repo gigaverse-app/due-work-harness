@@ -1,7 +1,8 @@
 """Root-owned controls discriminate behavior, rather than certify a reference as an adopter."""
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
+from functools import partial
 
 import pytest
 
@@ -23,14 +24,13 @@ from due_work_harness.interleavings.model import (
 from due_work_harness.interleavings.testing.reference import evidence_reference, reference
 
 
-def scenario(*, forget: bool = False, replay_safe: bool = True) -> InFlightConvergence[int, str, str]:
+def scenario(*, forget: bool = False) -> InFlightConvergence[int, str, str]:
     return InFlightConvergence(
         name="root-reference",
-        bind=lambda: reference(forget=forget, replay_safe=replay_safe),
+        bind=lambda: reference(forget=forget),
         intents=("A", "B", "C"),
         seams=("write",),
         independent=True,
-        replay_safe=replay_safe,
         no_transport_because="Root control has no broker; adapter controls cover notification delivery.",
     )
 
@@ -181,18 +181,18 @@ def test_provider_controls_distinguish_acceptance_application_and_caller_return(
         provider.arm("write", fault)
         with pytest.raises(TimeoutError):
             provider.invoke("write", fault.value, partial(applied.append, fault.value))
-    provider.arm("write", Fault.ACCEPT_WITHOUT_EFFECT)
+    provider.arm("write", Fault.ACKNOWLEDGE_WITHOUT_APPLYING)
 
     def perform() -> str:
         applied.append("accepted")
         return "applied"
 
-    reply = provider.invoke("write", "accepted", perform, lambda: "success")
-    assert reply == "success"  # The caller sees success; nothing was applied.
+    reply = provider.invoke("write", "accepted", perform, lambda: "received")
+    assert reply == "received"  # The caller sees an ordinary reply; nothing was applied.
     assert applied == ["lose_response"]
     assert sum(provider.calls.values()) == 4
     assert sum(provider.effects.values()) == 1
-    assert provider.false_acceptances == {("write", "accepted"): 1}
+    assert provider.unapplied_acknowledgements == {("write", "accepted"): 1}
     assert [fault for _, fault in provider.reached] == list(Fault)
     provider.complete(0)
     assert applied == ["lose_response", "hold"]
@@ -548,58 +548,166 @@ def test_binding_cleanup_cannot_turn_a_failed_history_into_a_pass() -> None:
     assert trace.history == history
 
 
-def false_acceptance(declaration: InFlightConvergence[int, str, str]) -> History:
-    return next(h for h in declaration.histories() if "IF.false-acceptance" in h.families)
+# Acknowledgement without application is opt-in per seam. These digests are the
+# catalogs generated on main before the feature (f4de472); an unchanged
+# declaration must keep producing exactly them.
+PRE_FEATURE_CATALOGS = {
+    "revisions": (
+        (("A", "B", "C"), ("write", "repair"), False, True, True, ()),
+        44,
+        "8f68f54de20bcc81f9108ddc3fab464dd935ed984fe66ecf7f75a99ea146d33b",
+    ),
+    "two-revisions": (
+        (("A", "B"), ("write",), False, False, False, ()),
+        6,
+        "317000f13e8a86d8fb7e3d021153477746d3824067198d5a7314dcbf273c2196",
+    ),
+    "retirement": (
+        (("A", "B", "C"), ("write", "repair"), True, True, True, ("repair",)),
+        19,
+        "8197059326362551cef3dd118427cc532fdade6b3b4f5d6df42be313a3dc14b1",
+    ),
+    "retirement-plain": (
+        (("A",), ("write",), True, False, False, ()),
+        5,
+        "2291dd486d00d53925bdf6c13e396b7954c1604e00df35ba40afe287e2903943",
+    ),
+}
 
 
-def test_a_false_acceptance_converges_only_by_reading_provider_state() -> None:
+def catalog_digest(histories: tuple[History, ...]) -> str:
+    import hashlib
+    import json
+
+    blob = json.dumps([history.model_dump(mode="json") for history in histories], sort_keys=True)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def receipt_scenario(
+    bind: Callable[[], AbstractContextManager[InFlightSession[int, str, str]]], *, replay_safe: bool = True
+) -> InFlightConvergence[int, str, str]:
+    return scenario().model_copy(
+        update={"bind": bind, "acknowledgement_only_seams": ("write",), "replay_safe": replay_safe}
+    )
+
+
+def ack_without_apply(declaration: InFlightConvergence[int, str, str]) -> History:
+    return next(h for h in declaration.histories() if "IF.ack-without-apply" in h.families)
+
+
+@pytest.mark.parametrize("name", sorted(PRE_FEATURE_CATALOGS))
+@pytest.mark.parametrize("replay_safe", [True, False], ids=["replay-safe", "replay-unsafe"])
+def test_a_declaration_that_does_not_opt_in_keeps_its_pre_feature_catalog(name: str, replay_safe: bool) -> None:
+    from due_work_harness.interleavings.engine.catalog import in_flight_histories
+
+    (intents, seams, retirement, independent, transport, repair), count, digest = PRE_FEATURE_CATALOGS[name]
+    histories = in_flight_histories(intents, seams, retirement, independent, transport, repair, replay_safe=replay_safe)
+    assert (len(histories), catalog_digest(histories)) == (count, digest)
+    declaration = InFlightConvergence(
+        name=name,
+        bind=reference,
+        intents=intents,
+        seams=seams,
+        repair_seams=repair,
+        retirement=retirement,
+        independent=independent,
+        transport=transport,
+        replay_safe=replay_safe,
+        limited_revisions_because="Collection-only declaration.",
+        no_independent_because="Collection-only declaration.",
+        no_transport_because="Collection-only declaration.",
+        no_repair_because="Collection-only declaration.",
+    )
+    assert catalog_digest(declaration.histories()) == digest
+    assert "acknowledgement without application" not in declaration.limitations()
+
+
+def test_only_the_opted_in_seam_of_two_gets_acknowledgement_histories() -> None:
+    declaration = scenario().model_copy(
+        update={
+            "seams": ("send_billing_event", "store_snapshot"),
+            "acknowledgement_only_seams": ("send_billing_event",),
+        }
+    )
+    unchanged = scenario().model_copy(update={"seams": ("send_billing_event", "store_snapshot")})
+    added = [h for h in declaration.histories() if h not in unchanged.histories()]
+    assert [h.id for h in added] == ["IF.ack-without-apply/send_billing_event"]
+    assert all(s.seam == "send_billing_event" for s in added[0].steps if s.fault == Fault.ACKNOWLEDGE_WITHOUT_APPLYING)
+    retirement = declaration.model_copy(
+        update={"retirement": True, "replay_safe": False, "no_repair_because": "Collection-only declaration."}
+    )
+    assert not any("IF.ack-without-apply" in h.families for h in retirement.histories())
+    assert "acknowledgement without application" in retirement.limitations()
+
+
+def test_acknowledgement_only_seams_must_be_declared_seams() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="undeclared seams: \\['send_billing_event'\\]"):
+        scenario().model_copy(update={"acknowledgement_only_seams": ("send_billing_event",)})
+
+
+def test_the_fault_cannot_be_armed_at_a_seam_that_guarantees_completion() -> None:
+    declaration = scenario()
+    history = ack_without_apply(receipt_scenario(reference))
+    with pytest.raises(AssertionError, match="write is not declared acknowledgement-only"):
+        declaration.run(history)
+
+
+def test_a_writer_trusting_a_completion_guaranteeing_api_passes_without_read_back() -> None:
+    declaration = scenario()  # Confirms from the reply; nothing is opted in.
+    histories = declaration.histories()
+    assert not any(s.fault == Fault.ACKNOWLEDGE_WITHOUT_APPLYING for h in histories for s in h.steps)
+    for history in histories:
+        declaration.run(history)
+
+
+def test_a_receipt_only_writer_confirms_from_provider_state_across_the_whole_catalog() -> None:
+    declaration = receipt_scenario(partial(reference, receipt_only=True))
+    history = ack_without_apply(declaration)
+    assert history.id == "IF.ack-without-apply/write"
+    for each in declaration.histories():
+        declaration.run(each)
+
+
+def test_an_opted_in_writer_that_confirms_from_the_receipt_fails() -> None:
     from due_work_harness.interleavings.engine.runner import replay_history
 
-    history = false_acceptance(scenario())
-    assert history.id == "IF.false-acceptance/write"
-    scenario().run(history)  # Recovery re-reads the provider and re-sends the unapplied write.
-    trusting = scenario(forget=True)  # Treats the success reply as settled.
-    with pytest.raises(InterleavingFailure, match="never applied it; a success-shaped reply") as caught:
-        trusting.run(history)
-    assert caught.value.invariant == "false-acceptance"
+    declaration = receipt_scenario(partial(reference, forget=True))
+    history = ack_without_apply(declaration)
+    with pytest.raises(InterleavingFailure, match="only acknowledged receipt and never applied it") as caught:
+        declaration.run(history)
+    assert caught.value.invariant == "acknowledged-not-applied"
     trace = HistoryTrace.model_validate_json(caught.value.__notes__[-1])
-    with pytest.raises(InterleavingFailure, match="false-acceptance"):
-        replay_history(trusting, trace)
+    with pytest.raises(InterleavingFailure, match="acknowledged-not-applied"):
+        replay_history(declaration, trace)
 
 
-def test_without_replay_a_false_acceptance_must_stay_unconfirmed() -> None:
-    declaration = scenario(replay_safe=False)
-    history = false_acceptance(declaration)
-    assert history.id == "IF.false-acceptance/write/no-replay"
-    assert not any(h.id == "IF.false-acceptance/write" for h in declaration.histories())
-    declaration.run(history)  # Never re-sends, never confirms from the reply.
-    with pytest.raises(InterleavingFailure, match="never applied it") as trusted:
-        scenario(forget=True, replay_safe=False).run(history)
-    assert trusted.value.invariant == "false-acceptance"
+def test_confirming_early_from_the_receipt_fails_even_when_recovery_later_repairs_it() -> None:
+    declaration = receipt_scenario(reference)  # Confirms from the reply; recovery re-reads the provider.
+    history = ack_without_apply(declaration)
+    with pytest.raises(InterleavingFailure) as caught:
+        declaration.run(history)
+    assert caught.value.invariant == "acknowledged-not-applied"
+    assert HistoryTrace.model_validate_json(caught.value.__notes__[-1]).completed_steps == 3
+    # Control: without the checkpoint before recovery, the repair hides it.
+    late_only = history.model_copy(
+        update={"steps": tuple(s for s in history.steps if s.operation != Operation.UNCONFIRMED)}
+    )
+    declaration.run(late_only)
+
+
+def test_without_replay_an_unapplied_receipt_must_stay_unconfirmed() -> None:
+    declaration = receipt_scenario(partial(reference, replay_safe=False, receipt_only=True), replay_safe=False)
+    history = ack_without_apply(declaration)
+    assert history.id == "IF.ack-without-apply/write/no-replay"
+    declaration.run(history)  # Never re-sends, never confirms from the receipt.
+    trusting = declaration.model_copy(update={"bind": partial(reference, replay_safe=False)})
+    with pytest.raises(InterleavingFailure) as trusted:
+        trusting.run(history)
+    assert trusted.value.invariant == "acknowledged-not-applied"
     # Confirming by sending again is the other way out, and it is refused too.
-    resending = declaration.model_copy(update={"bind": reference})
+    resending = declaration.model_copy(update={"bind": partial(reference, receipt_only=True)})
     with pytest.raises(InterleavingFailure) as resent:
         resending.run(history)
     assert resent.value.invariant == "non-repeatable"
-
-
-def test_a_false_acceptance_history_is_generated_once_per_seam_or_declined_for_retirement() -> None:
-    def declare(*, retirement: bool, replay_safe: bool) -> InFlightConvergence[int, str, str]:
-        return scenario().model_copy(
-            update={
-                "seams": ("write", "repair"),
-                "retirement": retirement,
-                "replay_safe": replay_safe,
-                "no_repair_because": "Collection-only declaration; the reference has no repair seam.",
-            }
-        )
-
-    for retirement in (False, True):
-        histories = declare(retirement=retirement, replay_safe=True).histories()
-        assert [h.id for h in histories if "IF.false-acceptance" in h.families] == [
-            "IF.false-acceptance/write",
-            "IF.false-acceptance/repair",
-        ]
-    unsafe = declare(retirement=True, replay_safe=False)
-    assert not any("IF.false-acceptance" in h.families for h in unsafe.histories())
-    assert "false acceptance" in unsafe.limitations()

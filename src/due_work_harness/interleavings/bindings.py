@@ -246,7 +246,7 @@ class Scenario(HarnessModel, ABC):
 
 class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
     """
-    Profile E family generating held/lost/refused/falsely-accepted provider work against revisions or retirement.
+    Profile E family generating held/lost/refused provider work against revisions or retirement.
 
     Declaring capabilities selects root-owned histories and invariant checks;
     adopters supply commands and observations, never their own schedules.
@@ -261,10 +261,14 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
         description="Unique command aliases in canonical transition order; revision histories require at least two."
     )
     seams: tuple[_Alias, ...] = Field(
+        description="External provider seam names where held/refused/response-lost faults can be injected."
+    )
+    acknowledgement_only_seams: tuple[_Alias, ...] = Field(
+        default=(),
         description=(
-            "External provider seam names where held/refused/response-lost/accepted-without-effect faults "
-            "can be injected."
-        )
+            "Opt-in subset of seams whose provider acknowledges receipt without guaranteeing application "
+            "(e.g. an HTTP 202 event API); generates acknowledgement-without-application histories for them only."
+        ),
     )
     repair_seams: tuple[_Alias, ...] = Field(
         default=(),
@@ -281,10 +285,7 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
     )
     replay_safe: bool = Field(
         default=True,
-        description=(
-            "Whether repeating a provider call is allowed; False checks at most one call per seam/identity and "
-            "requires a falsely accepted revision to stay unconfirmed."
-        ),
+        description="Whether repeating a provider call is allowed; False checks at most one call per seam/identity.",
     )
     # Reasons are required for domain shapes that cannot exercise revision cases.
     limited_revisions_because: str = Field(
@@ -309,6 +310,7 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
             self.independent,
             self.transport,
             self.repair_seams,
+            self.acknowledgement_only_seams,
             self.replay_safe,
         )
 
@@ -324,10 +326,10 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
             result["lost/duplicate notifications"] = self.no_transport_because
         if self.retirement and not self.repair_seams:
             result["repair fails once"] = self.no_repair_because
-        if self.retirement and not self.replay_safe:
-            result["false acceptance"] = (
+        if self.acknowledgement_only_seams and self.retirement and not self.replay_safe:
+            result["acknowledgement without application"] = (
                 "Retirement exposes no acknowledgement identity, and replay-unsafe work cannot re-send, "
-                "so a trusted success reply is indistinguishable from an unresolved one."
+                "so confirming from a receipt is indistinguishable from leaving it unresolved."
             )
         return result
 
@@ -335,6 +337,11 @@ class InFlightConvergence(Scenario, Generic[HandleT, ValueT, ObservationT]):
         assert self.intents and self.seams and len(set(self.seams)) == len(self.seams)
         assert len(set(self.intents)) == len(self.intents)
         assert self.retirement or len(self.intents) >= 2, "revision bindings require a legal transition"
+        undeclared = [seam for seam in self.acknowledgement_only_seams if seam not in self.seams]
+        assert not undeclared, f"acknowledgement_only_seams names undeclared seams: {undeclared}"
+        assert len(set(self.acknowledgement_only_seams)) == len(self.acknowledgement_only_seams), (
+            "acknowledgement_only_seams repeats a seam"
+        )
         super().validate_definition()
 
     def run(self, history: History) -> None:
