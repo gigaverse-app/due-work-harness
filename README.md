@@ -31,6 +31,10 @@ It integrates as a pytest plugin in your existing test suite and CI. Read the
 [pytest plugin guide](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/pytest-plugin.md)
 for automatic discovery, test selection, reports, and configuration.
 
+Coming from distributed systems and familiar with Jepsen? Due Work Harness
+brings a similar approach to your application's workflows. Read
+[Jepsen-style fault testing for application work](docs/jepsen-analogy.md).
+
 ## What it finds
 
 - **Lost work:** a Django transaction commits an order, but a Celery task or
