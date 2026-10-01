@@ -14,11 +14,11 @@ from typing import Any
 import pytest
 from django.db import connection, transaction
 
-from due_work_harness.crash_histories import HandoffHistory, crash_histories
-from due_work_harness.integrations.django import lifecycle_references as ref
-from due_work_harness.integrations.django.commits import django_worker_killer
-from due_work_harness.integrations.django.writes import leading_keyword
-from due_work_harness.worker_death import WorkerDied
+from pytest_obligation.crash_histories import HandoffHistory, crash_histories
+from pytest_obligation.integrations.django import lifecycle_references as ref
+from pytest_obligation.integrations.django.commits import django_worker_killer
+from pytest_obligation.integrations.django.writes import leading_keyword
+from pytest_obligation.worker_death import WorkerDied
 
 pytestmark = pytest.mark.django_db(transaction=True)
 Status = ref.Status

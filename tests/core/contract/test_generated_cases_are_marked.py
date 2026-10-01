@@ -1,6 +1,6 @@
 """Every generated case carries the ``due_work`` mark, so CI can select exactly the harness's suites."""
 
-from due_work_harness import due_work_contract_suite, safety_contract_suite
+from pytest_obligation import due_work_contract_suite, safety_contract_suite
 
 from .declarations import REFERENCE_CONTRACT, safety_contract
 

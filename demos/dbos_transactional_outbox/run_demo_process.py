@@ -21,7 +21,7 @@ import time
 from types import SimpleNamespace
 from unittest import mock
 
-from due_work_harness.process_histories import die_here
+from pytest_obligation.process_histories import die_here
 
 sys.path.insert(0, os.environ["DEMO_DIR"])
 import transactional_enqueue as demo  # noqa: E402

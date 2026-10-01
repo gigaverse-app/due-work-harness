@@ -2,7 +2,7 @@
 
 import pytest
 
-from due_work_harness.profiles.catalog import ConvergenceFamily, Profile
+from pytest_obligation.profiles.catalog import ConvergenceFamily, Profile
 
 
 def test_profile_names_use_one_vocabulary_for_values_and_titles() -> None:
@@ -29,18 +29,18 @@ def test_convergence_keeps_distinct_binding_families() -> None:
 
 def test_every_profile_requires_an_explicit_assessment() -> None:
 
-    from due_work_harness.contract import DueWorkContractDesignError
+    from pytest_obligation.contract import ObligationContractDesignError
     from tests.core.contract.declarations import REFERENCE_CONTRACT
 
     for profile in Profile:
-        with pytest.raises(DueWorkContractDesignError, match=f"no disposition for profile\\(s\\) {profile.name}"):
+        with pytest.raises(ObligationContractDesignError, match=f"no disposition for profile\\(s\\) {profile.name}"):
             REFERENCE_CONTRACT.model_copy(
                 update={"profiles": {p: d for p, d in REFERENCE_CONTRACT.profiles.items() if p is not profile}}
             )
 
 
 def test_an_existing_E_proof_does_not_claim_competing_event_families() -> None:
-    from due_work_harness.contract import Claim, NotAssessed, convergence_assessments
+    from pytest_obligation.contract import Claim, NotAssessed, convergence_assessments
     from tests.core.contract.declarations import REFERENCE_CONTRACT
 
     families = convergence_assessments(REFERENCE_CONTRACT)
@@ -51,20 +51,20 @@ def test_an_existing_E_proof_does_not_claim_competing_event_families() -> None:
 
 def test_family_decisions_cannot_hide_bound_proofs_or_invent_missing_coverage() -> None:
 
-    from due_work_harness.contract import Claim, DueWorkContractDesignError, NotApplicable
+    from pytest_obligation.contract import Claim, NotApplicable, ObligationContractDesignError
     from tests.core.contract.declarations import REFERENCE_CONTRACT
 
     for family, decision in (
         (ConvergenceFamily.STALE_SNAPSHOTS, NotApplicable("A bound proof cannot be made inapplicable.")),
         (ConvergenceFamily.IN_FLIGHT, Claim()),
     ):
-        with pytest.raises(DueWorkContractDesignError, match="assessment contradicts its binding"):
+        with pytest.raises(ObligationContractDesignError, match="assessment contradicts its binding"):
             REFERENCE_CONTRACT.model_copy(update={"convergence_families": {family: decision}})
 
 
 @pytest.mark.parametrize("case_id", ["I-not_assessed", "E-in_flight-not_assessed"])
 def test_missing_assessment_generates_explicit_expected_failure(case_id: str) -> None:
-    from due_work_harness.contract import NotAssessed, contract_cases
+    from pytest_obligation.contract import NotAssessed, contract_cases
     from tests.core.contract.declarations import REFERENCE_CONTRACT
 
     reference = REFERENCE_CONTRACT.model_copy(
@@ -86,10 +86,10 @@ def test_missing_assessment_generates_explicit_expected_failure(case_id: str) ->
 
 def test_family_gap_cannot_waive_missing_proofs() -> None:
 
-    from due_work_harness.contract import DueWorkContractDesignError, KnownGap
+    from pytest_obligation.contract import KnownGap, ObligationContractDesignError
     from tests.core.contract.declarations import REFERENCE_CONTRACT
 
-    with pytest.raises(DueWorkContractDesignError, match="E-family gaps belong"):
+    with pytest.raises(ObligationContractDesignError, match="E-family gaps belong"):
         REFERENCE_CONTRACT.model_copy(
             update={
                 "convergence_families": {
@@ -102,9 +102,9 @@ def test_family_gap_cannot_waive_missing_proofs() -> None:
 def test_a_history_binding_cannot_certify_the_wrong_convergence_family() -> None:
     from pydantic import ValidationError
 
-    from due_work_harness import DueWorkContract
-    from due_work_harness.interleavings import InFlightConvergence
-    from due_work_harness.interleavings.testing.reference import reference
+    from pytest_obligation import ObligationContract
+    from pytest_obligation.interleavings import InFlightConvergence
+    from pytest_obligation.interleavings.testing.reference import reference
     from tests.core.contract.declarations import REFERENCE_CONTRACT
 
     revision = InFlightConvergence(
@@ -116,7 +116,7 @@ def test_a_history_binding_cannot_certify_the_wrong_convergence_family() -> None
         no_transport_because="Root control has no broker.",
     )
     with pytest.raises(ValidationError, match="EvidenceConfluence"):
-        DueWorkContract(
+        ObligationContract(
             name="wrong family",
             profiles=REFERENCE_CONTRACT.profiles,
             snapshot=REFERENCE_CONTRACT.snapshot,

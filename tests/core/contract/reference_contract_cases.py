@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from due_work_harness.contract import (
+from pytest_obligation.contract import (
     Adoption,
     ExtraProof,
     KnownGap,

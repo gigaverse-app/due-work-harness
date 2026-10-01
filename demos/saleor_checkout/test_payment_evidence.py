@@ -25,24 +25,24 @@ from saleor.payment import TransactionEventType
 from saleor.payment.models import TransactionItem
 from test_order_confirmation import _checkout, current_shop, saleor_shop  # noqa: F401
 
-from due_work_harness import (
+from pytest_obligation import (
     Adoption,
     CallableDelivery,
     Claim,
-    DueWorkContract,
     Findings,
     HandoffHistory,
     KnownGap,
     NotApplicable,
+    ObligationContract,
     Profile,
     due_work_contract_suite,
     due_work_database,
 )
-from due_work_harness.crash_histories import assert_crash_at_every_commit_converges
-from due_work_harness.interleavings import EvidenceConfluence, EvidenceExpectation, EvidenceSession
-from due_work_harness.interleavings.model import InterleavingFailure, require
-from due_work_harness.models import HarnessModel
-from due_work_harness.profiles.catalog import ConvergenceFamily
+from pytest_obligation.crash_histories import assert_crash_at_every_commit_converges
+from pytest_obligation.interleavings import EvidenceConfluence, EvidenceExpectation, EvidenceSession
+from pytest_obligation.interleavings.model import InterleavingFailure, require
+from pytest_obligation.models import HarnessModel
+from pytest_obligation.profiles.catalog import ConvergenceFamily
 
 INFO: ContextVar[ResolveInfo] = ContextVar("saleor_payment_report_info")
 
@@ -198,7 +198,7 @@ CHARGE_HISTORY = HandoffHistory(
 PROVIDER_REDELIVERY = CallableDelivery(name="payment provider redelivery", recover=redeliver)
 
 
-PAYMENT_REPORTS = DueWorkContract(
+PAYMENT_REPORTS = ObligationContract(
     name="saleor payment event reports",
     adoption=Adoption.LEGACY,
     transactional=True,

@@ -1,6 +1,6 @@
 # pytest-obligation
 
-<img src="plugins/due-work-harness/assets/icon.svg" alt="pytest-obligation logo" width="96">
+<img src="plugins/pytest-obligation/assets/icon.svg" alt="pytest-obligation logo" width="96">
 
 [![CI](https://github.com/gigaverse-app/pytest-obligation/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gigaverse-app/pytest-obligation/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/pytest-obligation)](https://pypi.org/project/pytest-obligation/)
@@ -17,7 +17,7 @@ broker reply can be lost; a retry can run the external effect twice. Ordinary
 tests usually exercise only the path where none of that happens.
 
 **pytest-obligation generates tests for work your application cannot afford to
-lose or repeat.** Bind a `DueWorkContract` to your real workflow and recovery
+lose or repeat.** Bind an `ObligationContract` to your real workflow and recovery
 path, yourself or with a coding agent. The harness generates standardized tests
 for crashes, retries, lost messages, and competing operations, exposing failure
 cases you might never think to write by hand. Its fault injection interrupts
@@ -57,7 +57,7 @@ One crash history compares the normal outcome with the outcome after a
 specific interruption:
 
 ```text
-due_work_harness.HistoriesDiverged: orders: handoff 'place order': normal operation reaches
+pytest_obligation.HistoriesDiverged: orders: handoff 'place order': normal operation reaches
 ('SENT', 1), but these histories reach something else: {'worker died after external call 1':
 ('SENT', 2)}. Work was lost or repeated. ...
 ```
@@ -70,7 +70,7 @@ that fixes one turns it red so the finding must be re-evaluated. See
 
 ## Stronger tests without hand-writing more tests
 
-Declare the workflow once in a `DueWorkContract` and expose it through
+Declare the workflow once in an `ObligationContract` and expose it through
 `@due_work_contract_suite(CONTRACT)`. At pytest collection time, the harness
 generates cases for the applicable A–J guarantees: recovery, ownership, crash
 ambiguity, retention, convergence, derived obligations, gated execution,
@@ -103,9 +103,12 @@ not a verified guarantee. [Read the reporting guide](ADOPTING.md#required-adopti
 Formerly **due-work-harness**. The package is being renamed to
 **pytest-obligation**; until its first PyPI release, install `due-work-harness`
 for the last published version. Do not install both distributions in the same
-environment: they provide the same Python modules. Python imports remain
-`due_work_harness`, and `DueWorkContract`, `--due-work-*` options, the
-`due-work-harness` command, and `[tool.due-work-harness]` configuration are unchanged.
+environment: they provide the same Python modules. New code uses
+`from pytest_obligation import ObligationContract`. Existing `due_work_harness`
+imports and `DueWorkContract` are supported by an isolated compatibility shim.
+The `--due-work-*` options, `due-work-harness` command, and
+`[tool.due-work-harness]` configuration remain supported.
+[See the compatibility and migration guide](docs/package-migration.md).
 
 Install the Python test library **in the application you want to test** (Python
 3.11+). Choose your package manager; add an optional extra only for an
@@ -155,7 +158,7 @@ services.
 
 Open your application in Claude Code or Codex and ask:
 
-> Use the `prove-due-work` skill to create a `DueWorkContract` for our order-processing
+> Use the `prove-due-work` skill to create an `ObligationContract` for our order-processing
 > workflow. Bind the real database-to-queue handoff and recovery worker,
 > generate and run the standard tests, then add focused crash/retry tests.
 > Report what passed, what failed, and which guarantees remain unassessed.

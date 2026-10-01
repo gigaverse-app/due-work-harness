@@ -15,11 +15,11 @@ from functools import partial
 from rq import Callback, Queue, Retry
 from rq.job import Job
 
-from due_work_harness import Claim, ExecutionGate, Profile, ReplaySafeEffect, due_work_contract_suite
-from due_work_harness.crash_histories import ExternalCall, Findings
-from due_work_harness.integrations.redis import redis_key_writes
-from due_work_harness.integrations.rq import ONE_QUEUE, worker_contract, worker_pass
-from due_work_harness.integrations.task_queues import TaskOutcome
+from pytest_obligation import Claim, ExecutionGate, Profile, ReplaySafeEffect, due_work_contract_suite
+from pytest_obligation.crash_histories import ExternalCall, Findings
+from pytest_obligation.integrations.redis import redis_key_writes
+from pytest_obligation.integrations.rq import ONE_QUEUE, worker_contract, worker_pass
+from pytest_obligation.integrations.task_queues import TaskOutcome
 from tests.rq import jobs
 from tests.rq.connection import CONNECTION
 

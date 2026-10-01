@@ -8,7 +8,7 @@ against {the project's code}. It adds no fix; the fixes are yours to shape.
 
 ### Required contract declaration
 
-[`{contract path}`]({permalink}): the actual `DueWorkContract`, including every
+[`{contract path}`]({permalink}): the actual `ObligationContract`, including every
 lifecycle and safety disposition and the histories bound to production.
 Standalone assertions or a helper merely named `contract` do not fill this slot.
 

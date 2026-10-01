@@ -6,19 +6,19 @@ from functools import partial
 
 import pytest
 
-from due_work_harness import AdmissionAtomicity
-from due_work_harness.host import hosted
-from due_work_harness.integrations.django import django_host
-from due_work_harness.integrations.django import lifecycle_references as ref
-from due_work_harness.integrations.django.admission import AdmissionInterrupted, interrupt_after_statement
-from due_work_harness.profiles.indivisible_admission import ADMISSION_PROOFS, assert_interrupted_admission_rolls_back
+from pytest_obligation import AdmissionAtomicity
+from pytest_obligation.host import hosted
+from pytest_obligation.integrations.django import django_host
+from pytest_obligation.integrations.django import lifecycle_references as ref
+from pytest_obligation.integrations.django.admission import AdmissionInterrupted, interrupt_after_statement
+from pytest_obligation.profiles.indivisible_admission import ADMISSION_PROOFS, assert_interrupted_admission_rolls_back
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture(autouse=True)
 def table() -> Iterator[None]:
-    with ref.lifecycle_attempt_table(), hosted(django_host(production_packages={"due_work_harness"})):
+    with ref.lifecycle_attempt_table(), hosted(django_host(production_packages={"pytest_obligation"})):
         yield
 
 
@@ -42,7 +42,8 @@ def admission(command: Callable[[int], None]) -> AdmissionAtomicity[str]:
         effects=lambda: 0,
         publications=lambda: nullcontext(()),
         during=partial(
-            interrupt_after_statement, lambda sql: sql.startswith('INSERT INTO "due_work_harness_lifecycleattempt"')
+            interrupt_after_statement,
+            lambda sql: sql.startswith(f'INSERT INTO "{ref.LifecycleAttempt._meta.db_table}"'),
         ),
         expected_error=AdmissionInterrupted,
     )

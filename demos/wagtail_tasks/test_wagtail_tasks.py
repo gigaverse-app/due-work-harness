@@ -51,27 +51,27 @@ from wagtail.test.customuser.models import CustomUser
 from wagtail.test.testapp.models import SimplePage
 from willow import Image as WillowImage
 
-from due_work_harness import (
+from pytest_obligation import (
     AdmissionAtomicity,
     Adoption,
     BoundedRetry,
     CallableDelivery,
     Claim,
     Decline,
-    DueWorkContract,
     DueWorkSource,
     Findings,
     HandoffHistory,
     KnownGap,
     NotApplicable,
+    ObligationContract,
     Profile,
     ReplaySafeEffect,
     due_work_contract_suite,
 )
-from due_work_harness.crash_histories import ExternalCall
-from due_work_harness.integrations.django.admission import AdmissionInterrupted, interrupt_after_statement
-from due_work_harness.integrations.django_tasks import RUNS_ONCE, TaskOutcome, db_worker_once, worker_contract
-from due_work_harness.profiles.catalog import ConvergenceFamily
+from pytest_obligation.crash_histories import ExternalCall
+from pytest_obligation.integrations.django.admission import AdmissionInterrupted, interrupt_after_statement
+from pytest_obligation.integrations.django_tasks import RUNS_ONCE, TaskOutcome, db_worker_once, worker_contract
+from pytest_obligation.profiles.catalog import ConvergenceFamily
 
 from . import cdn
 from .test_feature_detection import focal_point_replay, focal_point_snapshot
@@ -303,7 +303,7 @@ def task_failure_limit(kind: str) -> Iterator[BoundedRetry]:
         )
 
 
-WAGTAIL_MEDIA = DueWorkContract(
+WAGTAIL_MEDIA = ObligationContract(
     name="wagtail: image and document lifecycle",
     adoption=Adoption.LEGACY,
     transactional=True,
@@ -454,7 +454,7 @@ def purge_replay() -> ReplaySafeEffect:
     )
 
 
-WAGTAIL_PUBLISHING = DueWorkContract(
+WAGTAIL_PUBLISHING = ObligationContract(
     name="wagtail: publishing a page behind a CDN",
     adoption=Adoption.LEGACY,
     transactional=True,

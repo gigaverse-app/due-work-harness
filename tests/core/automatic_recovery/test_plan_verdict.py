@@ -9,8 +9,8 @@ so they can never again depend on which selection happens to be checked first.
 
 import pytest
 
-from due_work_harness.host import ReadCost
-from due_work_harness.integrations.postgres_plans import (
+from pytest_obligation.host import ReadCost
+from pytest_obligation.integrations.postgres_plans import (
     assert_plan_is_index_served,
     bitmap_overturns_the_walk,
     index_served_verdict,

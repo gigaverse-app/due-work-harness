@@ -1,7 +1,7 @@
 # pytest-obligation as a pytest plugin
 
 pytest-obligation generates crash, retry, and recovery tests from a
-`DueWorkContract` bound to an application's production code. The generated
+`ObligationContract` bound to an application's production code. The generated
 cases run alongside ordinary pytest tests, using the project's fixtures and
 test services. The Claude/Codex skills help an agent create those bindings;
 the Python package supplies the pytest integration and fault-injection engine.
@@ -10,7 +10,8 @@ the Python package supplies the pytest integration and fault-injection engine.
 
 Previously published as `due-work-harness`; see the
 [migration and release-status note](../README.md#get-started) before installing.
-The rename preserves `due_work_harness` imports and existing pytest options.
+New code imports `pytest_obligation.ObligationContract`; the compatibility shim
+preserves `due_work_harness.DueWorkContract` and existing pytest options.
 
 Install in the Python environment that runs your application's tests:
 
@@ -26,7 +27,7 @@ entry-point group. This distribution registers:
 
 ```toml
 [project.entry-points.pytest11]
-due_work_harness = "due_work_harness.pytest_plugin"
+due_work_harness = "pytest_obligation.pytest_plugin"
 ```
 
 Confirm the registration and available options:

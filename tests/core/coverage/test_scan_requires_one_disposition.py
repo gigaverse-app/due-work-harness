@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from due_work_harness.coverage import scan, unaccounted_baseline
+from pytest_obligation.coverage import scan, unaccounted_baseline
 
 from .builders import write_project
 
@@ -23,10 +23,10 @@ ORDERS = """
 """
 
 CONTRACT_MODULE = """
-    from due_work_harness import DueWorkContract, DueWorkSource, due_work_contract_suite
+    from pytest_obligation import ObligationContract, DueWorkSource, due_work_contract_suite
     from shop.orders import OrderService
 
-    ORDERS = DueWorkContract(name="orders")
+    ORDERS = ObligationContract(name="orders")
 
     @due_work_contract_suite(ORDERS, covers=({source},))
     class TestOrdersDueWork:
@@ -34,7 +34,7 @@ CONTRACT_MODULE = """
 """
 
 EXEMPTION_MODULE = """
-    from due_work_harness import DueWorkSource, LossIsAbsorbedElsewhere, exempt_due_work_suite
+    from pytest_obligation import DueWorkSource, LossIsAbsorbedElsewhere, exempt_due_work_suite
     from shop.orders import OrderService
 
     @exempt_due_work_suite(
@@ -59,6 +59,15 @@ def _problems(root: Path, files: dict[str, str], extra: str = "") -> list[str]:
 
 def test_a_covered_site_is_accounted_for(tmp_path: Path) -> None:
     covered = CONTRACT_MODULE.format(source="DueWorkSource(OrderService.place)")
+    assert _problems(tmp_path, {"tests/test_orders_due_work.py": covered}) == []
+
+
+@pytest.mark.parametrize(
+    "package,constructor", [("pytest_obligation", "ObligationContract"), ("due_work_harness", "DueWorkContract")]
+)
+def test_both_namespaces_account_for_the_same_production_site(tmp_path: Path, package: str, constructor: str) -> None:
+    covered = CONTRACT_MODULE.format(source="DueWorkSource(OrderService.place)")
+    covered = covered.replace("pytest_obligation", package).replace("ObligationContract", constructor)
     assert _problems(tmp_path, {"tests/test_orders_due_work.py": covered}) == []
 
 
@@ -154,10 +163,10 @@ def test_a_proof_defined_in_the_test_module_is_test_authored(tmp_path: Path) -> 
             "covers= must be one inline tuple",
         ),
         (
-            CONTRACT_MODULE.replace('ORDERS = DueWorkContract(name="orders")', "ORDERS = make_contract()").format(
+            CONTRACT_MODULE.replace('ORDERS = ObligationContract(name="orders")', "ORDERS = make_contract()").format(
                 source="DueWorkSource(OrderService.place)"
             ),
-            "which this module does not build as due_work_harness's DueWorkContract",
+            "which this module does not build as pytest_obligation's ObligationContract",
         ),
         (
             CONTRACT_MODULE.replace("class TestOrdersDueWork", "class OrdersDueWork").format(
@@ -167,24 +176,24 @@ def test_a_proof_defined_in_the_test_module_is_test_authored(tmp_path: Path) -> 
         ),
         (
             CONTRACT_MODULE.replace(
-                "from due_work_harness import DueWorkContract, DueWorkSource, due_work_contract_suite",
-                "from due_work_harness import DueWorkContract, DueWorkSource\n    from tests.fakes import due_work_contract_suite",
+                "from pytest_obligation import ObligationContract, DueWorkSource, due_work_contract_suite",
+                "from pytest_obligation import ObligationContract, DueWorkSource\n    from tests.fakes import due_work_contract_suite",
             ).format(source="DueWorkSource(OrderService.place)"),
-            "due_work_contract_suite is not due_work_harness's",
+            "due_work_contract_suite is not pytest_obligation's",
         ),
         (
             CONTRACT_MODULE.replace(
-                "from due_work_harness import DueWorkContract, DueWorkSource, due_work_contract_suite",
-                "from due_work_harness import DueWorkContract, due_work_contract_suite\n    from tests.fakes import DueWorkSource",
+                "from pytest_obligation import ObligationContract, DueWorkSource, due_work_contract_suite",
+                "from pytest_obligation import ObligationContract, due_work_contract_suite\n    from tests.fakes import DueWorkSource",
             ).format(source="DueWorkSource(OrderService.place)"),
-            "DueWorkSource must be due_work_harness's",
+            "DueWorkSource must be pytest_obligation's",
         ),
         (
             CONTRACT_MODULE.replace(
-                "from due_work_harness import DueWorkContract, DueWorkSource, due_work_contract_suite",
-                "from due_work_harness import DueWorkSource, due_work_contract_suite\n    from tests.fakes import DueWorkContract",
+                "from pytest_obligation import ObligationContract, DueWorkSource, due_work_contract_suite",
+                "from pytest_obligation import DueWorkSource, due_work_contract_suite\n    from tests.fakes import ObligationContract",
             ).format(source="DueWorkSource(OrderService.place)"),
-            "which this module does not build as due_work_harness's DueWorkContract",
+            "which this module does not build as pytest_obligation's ObligationContract",
         ),
     ],
     ids=[
@@ -289,10 +298,10 @@ def test_the_same_declaration_with_a_harmless_mark_counts(tmp_path: Path) -> Non
 
 def test_the_harness_imported_as_a_module_is_the_harness(tmp_path: Path) -> None:
     module = """
-        import due_work_harness as harness
+        import pytest_obligation as harness
         from shop import orders
 
-        ORDERS = harness.DueWorkContract(name="orders")
+        ORDERS = harness.ObligationContract(name="orders")
 
         @harness.due_work_contract_suite(ORDERS, covers=(harness.DueWorkSource(orders.OrderService.place),))
         class TestOrdersDueWork:

@@ -23,7 +23,7 @@ recovery send it twice. Database consistency alone cannot establish that the
 whole workflow finishes correctly.
 
 pytest-obligation binds the real transition, observable effects, and production
-recovery path to a `DueWorkContract`. It generates standardized tests that
+recovery path to an `ObligationContract`. It generates standardized tests that
 challenge those boundaries and check what remains after recovery. The
 [Saleor and DBOS demonstrations](../demos/README.md) reproduce concrete
 examples of these failures against pinned upstream code.
@@ -71,7 +71,7 @@ Start with a workflow that must finish after a crash and must not repeat an
 external effect. In Claude Code or Codex, with the pytest-obligation skill
 installed, ask:
 
-> Use `prove-due-work` to create a `DueWorkContract` for our order workflow.
+> Use `prove-due-work` to create an `ObligationContract` for our order workflow.
 > Bind production admission, payment/receipt effects, and recovery. Generate
 > and run crash, replay, and convergence tests, and show the exact history
 > behind each finding and the guarantees that remain unassessed.

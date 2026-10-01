@@ -10,13 +10,13 @@ for both proofs, plus the binding guard.
 
 import pytest
 
-from due_work_harness.profiles.durable_retention import (
+from pytest_obligation.profiles.durable_retention import (
     assert_retention_contract,
     assert_retention_preserves_non_terminal_work,
     assert_retention_prunes_settled_work,
     assert_retention_transition_is_production_bound,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     InMemoryRetention,
     reference_retention_binding,
 )

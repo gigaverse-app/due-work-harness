@@ -5,8 +5,13 @@ from typing import Any
 
 import pytest
 
-from due_work_harness import DueWorkContractDesignError, DueWorkSource, LossIsAbsorbedElsewhere, exempt_due_work_suite
-from due_work_harness.host import Host, hosted
+from pytest_obligation import (
+    DueWorkSource,
+    LossIsAbsorbedElsewhere,
+    ObligationContractDesignError,
+    exempt_due_work_suite,
+)
+from pytest_obligation.host import Host, hosted
 from tests_support.sample_production import cache
 
 REASON = "the next request re-derives the summary from the database"
@@ -77,10 +82,10 @@ def _absorbed_by_the_test() -> None:
     ids=["thin-reason", "no-proof", "test-function-proof", "test-lambda-proof", "test-partial-proof"],
 )
 def test_an_unproven_thin_or_self_proven_exemption_is_refused(kwargs: dict[str, object], message: str) -> None:
-    with pytest.raises(DueWorkContractDesignError, match=message):
+    with pytest.raises(ObligationContractDesignError, match=message):
         exempt_due_work_suite(DueWorkSource(evict), **kwargs)  # pyrefly: ignore[bad-argument-type]
 
 
 def test_an_exemption_takes_a_due_work_source() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="takes a DueWorkSource"):
+    with pytest.raises(ObligationContractDesignError, match="takes a DueWorkSource"):
         exempt_due_work_suite(evict, reason=REASON, prove=_proof(set()))  # pyrefly: ignore[bad-argument-type]

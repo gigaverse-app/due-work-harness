@@ -52,7 +52,7 @@ The workflow depends on settings outside the code:
    The old project's publisher does not authorize the new project. Do not merge
    the next release PR until this setup is complete. Keep historical releases
    under `due-work-harness`; users migrating to the new distribution must remove
-   the old one first because both own the `due_work_harness` import package.
+   the old one first because both provide the `due_work_harness` namespace.
 2. **GitHub environments.** `pypi` accepts deployments from `main` only, which
    is where both release-please and a manual re-publish run; `testpypi` is
    unrestricted. Adding required reviewers to `pypi` makes every publish wait

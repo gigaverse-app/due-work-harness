@@ -11,8 +11,8 @@ import pytest
 from redis import ConnectionPool, Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from due_work_harness.integrations.redis import redis_key_writes, redis_reply_breaker, redis_worker_killer
-from due_work_harness.worker_death import WorkerDied
+from pytest_obligation.integrations.redis import redis_key_writes, redis_reply_breaker, redis_worker_killer
+from pytest_obligation.worker_death import WorkerDied
 from tests.rq.connection import CONNECTION
 
 pytestmark = pytest.mark.usefixtures("empty_redis")

@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from pytest import raises as expect_failure
 
-from due_work_harness.binding import authored_inversion_names, callable_code
+from pytest_obligation.binding import authored_inversion_names, callable_code
 
 
 def _probe_that_swallows(proof: int) -> None:

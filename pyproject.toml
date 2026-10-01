@@ -6,14 +6,14 @@ build-backend = "hatchling.build"
 name = "pytest-obligation"
 # The version is the release tag (vX.Y.Z), written by release-please; see RELEASING.md.
 dynamic = ["version"]
-description = "A pytest plugin, a library for writing tests, a test generator, and a harness test runner for finding lost work, duplicate effects, and recovery bugs with your application's DueWorkContract."
+description = "A pytest plugin, a library for writing tests, a test generator, and a harness test runner for finding lost work, duplicate effects, and recovery bugs with your application's ObligationContract."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "Gigaverse" }]
 keywords = [
-    "pytest", "pytest plugin", "generated tests", "DueWorkContract",
+    "pytest", "pytest plugin", "generated tests", "ObligationContract",
     "fault injection", "crash testing", "recovery testing", "idempotency",
     "lost tasks", "duplicate processing", "background jobs", "task queue",
     "durable execution", "transactional outbox", "celery", "django",
@@ -56,11 +56,11 @@ Changelog = "https://github.com/gigaverse-app/pytest-obligation/blob/main/CHANGE
 Issues = "https://github.com/gigaverse-app/pytest-obligation/issues"
 
 [project.scripts]
-pytest-obligation = "due_work_harness.coverage.cli:main"
-due-work-harness = "due_work_harness.coverage.cli:main"
+pytest-obligation = "pytest_obligation.coverage.cli:main"
+due-work-harness = "pytest_obligation.coverage.cli:main"
 
 [project.entry-points.pytest11]
-due_work_harness = "due_work_harness.pytest_plugin"
+due_work_harness = "pytest_obligation.pytest_plugin"
 
 [dependency-groups]
 lint = ["ruff>=0.8", "pyrefly>=1.0,<2", "django-stubs>=5.1", "celery-types>=0.22"]
@@ -87,7 +87,7 @@ source = "vcs"
 local_scheme = "no-local-version"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/due_work_harness"]
+packages = ["src/pytest_obligation", "shims/due_work_harness"]
 
 [tool.hatch.build.targets.sdist]
 # The README's recorded demo is a picture of the demos, not part of them; demos/test_readme_gif.py
@@ -110,11 +110,11 @@ pythonpath = [".", "examples/adopter"]
 addopts = "-p no:cacheprovider"
 
 [tool.pyrefly]
-project-includes = ["src", "tests", "tests_support", "demos", "scripts", "examples/adopter"]
+project-includes = ["src", "shims", "tests", "tests_support", "demos", "scripts", "examples/adopter"]
 # The Saleor demo runs in Saleor's own environment and is type-checked there (see its pyproject.toml).
 project-excludes = ["demos/.upstream/**", "demos/saleor_checkout/**", "**/__pycache__/**", ".venv*/**"]
 python-version = "3.11"
 python-platform = "linux"
 # tests_support holds the sample production package the binding self-tests import;
 # the DBOS demo imports the upstream demo module from its pinned checkout.
-search-path = ["src", ".", "tests_support", "examples/adopter", "demos/.upstream/dbos-demo-apps/python/transactional-outbox"]
+search-path = ["src", "shims", ".", "tests_support", "examples/adopter", "demos/.upstream/dbos-demo-apps/python/transactional-outbox"]

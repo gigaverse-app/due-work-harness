@@ -53,7 +53,7 @@ uv run --no-sync pytest demos/dbos_transactional_outbox -p no:django
 ## Rules the code follows
 
 See [ARCHITECTURE.md](ARCHITECTURE.md). In short: nothing outside
-`src/due_work_harness/integrations/` imports a framework; integrations import
+`src/pytest_obligation/integrations/` imports a framework; integrations import
 theirs only when installed; every harness defense is self-tested in both
 directions (a conforming binding passes, a counterfeit fails with its specific
 message).

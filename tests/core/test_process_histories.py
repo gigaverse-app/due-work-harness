@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from due_work_harness.crash_histories import HistoriesDiverged
-from due_work_harness.process_histories import (
+from pytest_obligation.crash_histories import HistoriesDiverged
+from pytest_obligation.process_histories import (
     ProcessHistory,
     assert_pinned_process_outcomes,
     assert_process_deaths_converge,
@@ -22,7 +22,7 @@ from due_work_harness.process_histories import (
     fault_fires,
     fault_happened,
 )
-from due_work_harness.references import in_memory_handoffs as ref
+from pytest_obligation.references import in_memory_handoffs as ref
 
 
 def _run(point: str | None, *, notify: str = "notify") -> tuple[int, int]:
@@ -118,7 +118,7 @@ def test_a_marker_makes_a_fault_fire_once_across_processes(monkeypatch: pytest.M
     assert fault_happened(marker)
 
 
-CHILD = "from due_work_harness.process_histories import die_here\ndie_here('after_send')\nprint('lived')\n"
+CHILD = "from pytest_obligation.process_histories import die_here\ndie_here('after_send')\nprint('lived')\n"
 
 
 @pytest.mark.parametrize(("point", "status", "output"), [("after_send", 1, ""), (None, 0, "lived\n")])

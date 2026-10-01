@@ -7,8 +7,8 @@ independent observation, and the recovery path the application actually runs.
 
 ```python
 # conftest.py
-from due_work_harness import configure
-from due_work_harness.integrations.django import django_host
+from pytest_obligation import configure
+from pytest_obligation.integrations.django import django_host
 
 configure(django_host(production_packages={"myapp"}))
 ```

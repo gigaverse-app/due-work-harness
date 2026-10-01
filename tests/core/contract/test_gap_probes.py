@@ -10,8 +10,8 @@ otherwise pass for the wrong reason and nobody would see it.
 import pytest
 from sample_production import cache
 
-from due_work_harness.gap_probes import LossIsAbsorbedElsewhere
-from due_work_harness.host import Host, hosted
+from pytest_obligation.gap_probes import LossIsAbsorbedElsewhere
+from pytest_obligation.host import Host, hosted
 
 # Every test here binds an absorbing path the probe must recognise as production.
 pytestmark = pytest.mark.usefixtures("production_host")

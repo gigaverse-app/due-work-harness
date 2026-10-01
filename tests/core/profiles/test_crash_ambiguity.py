@@ -18,7 +18,7 @@ from uuid import UUID
 
 import pytest
 
-from due_work_harness.profiles.crash_ambiguity import (
+from pytest_obligation.profiles.crash_ambiguity import (
     AMBIGUITY_PROOFS,
     AmbiguityAware,
     assert_ambiguity_bindings_are_production_bound,
@@ -31,10 +31,10 @@ from due_work_harness.profiles.crash_ambiguity import (
     assert_ordinary_due_work_is_production_bound,
     assert_terminal_is_monotonic,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     REFERENCE_TERMINAL_STATES as _TERMINAL,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     InMemoryMachine as _InMemoryMachine,
 )
 

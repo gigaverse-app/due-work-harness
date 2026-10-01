@@ -11,7 +11,7 @@ The rules that shape every step:
 
 - **Expose, don't fix.** The deliverable is a test that fails for a stated reason, and a contract that
   finds it. A fix is theirs to shape.
-- **Every adoption PR MUST carry `DueWorkContract` and a collected
+- **Every adoption PR MUST carry `ObligationContract` and a collected
   `@due_work_contract_suite(CONTRACT)` class**, as specified by
   [the required adoption shape](../ADOPTING.md#required-adoption-shape). Direct
   crash-helper calls and ordinary tests alone are incomplete adoption. The plain test proves one bug; the
@@ -97,7 +97,7 @@ separate). Skip the directory on a Python older than the harness's, with a marke
 
 Add `--due-work-summary` to see every generated case with its outcome and each gap's reason. That output
 is the capture the PR shows. Recovery that is a management command is `management_command('name', after=...)`
-from `due_work_harness.integrations.django.commands`: it resolves the project's own command and runs it on
+from `pytest_obligation.integrations.django.commands`: it resolves the project's own command and runs it on
 the host's frozen clock, so the binding reaches production without a copy of the boilerplate.
 
 ## 5. Confirm each finding independently

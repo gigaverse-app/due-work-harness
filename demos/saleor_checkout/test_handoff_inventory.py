@@ -9,7 +9,7 @@ shrinks as contracts cover them.
 from collections import Counter
 from pathlib import Path
 
-from due_work_harness.coverage import assert_every_site_is_accounted_for
+from pytest_obligation.coverage import assert_every_site_is_accounted_for
 
 HERE = Path(__file__).resolve().parent
 
