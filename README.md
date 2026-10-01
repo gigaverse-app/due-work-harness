@@ -9,9 +9,13 @@
 [![types: Pyrefly](https://img.shields.io/badge/types-Pyrefly-blue)](https://pyrefly.org/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
-**Crash-test your background jobs.** Pytest proofs that background work survives
-lost messages, dead workers and uncertain external calls, and that the test
-saying so isn't lying.
+**Find lost background jobs and duplicate side effects before your users do.**
+Did a Celery task disappear after a Django transaction committed? Can a retry
+charge a customer twice, resend a receipt, or process a Kafka message again?
+`due-work-harness` turns those questions into pytest crash-and-retry proofs
+against your application's real transition and recovery path. It checks work
+that can go missing or run twice across database commits, queues, dead workers,
+and uncertain external calls—and checks that the proof itself isn't lying.
 
 **What it is, in 45 seconds** (with sound):
 
@@ -89,12 +93,16 @@ Or `uv add --dev due-work-harness`. The extras are `[django]`, `[celery]`,
 
 ## Coding-agent plugin
 
-The [Due Work Harness plugin](plugins/due-work-harness/) gives Codex and Claude
-Code a focused workflow for finding owed work, choosing the real failure
-boundary, and writing and running a `DueWorkContract`. It is useful when an
-order, payment, receipt, message, data import, or other effect must survive a
-crash, retry, lost acknowledgement, or stale worker. It contains a skill, not a
-remote service; the project under test still installs the pytest library.
+The [Due Work Harness plugin](plugins/due-work-harness/) helps Codex and Claude
+Code investigate questions such as "Why did this Celery task disappear?", "Can
+this order be charged twice?", and "What happens if the Kafka consumer crashes
+before committing its offset?" It traces the database-to-queue handoff,
+transactional outbox, worker, or external API call in your repository; chooses
+a supported failure boundary; then writes and runs a `DueWorkContract`. It can
+test orders, payments, receipts, notifications, imports, and other effects that
+must not be lost or repeated. It contains a skill, not a remote service; the
+project under test still installs the pytest library. An integration name does
+not imply coverage of every operation that integration offers.
 
 For Claude Code, add this repository as a marketplace and install the plugin:
 
