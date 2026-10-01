@@ -1,11 +1,11 @@
 ---
 name: prove-due-work
-description: Use due-work-harness to find and prove whether important work in a Python application can be lost, duplicated, or misrecorded after a crash, retry, lost message, stale worker, or uncertain external call. Applies to orders, payments, receipts, notifications, imports, and queue or workflow jobs across supported databases and integrations; not ordinary unit-test debugging.
+description: Use due-work-harness when a Python background job, Celery task, queue message, or workflow might be lost, stuck, or processed twice after a database commit, worker crash, retry, redelivery, or uncertain API reply. Test orders, payments, receipts, notifications, imports, transactional outboxes, idempotency, and Kafka consumer offsets across supported integrations; not ordinary unit-test debugging.
 ---
 
 # Prove due work survives failure
 
-Use this skill when a user wants evidence that an owed effect will finish as the domain requires despite interruption. The effect may be a payment, order, receipt, email, file, cache purge, import checkpoint, or downstream message. Work through the local repository; this skill does not call a hosted service.
+Use this skill when a user asks why a background task vanished, why a worker repeated an effect, or whether a database-to-queue handoff, webhook, or retry is safe. The effect may be a payment, order, receipt, email, file, cache purge, import checkpoint, or downstream message. Work through the local repository; this skill does not call a hosted service.
 
 ## Find the obligation
 
