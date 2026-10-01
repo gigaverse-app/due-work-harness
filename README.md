@@ -110,6 +110,17 @@ uv add --dev due-work-harness
 poetry add --group dev due-work-harness
 ```
 
+Optional integrations:
+
+[![Django integration](https://img.shields.io/badge/integration-Django-092E20?logo=django&logoColor=white)](docs/integrations.md)
+[![PostgreSQL integration](https://img.shields.io/badge/integration-PostgreSQL-4169E1?logo=postgresql&logoColor=white)](docs/integrations.md)
+[![Celery integration](https://img.shields.io/badge/integration-Celery-37814A?logo=celery&logoColor=white)](docs/integrations.md)
+[![MongoDB integration](https://img.shields.io/badge/integration-MongoDB-47A248?logo=mongodb&logoColor=white)](docs/mongodb.md)
+[![Redis and RQ integration](https://img.shields.io/badge/integration-Redis%20%2F%20RQ-DC382D?logo=redis&logoColor=white)](docs/integrations.md)
+[![Prefect integration](https://img.shields.io/badge/integration-Prefect-024DFD?logo=prefect&logoColor=white)](docs/prefect.md)
+[![Kafka aiokafka integration](https://img.shields.io/badge/integration-Kafka%20%28aiokafka%29-231F20?logo=apachekafka&logoColor=white)](docs/aiokafka.md)
+[![Hypothesis optional exploration](https://img.shields.io/badge/optional%20exploration-Hypothesis-6B4C9A)](docs/interleavings.md#optional-search)
+
 For example, use `"due-work-harness[django]"` with any of the commands above
 for the Django/PostgreSQL integration. Other extras include `[celery]`, `[rq]`,
 `[mongodb]`, `[prefect]`, and `[aiokafka]`; [see integration scope](docs/integrations.md).
