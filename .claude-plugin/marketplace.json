@@ -1,0 +1,12 @@
+{
+  "name": "pytest-obligation",
+  "description": "Generate ObligationContract tests and investigate lost or duplicate work in Python projects.",
+  "owner": {"name": "Gigaverse"},
+  "plugins": [
+    {
+      "name": "pytest-obligation",
+      "source": "./plugins/pytest-obligation",
+      "description": "Generate ObligationContract tests in your app or verify due-work bugs in open-source projects."
+    }
+  ]
+}

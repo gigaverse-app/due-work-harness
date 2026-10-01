@@ -7,7 +7,7 @@ the GitHub Actions below.
 
 ## Required adoption shape
 
-Every due-work domain adoption **MUST** declare a `DueWorkContract` and expose a
+Every due-work domain adoption **MUST** declare an `ObligationContract` and expose a
 collected class decorated with `@due_work_contract_suite(CONTRACT)`. Declare all
 ten profiles A–J with truthful dispositions;
 bind claimed profiles to production code. Put crash histories in `handoffs=` or
@@ -33,12 +33,12 @@ remain explicit; new-feature contracts cannot waive gaps.
 
 This version requires Pydantic 2.11 or newer; the minimum is exercised in CI.
 The canonical names and enum values now follow the A–J vocabulary in the
-[profile table](README.md#ten-guarantees-profiles-aj). This is an API migration:
+[profile table](docs/how-it-works.md#the-a-j-guarantees). This is an API migration:
 
-- Move nested `safety.profiles` into `DueWorkContract.profiles`: old
+- Move nested `safety.profiles` into `ObligationContract.profiles`: old
   `SafetyProfile.REPLAY_SAFE_EXECUTION` becomes `Profile.HARMLESS_REPLAY` (H),
   and `SafetyProfile.BOUNDED_RETRY` becomes `Profile.JOB_RETRY_LIMITS` (J).
-  Move `replay=` and `retry=` onto the same `DueWorkContract`, preserving their
+  Move `replay=` and `retry=` onto the same `ObligationContract`, preserving their
   fixtures, real-commit requirement and legacy gap policy.
 - Add G and I decisions. Claim G when binding `eligibility=`; claim I when binding
   named `admission=` commands. Use `NotAssessed(because="...")` when assessment
@@ -62,7 +62,7 @@ collected declaration nor one passing test certifies a whole profile.
 
 See [interleavings](docs/interleavings.md) for generated competing-event tests,
 optional exploration and deterministic replay. Profile I's callbacks are documented
-in [`indivisible_admission.py`](src/due_work_harness/profiles/indivisible_admission.py):
+in [`indivisible_admission.py`](src/pytest_obligation/profiles/indivisible_admission.py):
 bind a real standalone command, independently observed product intent and work,
 an external-publication recorder, and a fault boundary reached after partial writes.
 The host must supply `in_transaction`; fault fixtures must not supply the transaction.
@@ -70,7 +70,7 @@ The host must supply `in_transaction`; fault fixtures must not supply the transa
 ## 1. Install
 
 ```bash
-uv add --dev "due-work-harness[django]"     # or [celery], [procrastinate], [dbos]; combine as needed
+uv add --dev "pytest-obligation[django]"     # or [celery], [procrastinate], [dbos]; combine as needed
 ```
 
 The core needs only pytest and pydantic. An extra adds that framework's integration.
@@ -106,7 +106,7 @@ A project helper that hands work off for its callers (Zulip's
 `send_event_on_commit`, say) is declared in `bridges` with its own site count, so
 each call to it becomes a site in its caller. `exclude` adds name patterns to
 skip, and may never hide production code. See
-[`coverage/config.py`](src/due_work_harness/coverage/config.py) for every key.
+[`coverage/config.py`](src/pytest_obligation/coverage/config.py) for every key.
 
 ## 3. See what you have, and baseline the past
 
@@ -123,8 +123,8 @@ CI, `check --base-ref <base>` refuses any entry a change adds.
 
 ```python
 # conftest.py
-from due_work_harness import configure
-from due_work_harness.integrations.django import django_host
+from pytest_obligation import configure
+from pytest_obligation.integrations.django import django_host
 
 configure(django_host(production_packages={"myapp"}))
 ```
@@ -136,7 +136,7 @@ If your code publishes through Celery, let crash histories refuse each publish
 as a broker that is down would:
 
 ```python
-from due_work_harness.integrations.celery import celery_publication_breaker
+from pytest_obligation.integrations.celery import celery_publication_breaker
 
 configure(django_host(production_packages={"myapp"}, publication_breaker=celery_publication_breaker))
 ```
@@ -149,7 +149,7 @@ committing cases:
 ```python
 from django.tasks.signals import task_finished, task_started
 
-from due_work_harness.integrations.django.receivers import django_receiver_breaker
+from pytest_obligation.integrations.django.receivers import django_receiver_breaker
 
 configure(
     django_host(
@@ -191,7 +191,7 @@ calling adoption complete. See [the README](README.md) and
 
 If the work can be owed but *blocked* by a product decision (a dependency has
 not settled, an owner is still active), add an `ExecutionGate` to a contract
-that claims profile G: `DueWorkContract(..., eligibility=order_blocked_by_payment)`,
+that claims profile G: `ObligationContract(..., eligibility=order_blocked_by_payment)`,
 or a mapping of names to gates for several blockers. Its binding routes,
 recovery and selection call production; the harness proves the blocked work
 stays owed and untouched, and completes by recovery alone once eligible, with
@@ -229,7 +229,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: gigaverse-app/due-work-harness/check@v0
+      - uses: gigaverse-app/pytest-obligation/check@v0
 
   due-work-suites:
     # The generated contract, safety and exemption suites, in your own environment.
@@ -241,7 +241,7 @@ jobs:
         ports: ["5432:5432"]
     steps:
       - uses: actions/checkout@v7
-      - uses: gigaverse-app/due-work-harness/test@v0
+      - uses: gigaverse-app/pytest-obligation/test@v0
         with:
           sync-args: --all-extras
           pytest-args: --ds=myproject.settings

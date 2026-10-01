@@ -1,4 +1,4 @@
-name: due-work-harness check
+name: pytest-obligation check
 description: >-
   Fail unless every handoff site in the project (on_commit callbacks, Celery
   publications, procrastinate deferrals, DBOS workflow starts, Dramatiq and RQ
@@ -19,12 +19,12 @@ inputs:
     default: ${{ github.event.pull_request.base.sha }}
   version:
     description: >-
-      due-work-harness version to run. Default: the version pinned in the project's
+      pytest-obligation version to run. Default: the version pinned in the project's
       uv.lock, else the latest release.
     default: ""
   package:
     description: Package spec or path to install instead of the release (for testing the action itself).
-    default: due-work-harness
+    default: pytest-obligation
   python-version:
     description: >-
       Python to run the check with. The check parses code with this Python's
@@ -46,7 +46,7 @@ runs:
         VERSION: ${{ inputs.version }}
         PACKAGE: ${{ inputs.package }}
       run: |
-        if [[ "$PACKAGE" != "due-work-harness" ]]; then
+        if [[ "$PACKAGE" != "pytest-obligation" ]]; then
           echo "spec=$PACKAGE" >> "$GITHUB_OUTPUT"
           exit 0
         fi
@@ -55,11 +55,11 @@ runs:
         import tomllib
         with open("uv.lock", "rb") as lock:
             packages = tomllib.load(lock).get("package", [])
-        print(next((p.get("version", "") for p in packages if p.get("name") == "due-work-harness"), ""))
+        print(next((p.get("version", "") for p in packages if p.get("name") == "pytest-obligation"), ""))
         PY
         )
         fi
-        echo "spec=due-work-harness${VERSION:+==$VERSION}" >> "$GITHUB_OUTPUT"
+        echo "spec=pytest-obligation${VERSION:+==$VERSION}" >> "$GITHUB_OUTPUT"
     - name: Fetch the base commit
       if: inputs.base-ref != ''
       shell: bash

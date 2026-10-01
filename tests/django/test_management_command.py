@@ -15,9 +15,9 @@ from django.contrib.contenttypes.management.commands.remove_stale_contenttypes i
 from django.core.management.base import BaseCommand
 from django.utils.timezone import now
 
-from due_work_harness import configure
-from due_work_harness.integrations.django import django_host
-from due_work_harness.integrations.django.commands import management_command
+from pytest_obligation import configure
+from pytest_obligation.integrations.django import django_host
+from pytest_obligation.integrations.django.commands import management_command
 
 COMMAND = "remove_stale_contenttypes"
 
@@ -68,7 +68,7 @@ def test_an_unknown_command_names_the_ones_that_exist(runs: Runs) -> None:
 
 def test_a_command_defined_in_test_code_is_refused_as_recovery(runs: Runs) -> None:
     with mock.patch(
-        "due_work_harness.integrations.django.commands.get_commands", return_value={"mine": CommandDefinedInATest()}
+        "pytest_obligation.integrations.django.commands.get_commands", return_value={"mine": CommandDefinedInATest()}
     ):
         with pytest.raises(
             AssertionError, match=r"management command 'mine' is .*CommandDefinedInATest.*production packages"

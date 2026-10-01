@@ -26,7 +26,7 @@ ORDERS = """
 """
 
 SUITE = """
-    from due_work_harness import DueWorkSource, LossIsAbsorbedElsewhere, exempt_due_work_suite
+    from pytest_obligation import DueWorkSource, LossIsAbsorbedElsewhere, exempt_due_work_suite
     from shop import orders
 
     @exempt_due_work_suite(

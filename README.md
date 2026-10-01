@@ -1,213 +1,91 @@
-# due-work-harness
+# pytest-obligation
 
-[![CI](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/due-work-harness)](https://pypi.org/project/due-work-harness/)
-[![Python](https://img.shields.io/pypi/pyversions/due-work-harness)](https://pypi.org/project/due-work-harness/)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/gigaverse-app/due-work-harness/blob/main/LICENSE)
-[![pytest plugin](https://img.shields.io/badge/pytest-plugin-0A9EDC?logo=pytest&logoColor=white)](https://docs.pytest.org/en/stable/how-to/writing_plugins.html)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![types: Pyrefly](https://img.shields.io/badge/types-Pyrefly-blue)](https://pyrefly.org/)
-[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+<img src="plugins/pytest-obligation/assets/icon.svg" alt="pytest-obligation logo" width="96">
 
-**Crash-test your background jobs.** Pytest proofs that background work survives
-lost messages, dead workers and uncertain external calls, and that the test
-saying so isn't lying.
+[![CI](https://github.com/gigaverse-app/pytest-obligation/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gigaverse-app/pytest-obligation/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/pytest-obligation)](https://pypi.org/project/pytest-obligation/)
+[![Python](https://img.shields.io/pypi/pyversions/pytest-obligation)](https://pypi.org/project/pytest-obligation/)
+[![pytest plugin](https://img.shields.io/badge/pytest-plugin-0A9EDC?logo=pytest&logoColor=white)](https://github.com/gigaverse-app/pytest-obligation/blob/main/docs/pytest-plugin.md)
+[![Typed](https://img.shields.io/badge/typing-py.typed-blue)](https://typing.python.org/en/latest/spec/distributing.html)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**What it is, in 45 seconds** (with sound):
+## Don’t lose orders, money, receipts, or work when the happy path breaks
 
-https://github.com/user-attachments/assets/498ac071-080c-45d2-abdb-13aee405568b
+Your app may commit an order, charge a customer, schedule a task, send a
+receipt, publish to Kafka, or call Shopify. A worker can die one line later; a
+broker reply can be lost; a retry can run the external effect twice. Ordinary
+tests usually exercise only the path where none of that happens.
 
-## Your happy-path test is an optimist
+**pytest-obligation generates tests for work your application cannot afford to
+lose or repeat.** Bind an `ObligationContract` to your real workflow and recovery
+path, yourself or with a coding agent. The harness generates standardized tests
+for crashes, retries, lost messages, and competing operations, exposing failure
+cases you might never think to write by hand. Its fault injection interrupts
+commits, workers, messages, and external calls, then checks whether recovery
+reaches the right outcome without lost work or duplicate effects.
+The agent can use the same fault-injection infrastructure to add focused tests
+for your application's particular risks. The core accepts plain Python
+callables: it assumes no framework, database, queue, or business domain.
 
-Most applications record something now and finish it later: send the
-confirmation email, generate the thumbnails, publish the post, retry the failed
-upload. That is *due work*, and it fails quietly:
+It integrates as a pytest plugin in your existing test suite and CI. Read the
+[pytest plugin guide](https://github.com/gigaverse-app/pytest-obligation/blob/main/docs/pytest-plugin.md)
+for automatic discovery, test selection, reports, and configuration.
 
-- **The commit landed. The message didn't.** The order exists; its email never will.
-- **The email went out. Then the worker died.** Nothing recorded the send, so recovery sends it again.
-- **The stale worker finished last.** It overwrote the fresh result its replacement had just written.
+Coming from distributed systems and familiar with Jepsen? pytest-obligation
+brings a similar approach to your application's workflows. Read
+[Jepsen-style fault testing for application work](docs/jepsen-analogy.md).
 
-Nothing throws, nothing pages anyone, and the test that runs the happy path once
-stays green. `due-work-harness` kills your worker on purpose, after every commit
-and after every external call, and fails unless every one of those histories
-ends where normal operation does.
+## What it finds
 
-## Not theoretical: it found these in code you've heard of
+- **Lost work:** a Django transaction commits an order, but a Celery task or
+  Kafka message is never published; a dead worker's task is never picked up.
+- **Duplicate effects:** a retry sends two receipts, charges twice, or repeats
+  an external API call after the first result became uncertain.
+- **Wrong final state:** a stale worker overwrites a newer result, a checkout
+  takes a payment without creating an order, or cleanup deletes work still owed.
 
-![due-work-harness finding a lost handoff in procrastinate's demo, its fix passing, a repeated notification in DBOS's outbox demo, and the coverage scan of Saleor's checkout](https://raw.githubusercontent.com/gigaverse-app/due-work-harness/main/docs/demo.gif)
+These are not just hypothetical failures. [Runs against Saleor, Wagtail,
+procrastinate, DBOS, RQ, and Celery](demos/README.md) show the real code,
+failure timing, observed result, and—in several cases—a fix that makes the
+same proof pass. For example, a Saleor Payments API checkout can capture a
+payment and lose the order when the worker dies between those steps; a DBOS
+notification step can send twice when it is replayed.
 
-<sub>Real output, recorded with [vhs](https://github.com/charmbracelet/vhs) from
-[`docs/demo.tape`](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/demo.tape).
-CI replays every command it types
-([`demos/test_readme_gif.py`](https://github.com/gigaverse-app/due-work-harness/blob/main/demos/test_readme_gif.py)),
-so the GIF can't claim output the harness no longer prints.</sub>
+## What a finding looks like
 
-The [demos](https://github.com/gigaverse-app/due-work-harness/tree/main/demos) run
-the harness against demo applications and a real e-commerce platform, exactly as
-their projects ship them, pinned to a commit:
-
-| Where | What one badly timed failure does | What fixes it |
-| --- | --- | --- |
-| **django-tasks-db** (Django's task framework, database backend) | A `task_finished` receiver that raises rewrites a task that already ran as FAILED; a task whose worker died stays RUNNING forever | — |
-| **Wagtail** on django-tasks-db | Deleting an image or document can leave its file in storage for good; publishing can leave the CDN serving the old page | — |
-| **Saleor** checkout, Payments API | A worker death between capturing the payment and creating the order **charges the customer and never creates the order**. After 90 days the payment belongs to nothing | Saleor's Transactions API with automatic completion of paid checkouts: the same deaths always end with an order |
-| **Saleor** checkout | A death after the order commits leaves it unconfirmed, its history empty or half-written | — |
-| **Saleor** checkout | No death at all: a failing `order_created` callback, or the broker refusing any one of the order's webhooks, and Django skips the confirmation | — |
-| **Saleor** automatic completion | It dispatches a paid checkout again while that checkout's completion is still in flight, and reports no backlog | — |
-| **DBOS** `transactional-outbox` | A death after sending the notification, before DBOS records the step: **the customer is notified twice** | An idempotent notification (a key the recipient deduplicates) |
-| **procrastinate** `demo_django` | A death between committing the book and deferring its job: **the book is never indexed**, and nothing finds it again | `ATOMIC_REQUESTS = True`: the same proof passes |
-| **procrastinate** `demo_django` | A job whose worker died is never picked up again | procrastinate's documented `retry_stalled_jobs` task: the same proof passes |
-| **procrastinate** itself | `finish_job` doesn't check the worker: a worker presumed dead finishes a job another worker has since fetched | — (a fencing token on finish) |
-| **RQ** itself | A worker whose lease expired still settles the job after another worker took it: it marks it finished, or sends it back to be retried, while the new worker runs it | — |
-| **RQ** itself | The reply to the write that records a job finished is lost, or its `on_success` callback raises: RQ fails the finished job and **runs it again** | — |
-| **RQ** itself | A worker listening on two queues dies, or loses a reply, between popping a job and marking it started: **the job is gone**, queued in no queue and no registry | — |
-| **Celery** itself | A worker's pool child dies after the task's SUCCESS is stored: the task stays SUCCESS and **its error callback fires beside its link** | — |
-| **Celery** itself | A task's `on_success` hook raises after SUCCESS is stored: the same, both callbacks fire | — |
-| **Celery** itself | The broker refuses the task's link after the body ran: the task is recorded FAILURE and acknowledged, so **the link is never sent** | — |
-
-Demos are teaching code, and good at what they teach. The point is what the
-harness finds when code like this is copied into production, and the one change
-that makes the same proof pass. Every finding is a strict xfail with its
-explanation, so an upstream fix turns it red. The full write-up:
-[`demos/README.md`](https://github.com/gigaverse-app/due-work-harness/blob/main/demos/README.md).
-
-**The findings, in 30 seconds**: Saleor's checkout run, its fix passing, then DBOS,
-procrastinate and the coverage scan, all real output:
-
-https://github.com/user-attachments/assets/ed065709-3372-40dd-8dc9-7f64dc60ef90
-
-## Install
-
-```bash
-pip install due-work-harness            # the core: pytest and pydantic, nothing else
-pip install "due-work-harness[django]"  # plus the Django/PostgreSQL integration
-```
-
-Or `uv add --dev due-work-harness`. The extras are `[django]`, `[celery]`,
-`[procrastinate]`, `[dbos]`, `[redis]` and `[rq]`; combine as needed. Python 3.11+.
-
-## Kill it on purpose: crash histories
-
-Give the harness one transition that hands work off. It runs normal operation
-to learn the outcome, then replays the same transition:
-
-- with **every message it published lost**;
-- with the worker **killed right after each commit** it makes;
-- with the worker **killed right after each external call** returns;
-- with **each after-commit callback failing**, **each signal receiver or job
-  callback failing**, **the broker refusing each publication**, and **the reply
-  to each commit lost** (the write lands, the worker sees a connection error and
-  carries on), where your host supports them (the Django host breaks callbacks;
-  the Redis host loses replies; add the Celery integration's breaker to refuse
-  publishes).
-
-Every history must reach the outcome normal operation reached. The harness finds
-the commit boundaries itself; you don't name them.
-
-```python
-from due_work_harness import CallableDelivery, ExternalCall, HandoffHistory, assert_crash_at_every_commit_converges
-
-
-def test_placing_an_order_survives_any_death():
-    assert_crash_at_every_commit_converges(
-        CallableDelivery(name="orders", recover=run_workers_until_idle),  # what production runs after a crash
-        HandoffHistory(
-            name="place order",
-            arrange=new_cart,
-            transition=place_order,  # your real view or service method
-            observe=lambda cart: (order_status(cart), mailbox.count(cart)),  # include what external systems saw
-            external_calls=(ExternalCall(mailer, "send"),),
-        ),
-    )
-```
-
-A failure names the history that went wrong and what it left behind:
+One crash history compares the normal outcome with the outcome after a
+specific interruption:
 
 ```text
-due_work_harness.HistoriesDiverged: orders: handoff 'place order': normal operation reaches
+pytest_obligation.HistoriesDiverged: orders: handoff 'place order': normal operation reaches
 ('SENT', 1), but these histories reach something else: {'worker died after external call 1':
 ('SENT', 2)}. Work was lost or repeated. ...
 ```
 
-That's the duplicate email, caught in a test instead of in a support ticket.
+The second send is visible instead of being hidden behind a green happy-path
+test. Known, independently reproduced gaps remain **strict xfails**; a change
+that fixes one turns it red so the finding must be re-evaluated. See
+[how crash histories work](docs/how-it-works.md#crash-histories) and
+[what a green result means](docs/what-a-green-result-means.md).
 
-In a contract, a history declares its findings, and the generated case holds
-the runs to that table and to the verdict at once. The histories run once, a
-declared gap is a strict xfail for the divergence alone, and a finding that
-moves fails as itself:
+## Stronger tests without hand-writing more tests
 
-```python
-HandoffHistory(
-    name="place order",
-    arrange=new_cart,
-    transition=place_order,
-    observe=...,
-    findings=Findings(("SENT", 1), {"worker died after external call 1": ("SENT", 2)}),
-)
-```
-When a test can't reach the worker at all (a workflow engine's own executor),
-`process_histories` runs the real program in a child process, kills it at named
-points with `os._exit`, restarts it the way production would, and applies the
-same verdict. That is how the DBOS demo above works; a contract declares such
-histories as `process_handoffs`, beside `handoffs`.
+Declare the workflow once in an `ObligationContract` and expose it through
+`@due_work_contract_suite(CONTRACT)`. At pytest collection time, the harness
+generates cases for the applicable A–J guarantees: recovery, ownership, crash
+ambiguity, retention, convergence, derived obligations, gated execution,
+harmless replay, indivisible admission, and retry limits. As the harness gains
+checks for a profile you already bound, upgrading can generate more cases from
+the same contract. New profiles or bindings still need your assessment. The
+separate handoff scan spots newly introduced queue/task handoffs that need a
+contract; it does not silently claim they are proven. [See the guarantees and
+limits](docs/how-it-works.md#the-a-j-guarantees).
 
-## Ten guarantees: profiles A–J
+## What the run shows
 
-Every domain adoption **must** use `DueWorkContract` and
-`@due_work_contract_suite(CONTRACT)`; standalone histories or ordinary tests do
-not complete adoption. See [the required adoption shape](ADOPTING.md#required-adoption-shape).
-A crash history proves one handoff. A declarative `DueWorkContract` binds your
-production selection, tick and transitions, and asks for a disposition (claim,
-decline with a reason, not applicable, known gap, or not assessed) for each profile:
+`pytest --due-work-summary` lists generated cases, passes, and declared gaps:
 
-| Profile | The question it answers |
-| --- | --- |
-| **A** automatic recovery | After a lost message, is the work still found? Does anything actually run the sweep, index-served and bounded? |
-| **B** bounded ownership | Who owns the work right now, and what happens when that owner's lease expires? |
-| **C** crash ambiguity | The provider never answered. Did the email go out? Schrödinger's email: can you tell "never ran" from "maybe ran"? |
-| **D** durable retention | Can a cleanup pass delete work that is still owed? |
-| **E** eventual convergence | When a result lands late, can it overwrite a newer one? |
-| **F** fact-derived obligations | Can product state imply work nothing recorded, and is it still found? |
-
-| **G** gated execution | Does blocked work stay owed and untouched, then recover once eligible without its notification? |
-| **H** harmless replay | Does executing the same logical operation twice converge to one visible effect? |
-| **I** indivisible admission | Does a standalone command commit intent and work together, or roll both back after partial writes? |
-| **J** job retry limits | Does failing work exhaust exactly its execution budget and remain terminal? |
-
-Profile E includes independently assessed stale-snapshot, monotonic-result,
-in-flight and evidence-confluence families. Bind competing-event scenarios once
-and the harness generates deterministic histories; optional Hypothesis explores
-and shrinks additional schedules. See [interleavings](docs/interleavings.md).
-
-`NotAssessed` emits a strict XFAIL with a remediation reason. It records unfinished
-assessment, not a demonstrated production bug. A passing sibling profile or family
-cannot clear that debt. Use `--due-work-profile-report=profiles.json` to distinguish
-claims from fully executed evidence, including filters, teardown failures and xdist.
-
-Read [what a green result means](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/what-a-green-result-means.md)
-before you treat a pass as a guarantee.
-
-## Green you can trust
-
-A conformance suite can lie in ways ordinary tests can't. An adapter that copies
-production's query, or implements a tiny state machine in the test file, makes
-every proof measure the copy, and it stays green forever. So the harness:
-
-- refuses test-authored selections and transitions, and requires every binding
-  to reach code in your `production_packages`;
-- forbids waiving its own integrity checks;
-- pairs every "must not happen" proof with a positive control showing the same
-  binding *would* act;
-- fails a run where every crash history agrees but recovery changed nothing:
-  agreeing with an inert recovery is not a pass.
-
-The full catalogue of lies it refuses: [false greens](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/false-greens.md).
-
-Cases are generated at pytest collection time, not written as Python files.
-Use `--junitxml=<artifact-path>` for a machine-readable run artifact.
-A contract class is empty in the source, so `pytest --due-work-summary` lists
-what each one generated after the run: every case with its outcome, and each
-declared gap's reason beside its strict xfail.
+![A real harness run finding lost and repeated work](docs/demo.gif)
 
 ```text
 test_wagtail_tasks.py::TestDjangoTasksDb: 7 passed, 5 xfailed
@@ -216,98 +94,79 @@ test_wagtail_tasks.py::TestDjangoTasksDb: 7 passed, 5 xfailed
   ...
 ```
 
-## No handoff left behind: the coverage scan
+For CI, `--due-work-profile-report=profiles.json` records what was declared,
+collected, selected, and actually executed. An xfail or unassessed profile is
+not a verified guarantee. [Read the reporting guide](ADOPTING.md#required-adoption-shape).
 
-A crash history proves one handoff; the coverage check makes sure none are
-forgotten. It scans production code for every call that hands work off:
-`on_commit`, a Celery `.delay`, a procrastinate `.defer`, a DBOS workflow start,
-a Dramatiq `.send`, an RQ `enqueue`, a Django task's `.enqueue`. It attributes
-each to the exact function that makes it, and requires exactly one disposition
-per function: a contract suite that insures it, or an exemption that proves
-losing it costs nothing. In Saleor it finds 137 handoff sites in 124 functions.
+## Get started
+
+Formerly **due-work-harness**. The package is being renamed to
+**pytest-obligation**; until its first PyPI release, install `due-work-harness`
+for the last published version. Do not install both distributions in the same
+environment: they provide the same Python modules. New code uses
+`from pytest_obligation import ObligationContract`. Existing `due_work_harness`
+imports and `DueWorkContract` are supported by an isolated compatibility shim.
+The `--due-work-*` options, `due-work-harness` command, and
+`[tool.due-work-harness]` configuration remain supported.
+[See the compatibility and migration guide](docs/package-migration.md).
+
+Install the Python test library **in the application you want to test** (Python
+3.11+). Choose your package manager; add an optional extra only for an
+integration you use:
 
 ```bash
-uv run due-work-harness check      # static: imports neither your app nor your tests
+pip install pytest-obligation
+uv add --dev pytest-obligation
+poetry add --group dev pytest-obligation
 ```
 
-```python
-@due_work_contract_suite(ORDER_NOTIFICATIONS, covers=(DueWorkSource(OrderService.place),))
-class TestOrderNotificationsDueWork:
-    pass
+Optional integrations:
+
+[![Django integration](https://img.shields.io/badge/integration-Django-092E20?logo=django&logoColor=white)](docs/integrations.md)
+[![PostgreSQL integration](https://img.shields.io/badge/integration-PostgreSQL-4169E1?logo=postgresql&logoColor=white)](docs/integrations.md)
+[![Celery integration](https://img.shields.io/badge/integration-Celery-37814A?logo=celery&logoColor=white)](docs/integrations.md)
+[![MongoDB integration](https://img.shields.io/badge/integration-MongoDB-47A248?logo=mongodb&logoColor=white)](docs/mongodb.md)
+[![Redis and RQ integration](https://img.shields.io/badge/integration-Redis%20%2F%20RQ-DC382D?logo=redis&logoColor=white)](docs/integrations.md)
+[![Prefect integration](https://img.shields.io/badge/integration-Prefect-024DFD?logo=prefect&logoColor=white)](docs/prefect.md)
+[![Kafka aiokafka integration](https://img.shields.io/badge/integration-Kafka%20%28aiokafka%29-231F20?logo=apachekafka&logoColor=white)](docs/aiokafka.md)
+[![Hypothesis optional exploration](https://img.shields.io/badge/optional%20exploration-Hypothesis-6B4C9A)](docs/interleavings.md#optional-search)
+
+For example, use `"pytest-obligation[django]"` with any of the commands above
+for the Django/PostgreSQL integration. Other extras include `[celery]`, `[rq]`,
+`[mongodb]`, `[prefect]`, and `[aiokafka]`; [see integration scope](docs/integrations.md).
+The current source has A–J profiles. Check the adoption guide matching your
+installed version; older PyPI releases use an earlier profile catalog.
+
+Then add the **coding-agent plugin** (it provides instructions, not the Python
+library). For Claude Code:
+
+```bash
+claude plugin marketplace add gigaverse-app/pytest-obligation
+claude plugin install pytest-obligation@pytest-obligation
 ```
 
-Aliases, re-exports and handoffs passed along uncalled are still found. A
-declaration counts only if pytest would actually run it, and
-`pytest --due-work-verify` then checks that it did. An existing project adopts
-with a baseline that only shrinks.
+For Codex, add the repository marketplace, then open the Plugins Directory,
+select **pytest-obligation**, and install the plugin:
 
-`uv run due-work-harness in-transaction` lists the handoffs made inside `transaction.atomic()`,
-where the worker can run before the commit (and find no row) or after a rollback (and find a row that
-never was). `on_commit` (and whatever is passed to it) and Celery's `*_on_commit` variants wait for the
-commit and are not reported, nor are queues that can be a table in your own database (Procrastinate's
-Django connector, django-tasks' database backend), where the job commits with the data. It is lexical, so
-a handoff in a function the block calls is not seen. Each line is a place to read and write a contract
-first, not a verdict: a publication that does not depend on what the block writes (a retry sent from a
-read-only replica snapshot, say) is harmless.
-
-In GitHub Actions, `gigaverse-app/due-work-harness/check@v0` runs the scan and
-`gigaverse-app/due-work-harness/test@v0` runs the generated suites (every
-generated case carries the `due_work` mark). The path from install to CI is in
-[ADOPTING.md](https://github.com/gigaverse-app/due-work-harness/blob/main/ADOPTING.md).
-
-## Bring your own framework
-
-The core depends only on pytest and pydantic: no Django, SQLAlchemy, Celery,
-procrastinate or DBOS, and CI imports every core module with none of them
-installed. Proofs take plain callables. The few facts only a framework knows
-(whether a transaction is open, how to interrupt a commit, what plan a query
-runs) come from a `Host` you configure once:
-
-```python
-# conftest.py
-from due_work_harness import configure
-from due_work_harness.integrations.django import django_host
-
-configure(django_host(production_packages={"myapp"}))
+```bash
+codex plugin marketplace add gigaverse-app/pytest-obligation --sparse .agents/plugins
 ```
 
-| Extra | Supplies |
-| --- | --- |
-| `[django]` | `django_host()`: pytest-django marks, the transaction probe, a commit counter that kills the worker after any commit (including writes made through `SELECT fn()`), PostgreSQL plan inspection, lifecycle-state proofs |
-| `[celery]` | beat-schedule evidence, a publication recorder that holds messages instead of sending them, a publication breaker that refuses one publish as a broker that is down would; and `celery_worker`: the application's real worker as a child process, failing at Celery's own stages (the pool child lost at `task_prerun`, `mark_as_done` and `task_postrun`, a raising `on_success` hook, a refused link), with `worker_contract()` for any adopter's task |
-| `[procrastinate]` | its worker as recovery, "worker died holding this job" arrangement, the documented stalled-job recipe, periodic-task evidence |
-| `[dbos]` | restarting an app through its own startup for process-level crash histories |
-| `[redis]` | `redis_host()`: a commit counter for a queue kept in Redis (each pipeline or write command a commit, judged by the server's own command flags), and a reply breaker that lets a write land and loses its answer |
-| `[rq]` | RQ's worker as the transition and as recovery (later workers' maintenance, with the clock moved on), its ownership bound to profile B, a breaker for job callbacks, and `worker_contract()`: RQ's whole contract for any adopter's jobs |
-| `[mongodb]` | `mongodb_host(client, production_packages)`: acknowledged writes and transaction commits, worker death and lost replies on PyMongo 4.9–4.17; pass `motor_client.delegate` for Motor. See [MongoDB boundaries](docs/mongodb.md). |
-| `[prefect]` | `prefect_flow_call(flow, runner)` completes the real flow body on one event loop; `assert_prefect_recurs` checks a declared deployment using Prefect’s schedule calculation. See [Prefect scope](docs/prefect.md). |
-| `[aiokafka]` | `AIOKafkaConsumer` only: worker death after acknowledgement and lost commit replies, tested with broker restart/replay. See [aiokafka scope](docs/aiokafka.md). |
+It is not yet in the public plugin directory. The plugin works without a remote
+MCP server; tests run in your coding environment with your app and its required
+services.
 
-## Finding weaknesses in a project of your own or someone else's
+Open your application in Claude Code or Codex and ask:
 
-The [upstream playbook](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/upstream-playbook.md)
-is the cycle behind the findings above, written to be repeated: choose a target, map its handoffs, adopt
-the harness in a fork, confirm each finding on its own, declare the findings, improve the harness with what
-the probe needed, and disclose with the templates in
-[`docs/upstream-templates`](https://github.com/gigaverse-app/due-work-harness/tree/main/docs/upstream-templates).
-In Claude Code, the [`find-upstream-weaknesses` skill](https://github.com/gigaverse-app/due-work-harness/blob/main/.claude/skills/find-upstream-weaknesses/SKILL.md)
-runs the cycle for you.
+> Use the `prove-due-work` skill to create an `ObligationContract` for our order-processing
+> workflow. Bind the real database-to-queue handoff and recovery worker,
+> generate and run the standard tests, then add focused crash/retry tests.
+> Report what passed, what failed, and which guarantees remain unassessed.
 
-## Status
+Start with the [adoption guide](ADOPTING.md) if you want to bind a contract
+yourself. For framework boundaries and the handoff scan, see
+[integrations](docs/integrations.md) and [coverage](docs/coverage.md). To probe
+another project, follow the [upstream playbook](docs/upstream-playbook.md).
 
-Alpha. The proofs were extracted from a production codebase, where they guard
-its background workflows in CI; the public API may still change before 1.0.
-Python 3.11+. How it's built: [ARCHITECTURE.md](https://github.com/gigaverse-app/due-work-harness/blob/main/ARCHITECTURE.md).
-
-## Development
-
-Managed with [uv](https://docs.astral.sh/uv/) (`uv sync --all-extras`), linted with Ruff and
-type-checked with [Pyrefly](https://pyrefly.org/). See [CONTRIBUTING.md](https://github.com/gigaverse-app/due-work-harness/blob/main/CONTRIBUTING.md).
-
-## License
-
-Apache-2.0. See [LICENSE](https://github.com/gigaverse-app/due-work-harness/blob/main/LICENSE).
-
-See the [executed adopter capability map](docs/adopter-capabilities.md) and the
-[runnable catalog example](examples/adopter/README.md) for generated interleavings,
-admission, gating, replay and optional Hypothesis adoption.
+Alpha; the public API may change before 1.0. [Architecture](ARCHITECTURE.md) ·
+[Contributing](CONTRIBUTING.md) · [Apache-2.0 license](LICENSE)

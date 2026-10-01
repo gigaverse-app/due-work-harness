@@ -34,7 +34,7 @@ What it costs, measured with the same setup:
 
 ### How this was found
 
-This came out of [due-work-harness](https://github.com/gigaverse-app/due-work-harness), a pytest plugin
+This came out of [due-work-harness](https://github.com/gigaverse-app/pytest-obligation), a pytest plugin
 that checks background work is neither lost, repeated nor misrecorded. {Which integration or host it
 used, which failures it injected, and which generated case reported this.} A PR follows with the test above
 as an expected failure, and the harness contract that runs this case, and the others, against {project}.

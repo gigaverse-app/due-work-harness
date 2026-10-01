@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from due_work_harness.coverage.cli import main
+from pytest_obligation.coverage.cli import main
 
 from .builders import write_project
 

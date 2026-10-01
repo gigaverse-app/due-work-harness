@@ -3,7 +3,7 @@ The fenced-ownership proofs (profile B), pointed at implementations we control.
 
 A proof that no implementation can fail measures nothing, and a proof that
 fails the wrong implementations is worse. So every proof in
-`due_work_harness.profiles.bounded_ownership` is run here in both
+`pytest_obligation.profiles.bounded_ownership` is run here in both
 directions: a minimal in-memory owner that conforms passes all of them, and a
 family of deliberately broken owners each fails *exactly* the invariant it
 breaks and no other.
@@ -26,9 +26,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from due_work_harness.host import race_timeout
-from due_work_harness.models import DueWorkContractDesignError
-from due_work_harness.profiles.bounded_ownership import (
+from pytest_obligation.host import race_timeout
+from pytest_obligation.models import ObligationContractDesignError
+from pytest_obligation.profiles.bounded_ownership import (
     FENCED_OWNERSHIP_PROOFS,
     FencedOwnership,
     assert_claim_is_exclusive,
@@ -46,10 +46,10 @@ from due_work_harness.profiles.bounded_ownership import (
     assert_stale_token_is_rejected,
     assert_the_lease_outlives_the_work,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     REFERENCE_LEASE_SECONDS as _LEASE_SECONDS,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     InMemoryOwner as _InMemoryOwner,
 )
 
@@ -561,5 +561,5 @@ def test_a_racer_that_raises_is_told_which_setting_to_raise() -> None:
 
 
 def test_a_race_timeout_that_is_not_positive_is_refused() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="race_timeout"):
+    with pytest.raises(ObligationContractDesignError, match="race_timeout"):
         _binding(_LockedClaims()).model_copy(update={"race_timeout": 0.0})

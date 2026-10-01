@@ -17,10 +17,10 @@ from uuid import UUID, uuid4
 import pytest
 from django.db import connection, transaction
 
-from due_work_harness.host import racing
-from due_work_harness.integrations.django import django_host
-from due_work_harness.integrations.django import lifecycle_references as ref
-from due_work_harness.profiles.bounded_ownership import (
+from pytest_obligation.host import racing
+from pytest_obligation.integrations.django import django_host
+from pytest_obligation.integrations.django import lifecycle_references as ref
+from pytest_obligation.profiles.bounded_ownership import (
     FencedOwnership,
     assert_claim_is_exclusive_across_connections,
 )

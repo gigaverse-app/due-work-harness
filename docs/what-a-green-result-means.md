@@ -33,7 +33,7 @@ it. Profiles let an adopter declare what it claims and be measured only on that.
 | I, indivisible admission | `profiles.indivisible_admission` | Does the standalone command roll back product intent and obligations after partial admission? |
 | J, job retry limits | `profiles.job_retry_limits` | Does production enforce its retry budget and stable terminal state? |
 
-All ten decisions live in `DueWorkContract.profiles`. `SafetyContract` is a scoped
+All ten decisions live in `ObligationContract.profiles`. `SafetyContract` is a scoped
 H/J-only declaration for effects outside a complete due-work domain adoption.
 
 E has four independent families: stale snapshots, monotonic results, in-flight

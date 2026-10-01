@@ -7,18 +7,18 @@ from pathlib import Path
 from textwrap import dedent
 
 SUITE = """
-    from due_work_harness import Findings, configure
-    from due_work_harness.contract import Adoption, NotApplicable, Profile
-    from due_work_harness.contract import DueWorkContract, due_work_contract_suite
-    from due_work_harness.crash_histories import HandoffHistory
-    from due_work_harness.host import Host
-    from due_work_harness.references import in_memory_handoffs as ref
+    from pytest_obligation import Findings, configure
+    from pytest_obligation.contract import Adoption, NotApplicable, Profile
+    from pytest_obligation.contract import ObligationContract, due_work_contract_suite
+    from pytest_obligation.crash_histories import HandoffHistory
+    from pytest_obligation.host import Host
+    from pytest_obligation.references import in_memory_handoffs as ref
 
     configure(Host(worker_killer=ref.ledger_killer))
     WHY = "the successor is committed separately"
     NA = NotApplicable("self-test")
 
-    CONTRACT = DueWorkContract(
+    CONTRACT = ObligationContract(
         name="split handoff",
         adoption=Adoption.LEGACY,
         profiles={{profile: NA for profile in Profile}},

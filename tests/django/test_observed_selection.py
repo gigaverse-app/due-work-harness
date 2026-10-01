@@ -13,9 +13,9 @@ import pytest
 from celery import Celery
 from django.utils import timezone
 
-from due_work_harness.integrations.celery import Publication, held_publications
-from due_work_harness.integrations.django import lifecycle_references as ref
-from due_work_harness.integrations.django.selection import selection_built_by
+from pytest_obligation.integrations.celery import Publication, held_publications
+from pytest_obligation.integrations.django import lifecycle_references as ref
+from pytest_obligation.integrations.django.selection import selection_built_by
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

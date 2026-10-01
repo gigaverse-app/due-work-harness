@@ -2,13 +2,13 @@
 
 import pytest
 
-from due_work_harness.profiles.job_retry_limits import (
+from pytest_obligation.profiles.job_retry_limits import (
     assert_bounded_retry_contract,
     assert_retry_runner_is_production_bound,
     assert_retryable_failures_reach_terminal_at_the_bound,
     assert_terminal_retry_is_a_no_op,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     InMemoryRetryLifecycle,
     reference_bounded_retry_binding,
 )

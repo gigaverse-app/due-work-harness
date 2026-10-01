@@ -96,22 +96,22 @@ jobs:
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           ls dist
-          test -f "dist/due_work_harness-${VERSION}-py3-none-any.whl"
-          test -f "dist/due_work_harness-${VERSION}.tar.gz"
+          test -f "dist/pytest_obligation-${VERSION}-py3-none-any.whl"
+          test -f "dist/pytest_obligation-${VERSION}.tar.gz"
       - name: An untagged build is a dev release
         if: steps.tag.outputs.tag == ''
         run: |
           ls dist
           wheel=$(basename dist/*.whl)
-          [[ "$wheel" =~ ^due_work_harness-[0-9]+\.[0-9]+(\.[0-9]+)?\.dev[0-9]+-py3-none-any\.whl$ ]]
+          [[ "$wheel" =~ ^pytest_obligation-[0-9]+\.[0-9]+(\.[0-9]+)?\.dev[0-9]+-py3-none-any\.whl$ ]]
       - id: built
         run: |
           wheel=$(basename dist/*.whl)
-          version=${wheel#due_work_harness-}
+          version=${wheel#pytest_obligation-}
           echo "version=${version%-py3-none-any.whl}" >> "$GITHUB_OUTPUT"
       - name: The wheel alone installs, imports without any framework, and is typed
         run: |
-          unzip -l dist/*.whl | grep -q "due_work_harness/py.typed"
+          unzip -l dist/*.whl | grep -q "pytest_obligation/py.typed"
           uv venv /tmp/wheel && uv pip install --python /tmp/wheel dist/*.whl
           /tmp/wheel/bin/python scripts/check_core_is_framework_free.py
       - uses: actions/upload-artifact@v7
@@ -128,7 +128,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/due-work-harness/${{ needs.build.outputs.version }}/
+      url: https://pypi.org/project/pytest-obligation/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write
     steps:
@@ -146,7 +146,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/due-work-harness/${{ needs.build.outputs.version }}/
+      url: https://test.pypi.org/project/pytest-obligation/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write
     steps:
@@ -175,7 +175,7 @@ jobs:
         run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
 
   move-major-tag:
-    # `uses: gigaverse-app/due-work-harness/check@v0` follows the latest v0.x.y release.
+    # `uses: gigaverse-app/pytest-obligation/check@v0` follows the latest v0.x.y release.
     needs: [build, publish-pypi]
     if: always() && needs.publish-pypi.result == 'success' && needs.build.outputs.tag != ''
     runs-on: ubuntu-latest

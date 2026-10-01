@@ -24,7 +24,7 @@ import pytest
 from django.db import connection
 from django.utils import timezone
 
-from due_work_harness.crash_histories import (
+from pytest_obligation.crash_histories import (
     CallableDelivery,
     Delivery,
     ExternalCall,
@@ -33,7 +33,7 @@ from due_work_harness.crash_histories import (
     assert_pinned_outcomes,
     crash_histories,
 )
-from due_work_harness.integrations.django import lifecycle_references as ref
+from pytest_obligation.integrations.django import lifecycle_references as ref
 
 pytestmark = pytest.mark.django_db(transaction=True)
 Status = ref.Status

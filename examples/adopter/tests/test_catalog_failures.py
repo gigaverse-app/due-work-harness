@@ -7,7 +7,7 @@ import pytest
 from adopter_app.catalog import Catalog
 from test_bindings import catalog_contract
 
-from due_work_harness.interleavings import HistoryTrace, InterleavingFailure, replay_history
+from pytest_obligation.interleavings import HistoryTrace, InterleavingFailure, replay_history
 
 
 def forget_remote_drift(original: Callable[..., None]) -> Callable[..., None]:
@@ -64,7 +64,7 @@ def test_generated_histories_detect_and_replay_application_defects(
 
 def test_optional_search_runs_the_actual_catalog() -> None:
     pytest.importorskip("hypothesis")
-    from due_work_harness.interleavings.exploration.hypothesis import explore
+    from pytest_obligation.interleavings.exploration.hypothesis import explore
 
     scenario = catalog_contract("search control").in_flight["catalog revisions"]
     explore(scenario, max_examples=30, max_steps=20)

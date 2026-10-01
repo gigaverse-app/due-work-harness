@@ -4,7 +4,7 @@ from collections.abc import Callable
 from sqlite3 import Connection
 from typing import Literal
 
-from due_work_harness.models import MutableHarnessModel
+from pytest_obligation.models import MutableHarnessModel
 
 AdmissionFault = Literal[
     "none",

@@ -1,0 +1,20 @@
+{
+  "name": "pytest-obligation",
+  "interface": {
+    "displayName": "pytest-obligation"
+  },
+  "plugins": [
+    {
+      "name": "pytest-obligation",
+      "source": {
+        "source": "local",
+        "path": "../../plugins/pytest-obligation"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

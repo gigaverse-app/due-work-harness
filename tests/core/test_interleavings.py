@@ -6,22 +6,22 @@ from functools import partial
 
 import pytest
 
-from due_work_harness.interleavings.bindings import (
+from pytest_obligation.interleavings.bindings import (
     EvidenceConfluence,
     EvidenceSession,
     InFlightConvergence,
     InFlightSession,
 )
-from due_work_harness.interleavings.engine.catalog import evidence_histories
-from due_work_harness.interleavings.engine.provider import AcceptedProviderRequest, ProviderControl
-from due_work_harness.interleavings.model import (
+from pytest_obligation.interleavings.engine.catalog import evidence_histories
+from pytest_obligation.interleavings.engine.provider import AcceptedProviderRequest, ProviderControl
+from pytest_obligation.interleavings.model import (
     Fault,
     History,
     HistoryTrace,
     InterleavingFailure,
     Operation,
 )
-from due_work_harness.interleavings.testing.reference import evidence_reference, reference
+from pytest_obligation.interleavings.testing.reference import evidence_reference, reference
 
 
 def scenario(*, forget: bool = False) -> InFlightConvergence[int, str, str]:
@@ -64,7 +64,7 @@ def test_late_completion_rejects_lost_repair_debt_and_replays() -> None:
         declaration.run(history)
     trace = HistoryTrace.model_validate_json(caught.value.__notes__[-1])
     assert trace.invariant == "convergence"
-    from due_work_harness.interleavings.engine.runner import replay_history
+    from pytest_obligation.interleavings.engine.runner import replay_history
 
     with pytest.raises(InterleavingFailure, match="convergence"):
         replay_history(declaration, trace)
@@ -90,7 +90,7 @@ def test_dependencies_are_preserved_including_duplicates_and_partial_evidence() 
 
 
 def test_missing_provider_seam_is_not_a_behavioral_gap() -> None:
-    from due_work_harness.interleavings.model import Fault
+    from pytest_obligation.interleavings.model import Fault
 
     provider = ProviderControl(accept=lambda apply: AcceptedProviderRequest(apply=apply))
     provider.arm("missing", Fault.HOLD)
@@ -100,8 +100,8 @@ def test_missing_provider_seam_is_not_a_behavioral_gap() -> None:
 
 def test_gap_policy_refuses_new_features_and_only_matches_named_invariant() -> None:
 
-    from due_work_harness.interleavings.adapters.integration import run_case, validate
-    from due_work_harness.interleavings.model import KnownFailure, KnownInterleavingFailure
+    from pytest_obligation.interleavings.adapters.integration import run_case, validate
+    from pytest_obligation.interleavings.model import KnownFailure, KnownInterleavingFailure
 
     broken = scenario(forget=True)
     history = next(h for h in broken.histories() if h.id == "IF.two-orders/write/late")
@@ -135,8 +135,8 @@ def test_gap_policy_refuses_new_features_and_only_matches_named_invariant() -> N
 def test_explorer_finds_fourth_revision_defect_and_replays_without_hypothesis() -> None:
     pytest.importorskip("hypothesis")
 
-    from due_work_harness.interleavings.engine.runner import replay_history
-    from due_work_harness.interleavings.exploration.hypothesis import explore
+    from pytest_obligation.interleavings.engine.runner import replay_history
+    from pytest_obligation.interleavings.exploration.hypothesis import explore
 
     broken = scenario().model_copy(update={"bind": lambda: reference(forget_at=4)})
     for history in broken.histories():
@@ -162,8 +162,8 @@ class NoHypothesis(MetaPathFinder):
         if fullname == 'hypothesis' or fullname.startswith('hypothesis.'):
             raise AssertionError('fixed harness imported optional Hypothesis')
 sys.meta_path.insert(0, NoHypothesis())
-from due_work_harness.interleavings.engine.catalog import evidence_histories
-from due_work_harness.interleavings.engine.runner import replay_history
+from pytest_obligation.interleavings.engine.catalog import evidence_histories
+from pytest_obligation.interleavings.engine.runner import replay_history
 assert evidence_histories(('a', 'b'), (), None, False)
 assert 'hypothesis' not in sys.modules
 """
@@ -173,7 +173,7 @@ assert 'hypothesis' not in sys.modules
 def test_provider_controls_distinguish_acceptance_application_and_caller_return() -> None:
     from functools import partial
 
-    from due_work_harness.interleavings.model import Fault
+    from pytest_obligation.interleavings.model import Fault
 
     applied: list[str] = []
     provider = ProviderControl(accept=lambda apply: AcceptedProviderRequest(apply=apply))
@@ -201,7 +201,7 @@ def test_provider_controls_distinguish_acceptance_application_and_caller_return(
 
 
 def test_counterfeit_production_binding_fails_before_behavioral_assertions() -> None:
-    from due_work_harness.interleavings.engine.runner import guard
+    from pytest_obligation.interleavings.engine.runner import guard
 
     def invented_recovery() -> None:
         pass
@@ -237,7 +237,7 @@ def test_failed_history_exits_its_fresh_environment_and_replay_reenters() -> Non
 def test_replay_rejects_incompatible_versions() -> None:
     from pydantic import ValidationError
 
-    from due_work_harness.interleavings.engine.runner import replay_history
+    from pytest_obligation.interleavings.engine.runner import replay_history
 
     declaration = scenario()
     trace = HistoryTrace(scenario=declaration.name, scenario_version=2, history=declaration.histories()[0])
@@ -251,7 +251,7 @@ def test_exploration_respects_step_budget_and_valid_revision_order() -> None:
     pytest.importorskip("hypothesis")
     from hypothesis import given, settings
 
-    from due_work_harness.interleavings.exploration.hypothesis import histories
+    from pytest_obligation.interleavings.exploration.hypothesis import histories
 
     @settings(max_examples=20, deadline=None, database=None)
     @given(histories(scenario(), 15))
@@ -265,7 +265,7 @@ def test_exploration_respects_step_budget_and_valid_revision_order() -> None:
 def test_batching_enumerates_partitions_and_detects_incremental_evidence_loss() -> None:
     from functools import partial
 
-    from due_work_harness.interleavings.testing.reference import evidence_reference
+    from pytest_obligation.interleavings.testing.reference import evidence_reference
 
     declaration = evidence_scenario()
     histories = declaration.histories()
@@ -326,7 +326,7 @@ def test_explored_batches_preserve_prerequisites_budget_and_outcomes() -> None:
     pytest.importorskip("hypothesis")
     from hypothesis import given, settings
 
-    from due_work_harness.interleavings.exploration.hypothesis import histories
+    from pytest_obligation.interleavings.exploration.hypothesis import histories
 
     declaration = evidence_scenario().model_copy(update={"dependencies": (("x", "y"),)})
 
@@ -370,7 +370,7 @@ def test_quiet_recovery_preserves_revision_identity_as_well_as_payload(corrupt_r
 
 @pytest.mark.parametrize("after_retry", [False, True], ids=["initial", "after-retry"])
 def test_missing_later_expectation_fails_before_an_earlier_behavioral_gap(after_retry: bool) -> None:
-    from due_work_harness.interleavings.bindings import EvidenceRetry
+    from pytest_obligation.interleavings.bindings import EvidenceRetry
 
     prepared: list[bool] = []
 
@@ -399,7 +399,7 @@ def test_missing_later_expectation_fails_before_an_earlier_behavioral_gap(after_
 
 @pytest.mark.parametrize("fails_on_exit", [False, True], ids=["action", "scope-cleanup"])
 def test_ordered_actors_stop_after_failed_action_or_scope_cleanup(fails_on_exit: bool) -> None:
-    from due_work_harness.interleavings.engine.runner import ordered_actors
+    from pytest_obligation.interleavings.engine.runner import ordered_actors
 
     called: list[str] = []
 
@@ -426,7 +426,7 @@ def test_ordered_actors_inherit_but_do_not_leak_execution_context() -> None:
     from contextvars import ContextVar
     from threading import current_thread
 
-    from due_work_harness.interleavings.engine.runner import ordered_actors
+    from pytest_obligation.interleavings.engine.runner import ordered_actors
 
     universe = ContextVar("interleaving-test-universe", default="missing")
     caller = current_thread()
@@ -450,7 +450,7 @@ def test_ordered_actors_inherit_but_do_not_leak_execution_context() -> None:
 def test_evidence_effect_counts_are_validated_at_construction(count: object) -> None:
     from pydantic import ValidationError
 
-    from due_work_harness.interleavings.bindings import EvidenceExpectation
+    from pytest_obligation.interleavings.bindings import EvidenceExpectation
 
     with pytest.raises(ValidationError):
         EvidenceExpectation.model_validate({"observation": "ok", "effects": {"recipient": count}})
@@ -479,7 +479,7 @@ def test_declarations_validate_without_entering_the_binding() -> None:
 
 
 def test_intents_preserve_canonical_domain_objects() -> None:
-    from due_work_harness.interleavings.bindings import Intent
+    from pytest_obligation.interleavings.bindings import Intent
 
     canonical = object()
     intent = Intent(value=canonical, expected="ready")
@@ -518,7 +518,7 @@ def test_validated_session_preserves_live_controller_identity_and_isolates_histo
 def test_evidence_components_validate_callbacks_without_invoking_them(retry: bool) -> None:
     from pydantic import ValidationError
 
-    from due_work_harness.interleavings import EvidenceArrival, EvidenceRetry
+    from pytest_obligation.interleavings import EvidenceArrival, EvidenceRetry
 
     invoked: list[bool] = []
     if retry:

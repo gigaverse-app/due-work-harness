@@ -18,8 +18,8 @@ Each demo **adopts the harness the way a project does**:
   check at the pinned upstream, and a baseline for the handoffs no contract
   insures yet: `due-work-harness check --root demos/<demo>` passes, and CI runs
   it through the `check` action;
-- a `DueWorkContract` for the obligation, with a disposition for every profile
-  and both safety profiles, its handoffs and their delivery, decorated with
+- an `ObligationContract` for the obligation, with a disposition for every A–J
+  profile, its handoffs and their delivery, decorated with
   `@due_work_contract_suite(..., covers=(DueWorkSource(<the site>),))`. What
   the harness finds is declared as legacy gaps (`KnownGap`, `handoff_gaps`, an
   `ExtraProof`'s `gap`), each generated as a **strict xfail** carrying its
@@ -38,7 +38,7 @@ A new demo, or a report to the project a demo found something in, follows the
 
 Where the framework has a capability, the contract **claims** it and the harness
 proves it against the framework itself, through its integration
-(`due_work_harness.integrations.procrastinate`, `.dbos`); a decline or "not
+(`pytest_obligation.integrations.procrastinate`, `.dbos`); a decline or "not
 applicable" is kept only where the framework genuinely lacks the capability,
 with the reason. Findings in the framework, not the demo, appear in both
 contracts, since the demo's fix cannot change them.

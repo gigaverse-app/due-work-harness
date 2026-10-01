@@ -6,8 +6,8 @@ from rq import Queue
 from rq.job import JobStatus
 from test_bindings import catalog_contract
 
-from due_work_harness import due_work_contract_suite
-from due_work_harness.integrations.rq import worker_pass
+from pytest_obligation import due_work_contract_suite
+from pytest_obligation.integrations.rq import worker_pass
 from tests.rq.connection import CONNECTION
 from tests_support.catalog_executor import execute, registered
 

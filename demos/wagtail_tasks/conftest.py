@@ -1,9 +1,9 @@
 from django_tasks_db.compat import task_finished, task_started
 from wagtail.signals import page_published
 
-from due_work_harness import configure
-from due_work_harness.integrations.django import django_host
-from due_work_harness.integrations.django.receivers import django_receiver_breaker
+from pytest_obligation import configure
+from pytest_obligation.integrations.django import django_host
+from pytest_obligation.integrations.django.receivers import django_receiver_breaker
 
 # The system under test is Wagtail, its tasks run by django-tasks-db, on Django: bindings must
 # reach one of them. Wagtail's migrations seed its root page, default site and root collection,

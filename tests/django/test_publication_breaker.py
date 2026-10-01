@@ -12,7 +12,7 @@ import pytest
 from celery import Celery
 from kombu.exceptions import OperationalError
 
-from due_work_harness.integrations.celery import celery_publication_breaker
+from pytest_obligation.integrations.celery import celery_publication_breaker
 
 
 @pytest.fixture

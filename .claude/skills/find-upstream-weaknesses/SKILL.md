@@ -10,14 +10,19 @@ on when you reach it. The copy-and-fill templates are in
 [docs/upstream-templates/](../../../docs/upstream-templates/). This file is the runbook: what to do, in
 order, and the rules that are not negotiable.
 
+The installable plugin's [probe-upstream-due-work](../../../plugins/pytest-obligation/skills/probe-upstream-due-work/SKILL.md)
+skill is the portable route for people working outside this repository. This repository-local skill
+retains the maintainer-specific release and disclosure workflow below; neither skill replaces
+gigaverse-backend's own due-work runtime and conformance instructions.
+
 ## Rules that do not bend
 
 - **Expose, don't fix.** Deliver a test that fails for a stated reason and a contract that finds it. Never
   propose or write the fix in an issue or PR.
-- **Every adoption PR MUST carry `DueWorkContract` and a collected
+- **Every adoption PR MUST carry `ObligationContract` and a collected
   `@due_work_contract_suite(CONTRACT)` class.** Follow the
   [required adoption shape](../../../ADOPTING.md#required-adoption-shape): declare
-  all lifecycle/safety profiles, put histories in the contract, execute the generated
+  all A–J profiles for the current source (or the installed release's matching catalog), put histories in the contract, execute the generated
   cases, and link the declaration, suite and `--due-work-summary` report. Ordinary
   tests and direct crash-helper calls are supporting evidence, never a substitute.
   The decorator generates pytest cases, not Python files; use `--junitxml` when a
@@ -79,7 +84,7 @@ Work in a scratch directory, not in a checkout that matters. Track the steps as 
 
 - [ ] their own suite ran green here first; the baseline is known
 - [ ] each finding has an independent reproduction, and only measured claims are in the text
-- [ ] `DueWorkContract`, its decorated collected class, `Findings`, gaps, plain test, and the magic comment are in the pushed commit
+- [ ] `ObligationContract`, its decorated collected class, `Findings`, gaps, plain test, and the magic comment are in the pushed commit
 - [ ] generated node IDs were collected and executed; the PR links the declaration, class, and summary/artifact, with gaps counted separately
 - [ ] the harness gap (if any) is fixed, tested in CI on that stack, released, and the pins raised
 - [ ] issues, PR and plain-language comments are posted with the self-identification line, no fix offered

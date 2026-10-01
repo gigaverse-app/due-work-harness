@@ -1,6 +1,6 @@
 # Prefect flow bodies and recurrence
 
-Install `due-work-harness[prefect]` for Prefect 3.7.
+Install `pytest-obligation[prefect]` for Prefect 3.7.
 
 `prefect_flow_call(flow, runner)` turns a real `prefect.Flow` into a synchronous
 history binding. It executes `flow.fn`, awaits the entire coroutine on the
@@ -36,7 +36,7 @@ caller-owned. This is not a whole-loop or whole-process termination guarantee.
 
 ## Required adoption surface
 
-Bind this flow callable and schedule evidence through a `DueWorkContract` with
+Bind this flow callable and schedule evidence through an `ObligationContract` with
 a collected `@due_work_contract_suite(CONTRACT)` class. Put histories in
 `handoffs=` and claim only profiles for which production bindings exist.
 Calling the adapter in ordinary tests alone is incomplete domain adoption; see

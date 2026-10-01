@@ -8,7 +8,7 @@ obligation: every created book ends up indexed.
 
 Where procrastinate has a capability, the contract claims it and the harness
 proves it end to end against procrastinate's own machinery, through
-``due_work_harness.integrations.procrastinate``: its workers, heartbeats and
+``pytest_obligation.integrations.procrastinate``: its workers, heartbeats and
 documented reclaim (profile B), its ``remove_old_jobs`` pruning (profile D),
 and, for the demo's task, its retry budget and replay. What the harness finds
 is declared as legacy gaps, each a strict xfail; ``DEMO_WITH_ITS_FIXES`` is the
@@ -33,14 +33,13 @@ from procrastinate.demos.demo_django.demo import tasks
 from procrastinate.demos.demo_django.demo.models import Book
 from procrastinate.demos.demo_django.demo.views import CreateBookView
 
-from due_work_harness import (
+from pytest_obligation import (
     AdmissionAtomicity,
     Adoption,
     BoundedRetry,
     CallableDelivery,
     Claim,
     Decline,
-    DueWorkContract,
     DueWorkSource,
     ExtraProof,
     FencedOwnership,
@@ -48,16 +47,17 @@ from due_work_harness import (
     KnownGap,
     MissingReclaim,
     NotApplicable,
+    ObligationContract,
     Profile,
     ReplaySafeEffect,
     Retention,
     assert_provider_call_holds_no_transaction,
     due_work_contract_suite,
 )
-from due_work_harness.contract import Disposition
-from due_work_harness.integrations import procrastinate as integration
-from due_work_harness.integrations.django.admission import AdmissionInterrupted, interrupt_after_statement
-from due_work_harness.integrations.procrastinate import (
+from pytest_obligation.contract import Disposition
+from pytest_obligation.integrations import procrastinate as integration
+from pytest_obligation.integrations.django.admission import AdmissionInterrupted, interrupt_after_statement
+from pytest_obligation.integrations.procrastinate import (
     attempts_by_job,
     django_worker_once,
     redispatched_by,
@@ -331,7 +331,7 @@ def _profiles() -> dict[Profile, Disposition]:
     }
 
 
-DEMO_AS_SHIPPED = DueWorkContract(
+DEMO_AS_SHIPPED = ObligationContract(
     name="procrastinate demo_django: create book",
     adoption=Adoption.LEGACY,
     transactional=True,
@@ -388,7 +388,7 @@ class TestTheDemoAsShipped:
     pass
 
 
-DEMO_WITH_ITS_FIXES = DueWorkContract(
+DEMO_WITH_ITS_FIXES = ObligationContract(
     name="procrastinate demo_django: create book, with its fixes",
     # Legacy only for profile B's gap, which is procrastinate's own, not the demo's.
     adoption=Adoption.LEGACY,

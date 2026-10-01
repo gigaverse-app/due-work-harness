@@ -1,6 +1,6 @@
 # MongoDB histories
 
-Install `due-work-harness[mongodb]` and configure
+Install `pytest-obligation[mongodb]` and configure
 `mongodb_host(client, production_packages={"your_app"})`. For Motor, pass the
 Motor client's `.delegate`; run async application calls to completion on the
 same event loop your client uses.
@@ -32,7 +32,7 @@ provider deduplication makes the same generated history detect a duplicate effec
 
 ## Required adoption surface
 
-Use this host inside a `DueWorkContract` adoption with a collected
+Use this host inside an `ObligationContract` adoption with a collected
 `@due_work_contract_suite(CONTRACT)` class. The adapter supplies fault injection;
 it does not replace the contract or generate cases on its own. See
 [required adoption shape](../ADOPTING.md#required-adoption-shape) for declarations

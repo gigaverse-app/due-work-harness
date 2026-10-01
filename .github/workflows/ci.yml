@@ -58,7 +58,7 @@ jobs:
       # xdist is no framework: it lets the verify option's self-tests split a session across workers.
       - run: uv sync --python ${{ matrix.python }} --locked --no-default-groups --group xdist
       - run: uv run --python ${{ matrix.python }} --no-sync python scripts/check_core_is_framework_free.py
-      - run: uv run --python ${{ matrix.python }} --no-sync python -m compileall -q src/due_work_harness
+      - run: uv run --python ${{ matrix.python }} --no-sync python -m compileall -q src/pytest_obligation
       - run: uv run --python ${{ matrix.python }} --no-sync pytest tests/core
 
   minimum-models:
@@ -102,7 +102,7 @@ jobs:
       PGUSER: postgres
       PGPASSWORD: postgres
       PGPORT: "5432"
-      PGDATABASE: due_work_harness
+      PGDATABASE: pytest_obligation
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -418,9 +418,12 @@ jobs:
         with:
           enable-cache: true
       - run: uv build
+      - run: unzip -l dist/*.whl | grep -q "pytest_obligation/py.typed"
       - run: unzip -l dist/*.whl | grep -q "due_work_harness/py.typed"
       - run: uv venv /tmp/wheel && uv pip install --python /tmp/wheel dist/*.whl
       - run: /tmp/wheel/bin/python scripts/check_core_is_framework_free.py
+      - name: Verify old and new adopters against the installed wheel
+        run: /tmp/wheel/bin/python -m pytest tests/core/test_compatibility.py tests/core/test_package_identity.py -q
 
   actions:
     # The published GitHub Actions, run against the example adopter the way a project would use them.

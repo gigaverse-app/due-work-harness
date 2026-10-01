@@ -8,13 +8,13 @@ import pytest
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from aiokafka.errors import RequestTimedOutError
 
-from due_work_harness.integrations.aiokafka import (
+from pytest_obligation.integrations.aiokafka import (
     aiokafka_fenced,
     aiokafka_offset_reply_breaker,
     aiokafka_worker_killer,
 )
-from due_work_harness.models import DueWorkContractDesignError
-from due_work_harness.worker_death import CommitWorker, WorkerDied
+from pytest_obligation.models import ObligationContractDesignError
+from pytest_obligation.worker_death import CommitWorker, WorkerDied
 
 BROKER = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:19094")
 
@@ -88,7 +88,7 @@ def test_auto_commit_cannot_bypass_injected_offset_boundary():
     async def history():
         consumer = AIOKafkaConsumer(bootstrap_servers=BROKER, group_id="unsafe")
         try:
-            with pytest.raises(DueWorkContractDesignError, match="auto_commit=False"):
+            with pytest.raises(ObligationContractDesignError, match="auto_commit=False"):
                 with aiokafka_worker_killer(consumer)(1):
                     pass
         finally:

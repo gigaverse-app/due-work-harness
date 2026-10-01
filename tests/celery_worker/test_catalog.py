@@ -12,7 +12,7 @@ from celery import Celery
 from celery.contrib.testing.worker import start_worker
 from test_bindings import catalog_contract
 
-from due_work_harness import due_work_contract_suite
+from pytest_obligation import due_work_contract_suite
 from tests.redis_databases import redis_url
 from tests_support.catalog_executor import execute, registered
 

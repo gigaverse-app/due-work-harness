@@ -21,19 +21,19 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from due_work_harness.contract import _binding_proofs
-from due_work_harness.host import Host, current_host, hosted
-from due_work_harness.integrations.celery import celery_publications
-from due_work_harness.integrations.django import django_host
-from due_work_harness.integrations.django import lifecycle_references as ref
-from due_work_harness.integrations.django.lifecycle_states import (
+from pytest_obligation.contract import _binding_proofs
+from pytest_obligation.host import Host, current_host, hosted
+from pytest_obligation.integrations.celery import celery_publications
+from pytest_obligation.integrations.django import django_host
+from pytest_obligation.integrations.django import lifecycle_references as ref
+from pytest_obligation.integrations.django.lifecycle_states import (
     TERMINAL_OBLIGATION_PROOFS,
     Lifecycle,
     _admitted_values,
     assert_every_lifecycle_state_is_declared,
     assert_terminal_states_owe_nothing_further,
 )
-from due_work_harness.profiles.automatic_recovery import (
+from pytest_obligation.profiles.automatic_recovery import (
     DUE_WORK_PROOFS,
     DueWorkSweep,
     OwedWorkVariant,
@@ -63,7 +63,7 @@ def attempt_table(transactional_db: None) -> Iterator[None]:
 @pytest.fixture
 def production_host() -> Iterator[Host]:
     """The Django host with the harness package as production, so a closure over the references reaches it."""
-    with hosted(django_host({"due_work_harness"}, publication_recorder=celery_publications)) as host:
+    with hosted(django_host({"pytest_obligation"}, publication_recorder=celery_publications)) as host:
         yield host
 
 

@@ -14,10 +14,10 @@ from collections.abc import Callable
 
 import pytest
 
-from due_work_harness.coherence import (
+from pytest_obligation.coherence import (
     assert_automatic_recovery_consumes_derived_obligations,
 )
-from due_work_harness.profiles.fact_derived_obligations import (
+from pytest_obligation.profiles.fact_derived_obligations import (
     STATE_DERIVED_PROOFS,
     StateDerived,
     assert_derivation_bindings_are_production_bound,
@@ -30,19 +30,19 @@ from due_work_harness.profiles.fact_derived_obligations import (
     assert_stopped_work_is_not_revived,
     assert_unrecorded_obligation_is_discovered,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     MaterialisingDeriver as _MaterialisingDeriver,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     SelectionIsTheDerivation as _SelectionIsTheDerivation,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     WorkRecord as _Record,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     materialising_derivation_binding as _binding,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     reference_derivation_binding,
 )
 

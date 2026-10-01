@@ -2,7 +2,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from due_work_harness.host import Host, hosted
+from pytest_obligation.host import Host, hosted
 
 
 def pytest_configure(config: pytest.Config) -> None:

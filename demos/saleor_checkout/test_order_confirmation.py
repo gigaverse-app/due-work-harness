@@ -84,16 +84,16 @@ from saleor.webhook.models import Webhook
 from saleor.webhook.transport.asynchronous import transport as webhook_transport
 from saleor.webhook.transport.utils import WebhookResponse
 
-from due_work_harness import (
+from pytest_obligation import (
     Adoption,
     CallableDelivery,
     Claim,
     Decline,
-    DueWorkContract,
     DueWorkSource,
     HandoffHistory,
     KnownGap,
     NotApplicable,
+    ObligationContract,
     Profile,
     ReplaySafeEffect,
     Retention,
@@ -101,10 +101,10 @@ from due_work_harness import (
     due_work_contract_suite,
     due_work_database,
 )
-from due_work_harness.crash_histories import assert_crash_at_every_commit_converges, assert_histories_converge
-from due_work_harness.integrations.celery import celery_beat_evidence, held_publications
-from due_work_harness.integrations.django.selection import selection_built_by
-from due_work_harness.profiles.automatic_recovery import DueWorkSweep, InFlightExecution
+from pytest_obligation.crash_histories import assert_crash_at_every_commit_converges, assert_histories_converge
+from pytest_obligation.integrations.celery import celery_beat_evidence, held_publications
+from pytest_obligation.integrations.django.selection import selection_built_by
+from pytest_obligation.profiles.automatic_recovery import DueWorkSweep, InFlightExecution
 
 #: Far enough ahead for every age-based task Saleor schedules to act: the longest,
 #: deleting a user's checkout, waits USER_CHECKOUTS_TIMEDELTA (90 days).
@@ -446,7 +446,7 @@ CONFIRMATION_REPLAY_GAP = {
 }
 
 
-CHECKOUT_AS_SHIPPED = DueWorkContract(
+CHECKOUT_AS_SHIPPED = ObligationContract(
     name="saleor checkout",
     adoption=Adoption.LEGACY,
     transactional=True,
@@ -723,7 +723,7 @@ def automatic_completion_sweep() -> DueWorkSweep:
     )
 
 
-CHECKOUT_WITH_AUTOMATIC_COMPLETION = DueWorkContract(
+CHECKOUT_WITH_AUTOMATIC_COMPLETION = ObligationContract(
     name="saleor checkout, Transactions API with automatic completion",
     adoption=Adoption.LEGACY,
     transactional=True,

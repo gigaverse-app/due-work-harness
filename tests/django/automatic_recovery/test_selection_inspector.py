@@ -25,15 +25,15 @@ from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
-from due_work_harness.contract import ScheduledSelection
-from due_work_harness.helpers import undeclared
-from due_work_harness.host import Host, hosted
-from due_work_harness.integrations.celery import celery_beat_evidence, celery_beat_interval, celery_publications
-from due_work_harness.integrations.django import django_host
-from due_work_harness.integrations.django import lifecycle_references as ref
-from due_work_harness.integrations.django.selection import DjangoSelectionInspector, explain_index_eligibility
-from due_work_harness.integrations.postgres_plans import iter_plan_nodes
-from due_work_harness.profiles.automatic_recovery import (
+from pytest_obligation.contract import ScheduledSelection
+from pytest_obligation.helpers import undeclared
+from pytest_obligation.host import Host, hosted
+from pytest_obligation.integrations.celery import celery_beat_evidence, celery_beat_interval, celery_publications
+from pytest_obligation.integrations.django import django_host
+from pytest_obligation.integrations.django import lifecycle_references as ref
+from pytest_obligation.integrations.django.selection import DjangoSelectionInspector, explain_index_eligibility
+from pytest_obligation.integrations.postgres_plans import iter_plan_nodes
+from pytest_obligation.profiles.automatic_recovery import (
     DueWorkSweep,
     assert_idle_tick_is_cheap,
     assert_selection_cost_does_not_grow_with_the_history,
@@ -249,7 +249,7 @@ def test_an_indexed_selection_passes_the_scan_ratio() -> None:
 
 # --- Schedule evidence from Django settings -------------------------------------------
 
-_SCHEDULED_TASK = "due_work_harness.integrations.django.lifecycle_references.run_recovery_tick"
+_SCHEDULED_TASK = "pytest_obligation.integrations.django.lifecycle_references.run_recovery_tick"
 
 
 def test_beat_evidence_reads_the_django_schedule(settings: Any) -> None:
@@ -432,7 +432,7 @@ def test_the_inspector_asks_the_bitmap_plan_when_the_first_walks_an_unrelated_in
 ) -> None:
     # The planner's first pick is scripted (it depends on statistics a test cannot pin); the inspector's
     # second question and its verdict are what is under test.
-    from due_work_harness.integrations.django import selection
+    from pytest_obligation.integrations.django import selection
 
     bitmap = {
         "Node Type": "Bitmap Heap Scan",

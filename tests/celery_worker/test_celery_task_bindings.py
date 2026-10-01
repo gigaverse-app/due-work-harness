@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from celery import Celery, Task, shared_task
 
-from due_work_harness.binding import authored_inversion_names, callable_code
+from pytest_obligation.binding import authored_inversion_names, callable_code
 
 app = Celery("due_work_binding_probes")
 

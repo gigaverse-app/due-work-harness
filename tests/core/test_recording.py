@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from due_work_harness.crash_histories import Findings, HistoryRun, findings_from
-from due_work_harness.recording import FindingsRecorder, findings_literal, report
+from pytest_obligation.crash_histories import Findings, HistoryRun, findings_from
+from pytest_obligation.recording import FindingsRecorder, findings_literal, report
 
 
 def _evaluated(findings: Findings) -> tuple[object, dict[str, object]]:
