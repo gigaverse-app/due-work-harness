@@ -43,7 +43,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from due_work_harness.contract import (
     Adoption,
@@ -51,12 +51,12 @@ from due_work_harness.contract import (
     DueWorkContract,
     NotApplicable,
     Profile,
-    SafetyContract,
-    SafetyProfile,
 )
 from due_work_harness.crash_histories import Findings
 from due_work_harness.helpers import wait_until
 from due_work_harness.integrations.task_queues import (
+    application_admission,
+    application_gate,
     replay_safety_is_the_functions,
     settled_by_one_worker,
     the_obligation_is_the,
@@ -122,7 +122,11 @@ def running_worker(
             output.close()
 
 
-def worker_history[HandleT, ObservationT](
+HandleT = TypeVar("HandleT")
+ObservationT = TypeVar("ObservationT")
+
+
+def worker_history(
     *,
     name: str,
     app: str,
@@ -219,19 +223,16 @@ def worker_contract(
             Profile.D: NotApplicable(RESULTS_ARE_NOT_OWED),
             Profile.E: settled_by_one_worker("delivery"),
             Profile.F: the_obligation_is_the("message"),
+            Profile.H: replay_safety_is_the_functions(
+                "task", "Celery", runs_again="with task_acks_late, a redelivery after its worker was lost"
+            ),
+            Profile.J: Decline(
+                "a task's retries are its own (self.retry, autoretry_for); a redelivery after a lost worker is "
+                "not counted as one"
+            ),
+            Profile.G: application_gate("Celery"),
+            Profile.I: application_admission("Celery"),
         },
-        safety=SafetyContract(
-            name=name,
-            profiles={
-                SafetyProfile.REPLAY_SAFE_EXECUTION: replay_safety_is_the_functions(
-                    "task", "Celery", runs_again="with task_acks_late, a redelivery after its worker was lost"
-                ),
-                SafetyProfile.BOUNDED_RETRY: Decline(
-                    "a task's retries are its own (self.retry, autoretry_for); a redelivery after a lost worker is "
-                    "not counted as one"
-                ),
-            },
-        ),
         process_handoffs=(history,),
         handoff_gaps={history.name: gap} if gap is not None else {},
         fixtures=fixtures,

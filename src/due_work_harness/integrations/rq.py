@@ -39,14 +39,14 @@ from due_work_harness.contract import (
     Decline,
     DueWorkContract,
     Profile,
-    SafetyContract,
-    SafetyProfile,
 )
 from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, Findings, HandoffHistory
 from due_work_harness.faults import CountedHooks
 from due_work_harness.host import current_host
 from due_work_harness.integrations.task_queues import (
     TaskOutcome,
+    application_admission,
+    application_gate,
     keeping_signal_handlers,
     replay_safety_is_the_functions,
     settled_by_one_worker,
@@ -54,7 +54,7 @@ from due_work_harness.integrations.task_queues import (
     worker_history,
 )
 from due_work_harness.profiles.bounded_ownership import FencedOwnership
-from due_work_harness.safety.bounded_retry import BoundedRetry
+from due_work_harness.profiles.job_retry_limits import BoundedRetry
 
 
 def worker_pass(
@@ -361,7 +361,7 @@ def worker_contract(
     other_queue: str | None = None,
     external_calls: Sequence[ExternalCall] = (),
     delivery: Delivery | None = None,
-    gaps: dict[Profile | SafetyProfile, dict[str, str]] | None = None,
+    gaps: dict[Profile, dict[str, str]] | None = None,
     handoff_gaps: dict[str, str] | None = None,
     findings: Mapping[str, Findings] | None = None,
     fixtures: tuple[str, ...] = (),
@@ -420,20 +420,15 @@ def worker_contract(
             Profile.D: Decline(SERVER_CLOCK_RETENTION),
             Profile.E: settled_by_one_worker("job"),
             Profile.F: the_obligation_is_the("job"),
-        },
-        safety=SafetyContract(
-            name=name,
-            adoption=Adoption.LEGACY,
-            profiles={
-                SafetyProfile.REPLAY_SAFE_EXECUTION: replay_safety_is_the_functions(
-                    "job", "RQ", runs_again="a retry, or a reclaim after a worker's death"
-                ),
-                SafetyProfile.BOUNDED_RETRY: Claim(gaps=gaps.get(SafetyProfile.BOUNDED_RETRY, {})),
-            },
-            retry=lambda: bounded_retry(
-                connection, queue=queue, enqueue_failing=enqueue_failing, failures=failures, max_retries=max_retries
+            Profile.H: replay_safety_is_the_functions(
+                "job", "RQ", runs_again="a retry, or a reclaim after a worker's death"
             ),
-            transactional=True,
+            Profile.J: Claim(gaps=gaps.get(Profile.J, {})),
+            Profile.G: application_gate("RQ"),
+            Profile.I: application_admission("RQ"),
+        },
+        retry=lambda: bounded_retry(
+            connection, queue=queue, enqueue_failing=enqueue_failing, failures=failures, max_retries=max_retries
         ),
         ownership=lambda: ownership(connection, enqueue=enqueue, queue=queue),
         handoffs=tuple(histories),

@@ -22,7 +22,7 @@ gigaverse-backend's own due-work runtime and conformance instructions.
 - **Every adoption PR MUST carry `DueWorkContract` and a collected
   `@due_work_contract_suite(CONTRACT)` class.** Follow the
   [required adoption shape](../../../ADOPTING.md#required-adoption-shape): declare
-  all lifecycle/safety profiles, put histories in the contract, execute the generated
+  all A–J profiles for the current source (or the installed release's matching catalog), put histories in the contract, execute the generated
   cases, and link the declaration, suite and `--due-work-summary` report. Ordinary
   tests and direct crash-helper calls are supporting evidence, never a substitute.
   The decorator generates pytest cases, not Python files; use `--junitxml` when a

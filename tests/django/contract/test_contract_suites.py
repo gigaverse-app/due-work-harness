@@ -21,7 +21,6 @@ from due_work_harness.contract import (
     NotApplicable,
     Profile,
     SafetyContract,
-    SafetyProfile,
     ScheduledSelection,
     contract_cases,
     safety_contract_cases,
@@ -77,10 +76,8 @@ def test_the_django_host_gives_cross_connection_proofs_real_commits() -> None:
             Profile.A: Claim(),
             Profile.B: Claim(),
             Profile.F: Claim(),
+            **{profile: NotApplicable(_WHY) for profile in (Profile.H, Profile.J)},
         },
-        safety=SafetyContract(
-            name="self-test contract", profiles={profile: NotApplicable(_WHY) for profile in SafetyProfile}
-        ),
         sweep=_annotated_never_built,
         ownership=_annotated_never_built,
         derivation=reference_derivation_binding,
@@ -101,8 +98,8 @@ def test_a_declines_proof_and_a_known_gaps_probe_run_with_the_contracts_database
         adoption=Adoption.LEGACY,
         transactional=transactional,
         profiles={
-            SafetyProfile.REPLAY_SAFE_EXECUTION: Decline(_WHY, prove=reference_derivation_binding),
-            SafetyProfile.BOUNDED_RETRY: KnownGap(_WHY, detect=reference_derivation_binding),
+            Profile.H: Decline(_WHY, prove=reference_derivation_binding),
+            Profile.J: KnownGap(_WHY, detect=reference_derivation_binding),
         },
     )
     contract = DueWorkContract(
@@ -113,8 +110,8 @@ def test_a_declines_proof_and_a_known_gaps_probe_run_with_the_contracts_database
             **{profile: NotApplicable(_WHY) for profile in Profile},
             Profile.B: Decline(_WHY, prove=reference_derivation_binding),
             Profile.C: KnownGap(_WHY, detect=reference_derivation_binding),
+            **safety.profiles,
         },
-        safety=safety,
     )
     params = [*contract_cases(contract), *safety_contract_cases(safety)]
     probing = {param.id: param for param in params if param.id.endswith(("-declined", "-known_gap"))}

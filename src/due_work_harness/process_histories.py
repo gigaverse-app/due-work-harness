@@ -49,7 +49,7 @@ histories are labelled with the point's own name, deaths with ``died at``.
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from due_work_harness.crash_histories import (
@@ -103,7 +103,11 @@ def fault_happened(marker: Path) -> bool:
     return marker.exists()
 
 
-class ProcessHistory[HandleT, ObservationT](HarnessModel):
+HandleT = TypeVar("HandleT")
+ObservationT = TypeVar("ObservationT")
+
+
+class ProcessHistory(HarnessModel, Generic[HandleT, ObservationT]):
     """One production transition run in a child process, with the points where it may die."""
 
     name: str

@@ -2,8 +2,8 @@
 Reusable proof that retryable failure has a finite, stable lifecycle.
 
 This is the ``BOUNDED_RETRY`` safety profile. Every adopter explicitly
-assesses it through :class:`~.contract.SafetyContract`; effects
-outside the six lifecycle profiles can declare the same safety contract
+assesses it in the flat domain contract, or a scoped :class:`~due_work_harness.contract.SafetyContract`; effects
+outside the full due-work domain contract can declare the same safety contract
 directly. A claimant deliberately retries a classified transient failure and
 declares a maximum number of executions, including the initial execution.
 

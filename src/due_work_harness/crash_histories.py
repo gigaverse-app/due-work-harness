@@ -103,7 +103,7 @@ What these histories do not claim:
   external system after the death still runs, where a dead process's would not.
 * Deaths happen inside the transition. A worker that recovery delivers is not
   killed after its own external calls; prove its replay safety with
-  :class:`~due_work_harness.safety.replay_safe_execution.ReplaySafeEffect`, or
+  :class:`~due_work_harness.profiles.harmless_replay.ReplaySafeEffect`, or
   run whole processes with :mod:`due_work_harness.process_histories`.
 """
 
@@ -112,7 +112,7 @@ import traceback
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from inspect import getattr_static, isasyncgen, isawaitable, iscoroutine, iscoroutinefunction, isgenerator
-from typing import Any, NamedTuple, Protocol
+from typing import Any, Generic, NamedTuple, Protocol, TypeAlias, TypeVar
 
 from due_work_harness.binding import INVOCATION_AUTHORING_OPERATIONS, assert_binding_reaches_production
 from due_work_harness.host import CountedFaults, current_host
@@ -191,7 +191,11 @@ class HistoriesDiverged(AssertionError):
 HistoriesDiverged.__module__ = "due_work_harness"
 
 
-class HandoffHistory[HandleT, ObservationT](HarnessModel):
+HandleT = TypeVar("HandleT")
+ObservationT = TypeVar("ObservationT")
+
+
+class HandoffHistory(HarnessModel, Generic[HandleT, ObservationT]):
     """
     One production transition that commits work and hands work off.
 
@@ -448,7 +452,7 @@ class _Worker:
 
 
 #: Which family's occurrence to fail in a run: (the family, the 1-based occurrence).
-type _Injection = tuple[_FaultFamily, int]
+_Injection: TypeAlias = tuple[_FaultFamily, int]
 
 
 def _external_call_wrapper(call: ExternalCall, original: Callable[..., Any], worker: _Worker) -> Callable[..., Any]:

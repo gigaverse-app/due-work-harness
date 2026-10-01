@@ -24,17 +24,20 @@ import subprocess
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 from uuid import uuid4
 
 import psycopg
+import sqlalchemy as sa
 from dbos import DBOS, SetWorkflowID
 from psycopg import sql
 
 from due_work_harness import (
+    AdmissionAtomicity,
     Adoption,
     BoundedRetry,
     Claim,
@@ -45,11 +48,11 @@ from due_work_harness import (
     LossIsAbsorbedElsewhere,
     NotApplicable,
     Profile,
+    ReplaySafeEffect,
     Retention,
-    SafetyContract,
-    SafetyProfile,
     due_work_contract_suite,
 )
+from due_work_harness.host import Host, hosted
 from due_work_harness.integrations.dbos import OUTSTANDING, launched, restart_until, wait_until, workflow_status
 from due_work_harness.integrations.dbos import retention as dbos_retention
 from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge, fault_environment
@@ -247,6 +250,107 @@ def the_notifications_retry() -> Iterator[BoundedRetry]:
         )
 
 
+class InterruptedOrder(RuntimeError):
+    """An interruption after the real transactional enqueue statement."""
+
+
+@contextmanager
+def order_admission() -> Iterator[AdmissionAtomicity[list[str]]]:
+    # ARRANGE: the upstream demo launched with its queue listener stopped.
+    # REAL PRODUCTION: insert_order and dbos.enqueue_workflow in its SQLAlchemy transaction.
+    # EXTERNAL SEAM: the notification provider records calls; no worker can deliver them yet.
+    # OBSERVE: order intent and workflow IDs on the actual writing connection at the checkpoint.
+    active: list[sa.Connection] = []
+    fault: list[Callable[[], None]] = []
+    calls: list[float] = []
+    customer = f"admission-{uuid4().hex}"
+    observer = sa.create_engine(os.environ["DBOS_DATABASE_URL"])
+
+    def after_statement(
+        conn: sa.Connection, _cursor: Any, statement: str, _params: Any, _context: Any, _many: bool
+    ) -> None:
+        if "dbos.enqueue_workflow(" in statement:
+            active[:] = [conn]
+            if fault:
+                fault[0]()
+                raise InterruptedOrder()
+
+    def reading(sql: str) -> list[tuple[Any, ...]]:
+        if active and active[0].in_transaction():
+            return [tuple(row) for row in active[0].execute(sa.text(sql), {"customer": customer})]
+        with observer.connect() as conn:
+            return [tuple(row) for row in conn.execute(sa.text(sql), {"customer": customer})]
+
+    def obligations() -> list[str]:
+        return [
+            row[0]
+            for row in reading("SELECT workflow_uuid FROM dbos.workflow_status WHERE queue_name='notification_queue'")
+        ]
+
+    def admit() -> list[str]:
+        before = set(obligations())
+        demo.insert_order(customer, "widget", 1)
+        return [identity for identity in obligations() if identity not in before]
+
+    @contextmanager
+    def during(checkpoint: Callable[[], None]) -> Iterator[None]:
+        fault.append(checkpoint)
+        try:
+            yield
+        finally:
+            fault.clear()
+
+    with the_demo_without_its_listener(calls.append):
+        sa.event.listen(sa.engine.Engine, "after_cursor_execute", after_statement)
+        try:
+            with hosted(
+                Host(
+                    production_packages=frozenset({"transactional-outbox", "transactional_enqueue", "dbos"}),
+                    in_transaction=lambda: bool(active and active[0].in_transaction()),
+                )
+            ):
+                yield AdmissionAtomicity(
+                    name="DBOS order and notification",
+                    admit=admit,
+                    observe=lambda: [row[0] for row in reading("SELECT customer FROM orders WHERE customer=:customer")],
+                    expected=[customer],
+                    obligations=obligations,
+                    outstanding=lambda: [
+                        row[0]
+                        for row in reading(
+                            "SELECT workflow_uuid FROM dbos.workflow_status WHERE queue_name='notification_queue' AND status='ENQUEUED'"
+                        )
+                    ],
+                    effects=lambda: len(calls),
+                    publications=lambda: nullcontext(()),
+                    during=during,
+                    expected_error=InterruptedOrder,
+                )
+        finally:
+            sa.event.remove(sa.engine.Engine, "after_cursor_execute", after_statement)
+            observer.dispose()
+
+
+@contextmanager
+def notification_replay() -> Iterator[ReplaySafeEffect]:
+    # ARRANGE: a real admitted order with its queue listener held back.
+    # REAL PRODUCTION: invoke the demo's decorated notification step, outside workflow checkpoint deduplication.
+    # EXTERNAL SEAM: the demo's simulated notification port records each delivered message.
+    # OBSERVE: notification count for this order; repeating a send is customer-visible.
+    sends: list[float] = []
+    with (
+        the_demo_without_its_listener(sends.append),
+        hosted(Host(production_packages=frozenset({"transactional-outbox", "transactional_enqueue", "dbos"}))),
+    ):
+        yield ReplaySafeEffect(
+            name="DBOS order notification step",
+            prepare=lambda: demo.insert_order("replay customer", "widget", 1),
+            execute=lambda identity: demo.send_order_notification(identity, "replay customer", "widget"),
+            observe=lambda _identity: len(sends),
+            execution_count_for=lambda _identity: len(sends),
+        )
+
+
 PLACE_ORDER_CONTRACT = DueWorkContract(
     name="DBOS transactional-outbox: place order",
     adoption=Adoption.LEGACY,
@@ -271,19 +375,20 @@ PLACE_ORDER_CONTRACT = DueWorkContract(
             "the obligation is the workflow DBOS enqueues in the order's own transaction, not a fact derived "
             "from orders"
         ),
+        Profile.H: Claim(
+            gaps={
+                "assert_replay_converges": "The actual notification step sends a second customer notification on replay."
+            }
+        ),
+        Profile.J: Claim(),
+        Profile.G: NotApplicable(
+            "A committed order is immediately eligible for notification; there is no later prerequisite."
+        ),
+        Profile.I: Claim(),
     },
-    safety=SafetyContract(
-        name="DBOS transactional-outbox: place order",
-        adoption=Adoption.LEGACY,
-        profiles={
-            SafetyProfile.REPLAY_SAFE_EXECUTION: KnownGap(
-                "the notification step is not idempotent: replaying it notifies the customer again (profile C "
-                "shows the replay happen)"
-            ),
-            SafetyProfile.BOUNDED_RETRY: Claim(),
-        },
-        retry=the_notifications_retry,
-    ),
+    admission={"place order": order_admission},
+    replay=notification_replay,
+    retry=the_notifications_retry,
     retention=the_demos_retention,
     # Placing an order survives a death before the notification: a process handoff of its own.
     process_handoffs=(DEATHS_BEFORE_THE_NOTIFICATION,),

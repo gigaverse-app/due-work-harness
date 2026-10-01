@@ -15,7 +15,6 @@ source-roots = ["../.upstream/wagtail"]
 test-paths = ["."]
 
 [tool.due-work-harness.baseline]
-# Feature detection, the slug-change hook and the reference index hand work off too: no contract insures them yet.
-"wagtail.images.signal_handlers.post_save_image_feature_detection" = 1
+# The slug-change hook and reference index remain outside this media/publishing demo.
 "wagtail.models.pages.AbstractPage.save" = 1
 "wagtail.signal_handlers.update_reference_index_on_save" = 1

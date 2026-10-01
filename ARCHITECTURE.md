@@ -103,7 +103,6 @@ due_work_harness/
     config.py            [tool.due-work-harness]
     cli.py               due-work-harness check | sites | baseline
   evidence/              observation reports
-  safety/                ReplaySafeEffect, BoundedRetry
   profiles/
     automatic_recovery.py   profile A (DueWorkSweep and its proofs)
     bounded_ownership.py    profile B
@@ -111,7 +110,19 @@ due_work_harness/
     durable_retention.py    profile D
     eventual_convergence.py profile E
     fact_derived_obligations.py profile F
-    execution_eligibility.py  ExecutionGate: blocked work stays owed, is not run early, and recovery releases it
+    gated_execution.py      profile G (ExecutionGate)
+    harmless_replay.py      profile H (ReplaySafeEffect)
+    indivisible_admission.py profile I (AdmissionAtomicity)
+    job_retry_limits.py     profile J (BoundedRetry)
+    catalog.py             canonical names and independent E-family identities
+    coverage.py            derived assessment and executed proof evidence
+    reporting.py           optional pytest JSON reporting, including xdist merge
+  interleavings/
+    bindings.py, model.py, ports.py  public scenario, replay and callback contracts
+    engine/                deterministic catalogs, provider controls and invariant runner
+    adapters/              composition into the existing contract/suite owner
+    exploration/           lazy optional Hypothesis schedule search
+    testing/               healthy and deliberately faulty runner controls
   references/in_memory.py   conforming in-memory implementations for self-tests
   references/eligibility.py an independent scheduler with sixteen injectable faults, for ExecutionGate's proofs
   integrations/
@@ -122,7 +133,7 @@ due_work_harness/
     procrastinate.py  worker recovery, stalled-job arrangement, periodic evidence
     dbos.py    relaunch helper
 demos/       the harness run against unmodified upstream demo applications
-examples/adopter/  a minimal adopting project, run by CI through the actions
+examples/adopter/  SQLite catalog contracts and a minimal exemption, run by CI through the actions
 check/action.yml   GitHub Action: the static coverage check
 test/action.yml    GitHub Action: the generated due_work suites
 tests/core   self-tests with no framework installed

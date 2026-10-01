@@ -5,6 +5,9 @@ description = "A minimal project adopting due-work-harness, used by the harness'
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+exploration = ["due-work-harness[exploration]"]
+
 [dependency-groups]
 dev = ["due-work-harness"]
 

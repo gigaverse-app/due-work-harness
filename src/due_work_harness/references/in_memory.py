@@ -37,8 +37,8 @@ from due_work_harness.profiles.eventual_convergence import (
     SupersededSnapshot,
 )
 from due_work_harness.profiles.fact_derived_obligations import StateDerived
-from due_work_harness.safety.bounded_retry import BoundedRetry
-from due_work_harness.safety.replay_safe_execution import ReplaySafeEffect
+from due_work_harness.profiles.harmless_replay import ReplaySafeEffect
+from due_work_harness.profiles.job_retry_limits import BoundedRetry
 
 # --- Stand-in shared proofs ----------------------------------------------------
 
@@ -79,7 +79,7 @@ class InMemoryReplayEffect:
 
         Mutants that still perform the effect call this; mutants that model a
         skipped replay deliberately do not, which is the distinction
-        :func:`~.safety.replay_safe_execution.assert_replay_converges` now requires.
+        :func:`~.profiles.harmless_replay.assert_replay_converges` now requires.
         """
         self.effect_calls[operation_id] = self.effect_calls.get(operation_id, 0) + 1
 

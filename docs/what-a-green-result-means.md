@@ -28,26 +28,37 @@ it. Profiles let an adopter declare what it claims and be measured only on that.
 | E, eventual convergence | `profiles.eventual_convergence` | When a result lands, can it overwrite a newer one? |
 | F, fact-derived obligations | `profiles.fact_derived_obligations` | Can an obligation exist that nothing ever recorded? |
 
-Two narrower execution-safety profiles sit beside these six: replay-safe
-execution and bounded retry. They are declared with a `SafetyContract`, and
-every `DueWorkContract` must dispose of both explicitly. They are not a silent
-opt-in.
+| G, gated execution | `profiles.gated_execution` | Is blocked work preserved, prevented from running early, and recovered when eligible? |
+| H, harmless replay | `profiles.harmless_replay` | Does a real repeated execution leave one visible logical effect? |
+| I, indivisible admission | `profiles.indivisible_admission` | Does the standalone command roll back product intent and obligations after partial admission? |
+| J, job retry limits | `profiles.job_retry_limits` | Does production enforce its retry budget and stable terminal state? |
 
-Profile E is split in two because its failure shapes live at different layers:
-a *worker* holding a stale snapshot, and a *state function* receiving stale
-evidence. Most adopters have one, not both.
+All ten decisions live in `DueWorkContract.profiles`. `SafetyContract` is a scoped
+H/J-only declaration for effects outside a complete due-work domain adoption.
+
+E has four independent families: stale snapshots, monotonic results, in-flight
+completion, and evidence confluence. Claiming one does not certify the others.
+`NotAssessed` is strict-XFAIL assessment debt; `KnownGap` records a demonstrated
+or declared missing guarantee in legacy behavior. Neither is passing evidence.
+The [migration guide](../ADOPTING.md#migrating-an-existing-declaration) explains
+how to declare the distinction and produce an executed coverage report.
+
+The deterministic catalogs and optional Hypothesis explorer use the same
+invariant runner. [Interleavings](interleavings.md) explains the guarantees and
+limits: they exercise controlled application boundaries, not arbitrary CPU or
+SQL instruction schedules. Exploration is additional search, never exhaustive proof.
 
 ### Execution eligibility: owed is not the same as runnable
 
 Work can be owed and blocked at once: a dependency has not settled, an owner is
-still active, a user has not confirmed. That is an optional gate beside the
-profiles, declared as `eligibility=` (one `ExecutionGate`, or named gates for
-named blockers) on a contract that claims profile A with a sweep, because
-recovery is what must find the work once it is eligible. It is not a seventh
-disposition: a domain without a product-level blocker has no gate to describe.
+still active, a user has not confirmed. That is profile G, declared as `eligibility=` (one `ExecutionGate`, or named gates for
+named blockers) on a contract that claims G. Recovery must find the work once
+it is eligible; native workers may supply that recovery without an A-style
+sweep. When A is also claimed, an additional proof ties G to its sweep.
+It is not an additional disposition: a domain without a product-level blocker has no gate to describe.
 
 Each gate is one blocked, already time-due obligation with its readiness
-notification lost. Five proofs run against a fresh example each:
+notification lost. Four standalone proofs run against a fresh example each:
 
 - the bindings reach production: the routes, recovery, both selections
   (`due_work` and `owed_work`) and the readiness transition `make_eligible`;
@@ -67,7 +78,7 @@ notification lost. Five proofs run against a fresh example each:
   state or drop the obligation, and must not repeat without time passing. It
   counts as an execution unless the gate declares `inspections`, for a design
   that re-checks the blocker without executing anything;
-- the gate describes the contract sweep's own recovery: the sweep's selection
+- when A is claimed, a fifth proof checks the gate describes the contract sweep's own recovery: the sweep's selection
   leaves the blocked work out and takes it in once eligible, and during
   `recover` the sweep's `dispatched_ids` (the recorder of what its dispatch
   path sent, which the contract sweep must declare) records the gate's identity

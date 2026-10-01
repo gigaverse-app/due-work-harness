@@ -36,13 +36,11 @@ from due_work_harness.contract import (
     KnownGap,
     NotApplicable,
     Profile,
-    SafetyContract,
-    SafetyProfile,
 )
 from due_work_harness.crash_histories import CallableDelivery, Delivery, ExternalCall, Findings, HandoffHistory
 from due_work_harness.gap_probes import MissingReclaim
 from due_work_harness.integrations import task_queues
-from due_work_harness.integrations.task_queues import TaskOutcome
+from due_work_harness.integrations.task_queues import TaskOutcome, application_admission, application_gate
 from due_work_harness.profiles.durable_retention import Retention
 
 
@@ -239,15 +237,11 @@ def worker_contract(
             Profile.D: Claim(),
             Profile.E: task_queues.settled_by_one_worker("task"),
             Profile.F: task_queues.the_obligation_is_the("task row"),
+            Profile.H: NotApplicable("django-tasks-db never replays a task"),
+            Profile.J: NotApplicable(RUNS_ONCE),
+            Profile.G: application_gate("django-tasks-db"),
+            Profile.I: application_admission("django-tasks-db"),
         },
-        safety=SafetyContract(
-            name=name,
-            adoption=Adoption.LEGACY,
-            profiles={
-                SafetyProfile.REPLAY_SAFE_EXECUTION: NotApplicable("django-tasks-db never replays a task"),
-                SafetyProfile.BOUNDED_RETRY: NotApplicable(RUNS_ONCE),
-            },
-        ),
         retention=lambda: retention(enqueue=enqueue, min_age_days=min_age_days),
         handoffs=(history,),
         handoff_delivery=delivery or CallableDelivery(name=f"{name}: db_worker", recover=db_worker_once()),

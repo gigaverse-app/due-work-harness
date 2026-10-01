@@ -59,6 +59,22 @@ def replay_safety_is_the_functions(unit: str, library: str, *, runs_again: str) 
     )
 
 
+def application_admission(library: str) -> Decline:
+    """Profile I belongs to the command admitting product intent with the queued work."""
+    return Decline(
+        f"{library}'s worker receives already admitted work; it cannot make an application's "
+        "product transaction atomic with enqueue. Bind Profile I on the application's command contract."
+    )
+
+
+def application_gate(library: str) -> Decline:
+    """Worker execution alone cannot certify a product prerequisite or dependency release."""
+    return Decline(
+        f"{library}'s worker contract has no application readiness predicate; dependencies and product "
+        "gates need their own ExecutionGate binding, including release with its notification lost."
+    )
+
+
 class TaskOutcome(HarnessModel):
     """What the queue recorded for a task, and what its effect was."""
 

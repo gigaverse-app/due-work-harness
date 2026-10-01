@@ -13,8 +13,9 @@
 
 **Generate strong, standardized tests for work you cannot afford to lose or
 repeat.** Declare a `DueWorkContract` against your application's real code and
-the harness generates pytest cases for crash recovery, worker ownership,
-uncertain external calls, retention, convergence, and replay safety. Your coding
+the harness generates pytest cases for the A–J guarantees: recovery, ownership,
+crash ambiguity, retention, convergence, derived obligations, gated execution,
+harmless replay, indivisible admission, and retry limits. Your coding
 agent can also use the same fault-injection infrastructure to write focused
 tests for your particular workflow. Did a Celery task disappear after a Django
 transaction committed? Can a retry charge twice, resend a receipt, or process
@@ -100,7 +101,7 @@ pip install "due-work-harness[django]"  # plus the Django/PostgreSQL integration
 
 Or `uv add --dev due-work-harness`. The extras are `[django]`, `[celery]`,
 `[procrastinate]`, `[dbos]`, `[redis]`, `[rq]`, `[mongodb]`, `[prefect]`, and
-`[aiokafka]`; combine as needed. Python 3.12+.
+`[aiokafka]`; combine as needed. Python 3.11+.
 
 ## Coding-agent plugin
 
@@ -117,7 +118,8 @@ existing [upstream weakness-finding playbook](docs/upstream-playbook.md) for
 probing external projects and preparing verified disclosures. The plugin has
 two skills, not a remote service; the project under test still installs the
 pytest library. Gigaverse-backend's own due-work skill and internal conformance
-harness remain authoritative in that repository.
+harness remain authoritative in that repository, even though the current public
+source also uses the A–J catalog.
 
 For Claude Code, add this repository as a marketplace and install the plugin:
 
@@ -195,7 +197,7 @@ points with `os._exit`, restarts it the way production would, and applies the
 same verdict. That is how the DBOS demo above works; a contract declares such
 histories as `process_handoffs`, beside `handoffs`.
 
-## DueWorkContract generates the standardized tests
+## DueWorkContract generates tests for ten guarantees (A–J)
 
 Every domain adoption **must** use `DueWorkContract` and
 `@due_work_contract_suite(CONTRACT)`; standalone histories or ordinary tests do
@@ -203,8 +205,8 @@ not complete adoption. See [the required adoption shape](ADOPTING.md#required-ad
 The decorator generates the suite at pytest collection time; you do not handwrite
 one test per failure mode. A crash history proves one handoff. A declarative
 `DueWorkContract` binds your production selection, tick and transitions, and
-asks for a disposition (claim, decline with a reason, not applicable, or known
-gap) for each of six lifecycle profiles:
+asks for a disposition (claim, decline with a reason, not applicable, known gap,
+or not assessed) for each A–J profile:
 
 | Profile | The question it answers |
 | --- | --- |
@@ -214,12 +216,21 @@ gap) for each of six lifecycle profiles:
 | **D** durable retention | Can a cleanup pass delete work that is still owed? |
 | **E** eventual convergence | When a result lands late, can it overwrite a newer one? |
 | **F** fact-derived obligations | Can product state imply work nothing recorded, and is it still found? |
+| **G** gated execution | Does blocked work stay owed and untouched, then recover once eligible without its notification? |
+| **H** harmless replay | Does executing the same logical operation twice converge to one visible effect? |
+| **I** indivisible admission | Does a standalone command commit intent and work together, or roll both back after partial writes? |
+| **J** job retry limits | Does failing work exhaust exactly its execution budget and remain terminal? |
 
-Every contract also disposes of two execution-safety profiles: replay safety and
-bounded retry. Work that is owed but blocked by a product decision (a dependency
-that has not settled, an owner still active) can declare an `ExecutionGate`
-as `eligibility=`: blocked work must stay owed and untouched, and once eligible
-it must complete by recovery alone, even with the readiness notification lost.
+Profile E includes independently assessed stale-snapshot, monotonic-result,
+in-flight and evidence-confluence families. Bind competing-event scenarios once
+and the harness generates deterministic histories; optional Hypothesis explores
+and shrinks additional schedules. See [interleavings](docs/interleavings.md).
+
+`NotAssessed` emits a strict XFAIL with a remediation reason. It records unfinished
+assessment, not a demonstrated production bug. A passing sibling profile or family
+cannot clear that debt. Use `--due-work-profile-report=profiles.json` to distinguish
+claims from fully executed evidence, including filters, teardown failures and xdist.
+
 Read [what a green result means](https://github.com/gigaverse-app/due-work-harness/blob/main/docs/what-a-green-result-means.md)
 before you treat a pass as a guarantee.
 
@@ -335,7 +346,7 @@ uses the same playbook in other coding environments.
 
 Alpha. The proofs were extracted from a production codebase, where they guard
 its background workflows in CI; the public API may still change before 1.0.
-Python 3.12+. How it's built: [ARCHITECTURE.md](https://github.com/gigaverse-app/due-work-harness/blob/main/ARCHITECTURE.md).
+Python 3.11+. How it's built: [ARCHITECTURE.md](https://github.com/gigaverse-app/due-work-harness/blob/main/ARCHITECTURE.md).
 
 ## Development
 
@@ -345,3 +356,7 @@ type-checked with [Pyrefly](https://pyrefly.org/). See [CONTRIBUTING.md](https:/
 ## License
 
 Apache-2.0. See [LICENSE](https://github.com/gigaverse-app/due-work-harness/blob/main/LICENSE).
+
+See the [executed adopter capability map](docs/adopter-capabilities.md) and the
+[runnable catalog example](examples/adopter/README.md) for generated interleavings,
+admission, gating, replay and optional Hypothesis adoption.
