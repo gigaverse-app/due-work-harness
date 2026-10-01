@@ -28,16 +28,16 @@ from typing import Any
 import pytest
 from sample_production import tasks
 
-from due_work_harness.contract import (
+from pytest_obligation.contract import (
     Adoption,
     Claim,
     Decline,
-    DueWorkContract,
-    DueWorkContractDesignError,
     DueWorkSource,
     ExtraProof,
     KnownGap,
     NotApplicable,
+    ObligationContract,
+    ObligationContractDesignError,
     Profile,
     ScheduledSelection,
     contract_cases,
@@ -46,23 +46,23 @@ from due_work_harness.contract import (
     scheduled_selection_cases,
     suite_cases,
 )
-from due_work_harness.crash_histories import CallableDelivery, Findings, HandoffHistory, HistoriesDiverged
-from due_work_harness.gap_probes import (
+from pytest_obligation.crash_histories import CallableDelivery, Findings, HandoffHistory, HistoriesDiverged
+from pytest_obligation.gap_probes import (
     DisprovenCapability,
     MissingReclaim,
     MissingScheduledConsumer,
 )
-from due_work_harness.host import Host
-from due_work_harness.process_histories import ProcessHistory
-from due_work_harness.profiles.automatic_recovery import assert_in_flight_work_is_not_redispatched
-from due_work_harness.profiles.fact_derived_obligations import (
+from pytest_obligation.host import Host
+from pytest_obligation.process_histories import ProcessHistory
+from pytest_obligation.profiles.automatic_recovery import assert_in_flight_work_is_not_redispatched
+from pytest_obligation.profiles.fact_derived_obligations import (
     StateDerived,
     assert_unrecorded_obligation_is_discovered,
 )
-from due_work_harness.profiles.gated_execution import ELIGIBILITY_PROOFS
-from due_work_harness.references import in_memory_handoffs
-from due_work_harness.references.eligibility import SCHEDULER, GateReference, reference_gate, reference_sweep
-from due_work_harness.references.in_memory import (
+from pytest_obligation.profiles.gated_execution import ELIGIBILITY_PROOFS
+from pytest_obligation.references import in_memory_handoffs
+from pytest_obligation.references.eligibility import SCHEDULER, GateReference, reference_gate, reference_sweep
+from pytest_obligation.references.in_memory import (
     EdgeTriggeredDeriver,
     MaterialisingDeriver,
     assert_self_test_probe_fires,
@@ -103,7 +103,7 @@ def test_meaningful_profile_names_are_aliases_of_the_letters() -> None:
 # Design validation.
 
 
-def _contract(**overrides: Any) -> DueWorkContract:
+def _contract(**overrides: Any) -> ObligationContract:
     """A valid baseline contract; keyword overrides introduce the defect under test."""
     arguments: dict[str, Any] = {
         "name": "self-test contract",
@@ -111,7 +111,7 @@ def _contract(**overrides: Any) -> DueWorkContract:
         "derivation": derivation_binding,
     }
     arguments.update(overrides)
-    return DueWorkContract(**arguments)
+    return ObligationContract(**arguments)
 
 
 def test_a_complete_declaration_constructs() -> None:
@@ -120,34 +120,34 @@ def test_a_complete_declaration_constructs() -> None:
 
 @pytest.mark.parametrize("profile", [Profile.H, Profile.J])
 def test_a_due_work_adopter_cannot_omit_the_safety_profiles(profile: Profile) -> None:
-    with pytest.raises(DueWorkContractDesignError, match=f"no disposition for profile\\(s\\) {profile.name}"):
+    with pytest.raises(ObligationContractDesignError, match=f"no disposition for profile\\(s\\) {profile.name}"):
         _contract(profiles={p: d for p, d in dispositions(F=Claim()).items() if p is not profile})
 
 
 def test_an_omitted_profile_is_a_design_error() -> None:
     incomplete = {profile: NotApplicable(WHY) for profile in Profile if profile is not Profile.D}
-    with pytest.raises(DueWorkContractDesignError, match="no disposition for profile\\(s\\) D"):
+    with pytest.raises(ObligationContractDesignError, match="no disposition for profile\\(s\\) D"):
         _contract(profiles=incomplete, derivation=None)
 
 
 def test_a_claim_without_a_binding_is_a_design_error() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="profile F .* claimed but has no binding"):
+    with pytest.raises(ObligationContractDesignError, match="profile F .* claimed but has no binding"):
         _contract(derivation=None)
 
 
 def test_a_binding_without_a_claim_is_a_design_error() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="profile F is NotApplicable but `derivation=` is bound"):
+    with pytest.raises(ObligationContractDesignError, match="profile F is NotApplicable but `derivation=` is bound"):
         _contract(profiles=dispositions())
 
 
 def test_a_gap_naming_no_proof_is_a_design_error() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="gap 'assert_renamed_away' names no proof"):
+    with pytest.raises(ObligationContractDesignError, match="gap 'assert_renamed_away' names no proof"):
         _contract(profiles=dispositions(F=Claim(gaps={"assert_renamed_away": WHY})))
 
 
 def test_a_gap_on_an_unbound_half_of_profile_e_is_a_design_error() -> None:
     """A gap must name a proof that will actually run, not one of the other half's."""
-    with pytest.raises(DueWorkContractDesignError, match="names no proof that will run"):
+    with pytest.raises(ObligationContractDesignError, match="names no proof that will run"):
         _contract(
             profiles=dispositions(
                 F=Claim(),
@@ -158,7 +158,7 @@ def test_a_gap_on_an_unbound_half_of_profile_e_is_a_design_error() -> None:
 
 
 def test_an_empty_decline_reason_is_a_design_error() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="profile B is Decline with no reason"):
+    with pytest.raises(ObligationContractDesignError, match="profile B is Decline with no reason"):
         _contract(profiles=dispositions(F=Claim(), B=Decline("  ")))
 
 
@@ -167,7 +167,7 @@ def test_a_domain_profile_binding_requires_evidence_annotations() -> None:
         return derivation_binding()
 
     with pytest.raises(
-        DueWorkContractDesignError,
+        ObligationContractDesignError,
         match="missing adopter evidence annotations.*ARRANGE.*REAL PRODUCTION.*EXTERNAL SEAM.*OBSERVE",
     ):
         _contract(derivation=unannotated_derivation)
@@ -178,14 +178,14 @@ def test_a_duplicate_extra_name_is_a_design_error() -> None:
         ExtraProof(name="twice", run=annotated_extra, no_production_callable_because=SELF_TEST_NO_PRODUCTION),
         ExtraProof(name="twice", run=annotated_extra, no_production_callable_because=SELF_TEST_NO_PRODUCTION),
     )
-    with pytest.raises(DueWorkContractDesignError, match="duplicate extra proof name 'twice'"):
+    with pytest.raises(ObligationContractDesignError, match="duplicate extra proof name 'twice'"):
         _contract(extras=extras)
 
 
 def test_every_design_error_is_reported_at_once() -> None:
     """One construction reports every defect, not just the first."""
     incomplete = {Profile.A: Decline(" ")}
-    with pytest.raises(DueWorkContractDesignError) as caught:
+    with pytest.raises(ObligationContractDesignError) as caught:
         _contract(profiles=incomplete, derivation=derivation_binding)
     message = str(caught.value)
     assert "no disposition for profile(s) B, C, D, E, F" in message
@@ -193,7 +193,7 @@ def test_every_design_error_is_reported_at_once() -> None:
 
 
 def test_scheduled_selection_refuses_a_gap_naming_no_selection_proof() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="not in the scheduled-selection contract"):
+    with pytest.raises(ObligationContractDesignError, match="not in the scheduled-selection contract"):
         ScheduledSelection(
             name="self-test selection",
             due_work=annotated_empty_selection,  # type: ignore[arg-type] - never evaluated
@@ -368,7 +368,7 @@ def test_a_known_gap_detect_probe_is_the_test_body() -> None:
 
 
 def test_a_test_authored_decline_proof_is_a_design_error() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="negative proof.*production absence"):
+    with pytest.raises(ObligationContractDesignError, match="negative proof.*production absence"):
         _contract(profiles=dispositions(F=Claim(), B=Decline(WHY, prove=lambda: assert_self_test_probe_fires([]))))
 
 
@@ -466,7 +466,7 @@ def test_a_gap_on_the_authorship_proof_is_refused() -> None:
     every other proof of the selection depends on — the suite would then be
     measuring a test-authored copy with the alarm formally acknowledged.
     """
-    with pytest.raises(DueWorkContractDesignError, match="cannot be waived"):
+    with pytest.raises(ObligationContractDesignError, match="cannot be waived"):
         ScheduledSelection(
             name="self-test selection",
             due_work=annotated_empty_selection,  # type: ignore[arg-type] - never evaluated
@@ -483,7 +483,7 @@ def test_a_contract_gap_on_a_binding_integrity_proof_is_refused() -> None:
         "assert_outstanding_selection_is_production_bound",
         "assert_derivation_bindings_are_production_bound",
     ):
-        with pytest.raises(DueWorkContractDesignError, match="cannot be waived"):
+        with pytest.raises(ObligationContractDesignError, match="cannot be waived"):
             _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(gaps={unwaivable: WHY})))
 
 
@@ -500,7 +500,7 @@ def test_a_detect_that_inverts_an_assertion_locally_is_refused() -> None:
         with pytest.raises(AssertionError):
             assert_the_reference_capability_exists()
 
-    with pytest.raises(DueWorkContractDesignError, match="inverts or swallows an assertion"):
+    with pytest.raises(ObligationContractDesignError, match="inverts or swallows an assertion"):
         _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=inverted_detect)))
 
 
@@ -555,7 +555,7 @@ def _catching_through_an_annotated_alias_detect() -> None:
     ids=["alone", "in-a-tuple", "in-a-starred-tuple", "through-getattr", "through-an-annotated-alias"],
 )
 def test_a_detect_that_catches_an_assertion_error_is_refused(detect: Any) -> None:
-    with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*AssertionError"):
+    with pytest.raises(ObligationContractDesignError, match=r"inverts or swallows an assertion.*AssertionError"):
         _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=detect)))
 
 
@@ -599,7 +599,7 @@ def _re_raising_only_sometimes_detect() -> None:
 
 
 def test_a_detect_that_re_raises_only_on_some_paths_is_refused() -> None:
-    with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*AssertionError"):
+    with pytest.raises(ObligationContractDesignError, match=r"inverts or swallows an assertion.*AssertionError"):
         _contract(
             adoption=Adoption.LEGACY,
             profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=_re_raising_only_sometimes_detect)),
@@ -640,7 +640,7 @@ def _breaking_out_of_finally_detect() -> None:
 )
 def test_a_detect_that_leaves_a_finally_block_early_is_refused(detect: Any) -> None:
     # Leaving a finally by return, break or continue discards whatever exception was propagating, assertions too.
-    with pytest.raises(DueWorkContractDesignError, match=r"inverts or swallows an assertion.*finally"):
+    with pytest.raises(ObligationContractDesignError, match=r"inverts or swallows an assertion.*finally"):
         _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=detect)))
 
 
@@ -681,7 +681,7 @@ def test_a_locally_minted_assert_name_does_not_count_as_delegation() -> None:
     def assert_minted_locally() -> None:
         """Not a harness proof; the name is the whole disguise."""
 
-    with pytest.raises(DueWorkContractDesignError, match="delegates to no harness-defined assert_"):
+    with pytest.raises(ObligationContractDesignError, match="delegates to no harness-defined assert_"):
         _contract(
             adoption=Adoption.LEGACY,
             profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=lambda: assert_minted_locally())),
@@ -694,7 +694,7 @@ def test_a_hand_rolled_detect_probe_is_a_design_error() -> None:
     def hand_rolled() -> None:
         raise RuntimeError("locally invented check")
 
-    with pytest.raises(DueWorkContractDesignError, match="delegates to no harness-defined assert_"):
+    with pytest.raises(ObligationContractDesignError, match="delegates to no harness-defined assert_"):
         _contract(adoption=Adoption.LEGACY, profiles=dispositions(F=Claim(), A=KnownGap(WHY, detect=hand_rolled)))
 
 
@@ -719,7 +719,7 @@ def test_a_root_owned_gap_probe_is_accepted_as_detect() -> None:
 
 def test_a_bespoke_extra_is_a_design_error() -> None:
     with pytest.raises(
-        DueWorkContractDesignError, match="extra proof 'bespoke'.*delegates to no harness-defined assert_"
+        ObligationContractDesignError, match="extra proof 'bespoke'.*delegates to no harness-defined assert_"
     ):
         _contract(extras=(ExtraProof(name="bespoke", run=lambda: None),))
 
@@ -729,7 +729,7 @@ def test_a_bespoke_extra_is_a_design_error() -> None:
 
 def test_a_new_feature_contract_refuses_gap_declarations() -> None:
     """The default policy forbids gaps; waiving it must be an explicit LEGACY."""
-    with pytest.raises(DueWorkContractDesignError, match="forbids gap declarations") as caught:
+    with pytest.raises(ObligationContractDesignError, match="forbids gap declarations") as caught:
         _contract(
             profiles=dispositions(F=Claim(gaps={"assert_stopped_work_is_not_revived": WHY}), A=KnownGap(WHY)),
             extras=(
@@ -752,7 +752,7 @@ def test_legacy_adoption_permits_gap_declarations() -> None:
 
 
 def test_a_new_feature_scheduled_selection_refuses_gaps() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="forbids gap declarations"):
+    with pytest.raises(ObligationContractDesignError, match="forbids gap declarations"):
         ScheduledSelection(
             name="self-test selection",
             due_work=annotated_empty_selection,  # type: ignore[arg-type] - never evaluated
@@ -795,7 +795,9 @@ def test_an_extra_that_feeds_a_shared_proof_test_bindings_is_refused() -> None:
             dispatch_count_for=lambda _row: 1,
         )
 
-    with pytest.raises(DueWorkContractDesignError, match="extra proof 'fabricated'.*references no production callable"):
+    with pytest.raises(
+        ObligationContractDesignError, match="extra proof 'fabricated'.*references no production callable"
+    ):
         _contract(extras=(ExtraProof(name="fabricated", run=run),))
 
 
@@ -831,7 +833,7 @@ def test_declaring_no_production_callable_while_reaching_one_is_a_contradiction(
         assert_self_test_probe_fires([])
         assert tasks is not None
 
-    with pytest.raises(DueWorkContractDesignError, match="contradict each other"):
+    with pytest.raises(ObligationContractDesignError, match="contradict each other"):
         _contract(
             extras=(ExtraProof(name="contradictory", run=run, no_production_callable_because=SELF_TEST_NO_PRODUCTION),)
         )
@@ -851,11 +853,11 @@ def test_due_work_source_keeps_the_real_callable_identity() -> None:
 def test_a_suite_refuses_duplicate_due_work_sources() -> None:
     source = DueWorkSource(_reference_due_work_source)
 
-    with pytest.raises(DueWorkContractDesignError, match="duplicate DueWorkSource"):
+    with pytest.raises(ObligationContractDesignError, match="duplicate DueWorkSource"):
         due_work_contract_suite(_contract(), covers=(source, source))
 
 
-def _recovering_contract(**overrides: Any) -> DueWorkContract:
+def _recovering_contract(**overrides: Any) -> ObligationContract:
     return _contract(profiles=dispositions(F=Claim(), A=Claim()), sweep=annotated_never_built, **overrides)
 
 
@@ -869,7 +871,9 @@ def test_a_profile_a_contract_must_say_what_its_covered_publishers_leave_behind(
     publisher while its sweep recovered a different table, and every generated
     case would still be green.
     """
-    with pytest.raises(DueWorkContractDesignError, match="every covered source must say whether this sweep recovers"):
+    with pytest.raises(
+        ObligationContractDesignError, match="every covered source must say whether this sweep recovers"
+    ):
         due_work_contract_suite(_recovering_contract(), covers=(DueWorkSource(tasks.cleanup_task),))(
             type("TCovered", (), {})
         )
@@ -906,12 +910,12 @@ def test_a_contract_that_does_not_claim_recovery_needs_no_publisher_binding() ->
 
 
 def test_publish_without_an_ageing_callback_is_a_design_error() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="without `make_recovery_eligible`"):
+    with pytest.raises(ObligationContractDesignError, match="without `make_recovery_eligible`"):
         DueWorkSource(tasks.cleanup_task, publish=lambda: 1)
 
 
 def test_declaring_both_a_publisher_and_a_split_is_a_contradiction() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="contradict each other"):
+    with pytest.raises(ObligationContractDesignError, match="contradict each other"):
         DueWorkSource(
             tasks.cleanup_task,
             publish=lambda: 1,
@@ -924,12 +928,12 @@ def test_declaring_both_a_publisher_and_a_split_is_a_contradiction() -> None:
 
 
 def test_scheduled_selection_requires_evidence_or_a_declaration() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="no schedule evidence and no unscheduled_because"):
+    with pytest.raises(ObligationContractDesignError, match="no schedule evidence and no unscheduled_because"):
         ScheduledSelection(
             name="self-test selection",
             due_work=annotated_empty_selection,  # type: ignore[arg-type] - never evaluated
         )
-    with pytest.raises(DueWorkContractDesignError, match="contradict each other"):
+    with pytest.raises(ObligationContractDesignError, match="contradict each other"):
         ScheduledSelection(
             name="self-test selection",
             due_work=annotated_empty_selection,  # type: ignore[arg-type] - never evaluated
@@ -1169,26 +1173,28 @@ _DELIVERY = CallableDelivery(name="self-test delivery", recover=in_memory_handof
 
 
 def test_handoff_histories_need_a_delivery() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="handoff histories are declared without `handoff_delivery=`"):
+    with pytest.raises(
+        ObligationContractDesignError, match="handoff histories are declared without `handoff_delivery=`"
+    ):
         _contract(handoffs=(_handoff(),))
 
 
 def test_a_delivery_without_handoff_histories_is_a_design_error() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="no handoff history is declared"):
+    with pytest.raises(ObligationContractDesignError, match="no handoff history is declared"):
         _contract(handoff_delivery=_DELIVERY)
 
 
 def test_handoff_history_names_are_unique_and_gaps_name_one() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="handoff history names must be unique"):
+    with pytest.raises(ObligationContractDesignError, match="handoff history names must be unique"):
         _contract(handoffs=(_handoff(), _handoff()), handoff_delivery=_DELIVERY)
-    with pytest.raises(DueWorkContractDesignError, match="handoff_gaps name no declared handoff history"):
+    with pytest.raises(ObligationContractDesignError, match="handoff_gaps name no declared handoff history"):
         _contract(
             handoffs=(_handoff(),), handoff_delivery=_DELIVERY, handoff_gaps={"other": WHY}, adoption=Adoption.LEGACY
         )
 
 
 def test_a_new_feature_cannot_waive_a_handoff_history() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="handoff 'retry' declares a gap"):
+    with pytest.raises(ObligationContractDesignError, match="handoff 'retry' declares a gap"):
         _contract(handoffs=(_handoff(),), handoff_delivery=_DELIVERY, handoff_gaps={"retry": WHY})
 
 
@@ -1280,13 +1286,13 @@ def test_a_finding_that_moved_fails_as_itself_not_as_the_known_gap(ledger_host: 
 
 
 def test_findings_and_gaps_must_agree() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="declares findings in which histories diverge, but no"):
+    with pytest.raises(ObligationContractDesignError, match="declares findings in which histories diverge, but no"):
         _contract(
             handoffs=(_split_history(SPLIT_FINDINGS),),
             handoff_delivery=in_memory_handoffs.RETRY_DELIVERY,
             adoption=Adoption.LEGACY,
         )
-    with pytest.raises(DueWorkContractDesignError, match="its findings table has no divergent history"):
+    with pytest.raises(ObligationContractDesignError, match="its findings table has no divergent history"):
         _split_case(Findings(SPLIT_DELIVERED))
 
 
@@ -1325,7 +1331,7 @@ def test_a_process_handoff_is_a_case_of_its_own_with_its_gap(ledger_host: Host) 
 
 
 def test_process_and_in_process_handoff_names_share_one_namespace() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="handoff history names must be unique"):
+    with pytest.raises(ObligationContractDesignError, match="handoff history names must be unique"):
         _contract(
             handoffs=(_handoff("completion"),),
             handoff_delivery=_DELIVERY,
@@ -1428,7 +1434,7 @@ def test_native_gate_runs_without_claiming_a_periodic_sweep() -> None:
 
 
 def test_native_gate_cannot_waive_a_sweep_proof_that_will_not_run() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="composition gap requires claimed automatic recovery"):
+    with pytest.raises(ObligationContractDesignError, match="composition gap requires claimed automatic recovery"):
         _contract(
             adoption=Adoption.LEGACY,
             profiles=dispositions(G=Claim(gaps={_SWEEP_TIED: WHY})),
@@ -1460,7 +1466,7 @@ def test_every_eligibility_variant_is_generated_and_reported(named: bool) -> Non
     "variants", [{}, {"": reference_gate}, {"  ": reference_gate}], ids=["empty", "no-name", "blank"]
 )
 def test_eligibility_variant_names_cannot_silently_drop_coverage(variants: dict[str, Any]) -> None:
-    with pytest.raises(DueWorkContractDesignError, match="eligibility.*(empty|name)"):
+    with pytest.raises(ObligationContractDesignError, match="eligibility.*(empty|name)"):
         _contract(
             profiles=dispositions(A=Claim(), G=Claim()),
             sweep=annotated_never_built,
@@ -1474,7 +1480,7 @@ def test_an_eligibility_binding_without_adopter_annotations_is_refused() -> None
         return GateReference().binding()
 
     with pytest.raises(
-        DueWorkContractDesignError, match="the eligibility binding is missing adopter evidence annotations"
+        ObligationContractDesignError, match="the eligibility binding is missing adopter evidence annotations"
     ):
         _contract(
             profiles=dispositions(A=Claim(), G=Claim()),

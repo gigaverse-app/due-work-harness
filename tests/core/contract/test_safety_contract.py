@@ -4,19 +4,19 @@ from typing import Any
 
 import pytest
 
-from due_work_harness.contract import (
+from pytest_obligation.contract import (
     Adoption,
     Claim,
     Decline,
-    DueWorkContractDesignError,
     KnownGap,
     NotApplicable,
+    ObligationContractDesignError,
     Profile,
     SafetyContract,
     safety_contract_cases,
 )
-from due_work_harness.host import Host
-from due_work_harness.references.in_memory import (
+from pytest_obligation.host import Host
+from pytest_obligation.references.in_memory import (
     reference_bounded_retry_binding,
     reference_replay_safety_binding,
 )
@@ -68,7 +68,7 @@ def test_autocommit_safety_contract_marks_execution_proofs_transactionally(marki
 
 
 def test_a_safety_declaration_requires_every_profile_disposition() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="no disposition for profile"):
+    with pytest.raises(ObligationContractDesignError, match="no disposition for profile"):
         SafetyContract(
             name="self-test safety",
             profiles={Profile.H: Claim()},
@@ -77,17 +77,17 @@ def test_a_safety_declaration_requires_every_profile_disposition() -> None:
 
 
 def test_a_claim_requires_its_binding() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="is claimed but has no binding"):
+    with pytest.raises(ObligationContractDesignError, match="is claimed but has no binding"):
         SafetyContract(name="self-test safety", profiles=_dispositions(BOUNDED_RETRY=Claim()))
 
 
 def test_a_binding_without_a_claim_is_a_design_error() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="H is NotApplicable but `replay=` is bound"):
+    with pytest.raises(ObligationContractDesignError, match="H is NotApplicable but `replay=` is bound"):
         SafetyContract(name="self-test safety", profiles=_dispositions(), replay=_annotated_replay)
 
 
 def test_a_gap_on_a_binding_integrity_proof_is_refused() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="binding-integrity proof, which cannot be waived"):
+    with pytest.raises(ObligationContractDesignError, match="binding-integrity proof, which cannot be waived"):
         SafetyContract(
             name="self-test safety",
             adoption=Adoption.LEGACY,
@@ -99,13 +99,13 @@ def test_a_gap_on_a_binding_integrity_proof_is_refused() -> None:
 
 
 def test_a_new_feature_safety_contract_refuses_gap_declarations() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="forbids gap declarations"):
+    with pytest.raises(ObligationContractDesignError, match="forbids gap declarations"):
         SafetyContract(name="self-test safety", profiles=_dispositions(BOUNDED_RETRY=KnownGap(_WHY)))
 
 
 def test_a_domain_binding_requires_all_four_evidence_annotations() -> None:
     with pytest.raises(
-        DueWorkContractDesignError,
+        ObligationContractDesignError,
         match="missing adopter evidence annotations.*ARRANGE.*REAL PRODUCTION.*EXTERNAL SEAM.*OBSERVE",
     ):
         SafetyContract(
@@ -116,7 +116,7 @@ def test_a_domain_binding_requires_all_four_evidence_annotations() -> None:
 
 
 def test_detached_docstring_annotations_do_not_satisfy_the_adopter_rule() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="missing adopter evidence annotations"):
+    with pytest.raises(ObligationContractDesignError, match="missing adopter evidence annotations"):
         SafetyContract(
             name="self-test safety",
             profiles=_dispositions(REPLAY_SAFE_EXECUTION=Claim()),

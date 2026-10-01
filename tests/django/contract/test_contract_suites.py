@@ -12,13 +12,13 @@ from typing import Any
 
 import pytest
 
-from due_work_harness.contract import (
+from pytest_obligation.contract import (
     Adoption,
     Claim,
     Decline,
-    DueWorkContract,
     KnownGap,
     NotApplicable,
+    ObligationContract,
     Profile,
     SafetyContract,
     ScheduledSelection,
@@ -27,8 +27,8 @@ from due_work_harness.contract import (
     scheduled_selection_cases,
     scheduled_selection_suite,
 )
-from due_work_harness.integrations.django.references import reference_scheduled_selection_queryset
-from due_work_harness.references.in_memory import reference_derivation_binding
+from pytest_obligation.integrations.django.references import reference_scheduled_selection_queryset
+from pytest_obligation.references.in_memory import reference_derivation_binding
 
 _WHY = "self-test reason"
 
@@ -69,7 +69,7 @@ def test_the_django_host_gives_selection_cases_the_database() -> None:
 
 
 def test_the_django_host_gives_cross_connection_proofs_real_commits() -> None:
-    contract = DueWorkContract(
+    contract = ObligationContract(
         name="self-test contract",
         profiles={
             **{profile: NotApplicable(_WHY) for profile in Profile},
@@ -102,7 +102,7 @@ def test_a_declines_proof_and_a_known_gaps_probe_run_with_the_contracts_database
             Profile.J: KnownGap(_WHY, detect=reference_derivation_binding),
         },
     )
-    contract = DueWorkContract(
+    contract = ObligationContract(
         name="self-test contract",
         adoption=Adoption.LEGACY,
         transactional=transactional,
@@ -121,7 +121,7 @@ def test_a_declines_proof_and_a_known_gaps_probe_run_with_the_contracts_database
 
 
 def test_a_host_for_seeded_migrations_restores_them_after_committing_cases() -> None:
-    from due_work_harness.integrations.django import django_host
+    from pytest_obligation.integrations.django import django_host
 
     host = django_host(production_packages=set(), serialized_rollback=True)
     (committing,) = host.database_marks(True)
@@ -134,8 +134,8 @@ def test_a_host_for_seeded_migrations_restores_them_after_committing_cases() -> 
 
 
 def test_a_hand_written_test_gets_the_hosts_database_marks() -> None:
-    from due_work_harness import configure, due_work_database
-    from due_work_harness.integrations.django import django_host
+    from pytest_obligation import configure, due_work_database
+    from pytest_obligation.integrations.django import django_host
 
     configure(django_host(production_packages=set(), serialized_rollback=True))
 

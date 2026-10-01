@@ -1,6 +1,6 @@
 from adopter_app import summaries
 
-from due_work_harness import DueWorkSource, LossIsAbsorbedElsewhere, exempt_due_work_suite
+from pytest_obligation import DueWorkSource, LossIsAbsorbedElsewhere, exempt_due_work_suite
 
 
 def _strand() -> int:

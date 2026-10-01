@@ -3,7 +3,7 @@
 from pathlib import Path
 from textwrap import dedent
 
-from due_work_harness.coverage import CoverageConfig, load_config
+from pytest_obligation.coverage import CoverageConfig, load_config
 
 PYPROJECT = """
 [tool.due-work-harness]

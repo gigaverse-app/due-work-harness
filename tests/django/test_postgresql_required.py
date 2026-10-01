@@ -5,7 +5,7 @@ from unittest import mock
 import pytest
 from django.db import DEFAULT_DB_ALIAS, connections
 
-from due_work_harness.integrations.django.commits import django_worker_killer
+from pytest_obligation.integrations.django.commits import django_worker_killer
 
 
 def test_the_commit_counter_refuses_a_database_that_is_not_postgresql() -> None:

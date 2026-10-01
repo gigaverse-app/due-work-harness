@@ -8,7 +8,7 @@ INSTALLED_APPS = ["django.contrib.contenttypes"]
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.environ.get("PGDATABASE", "due_work_harness"),
+        "NAME": os.environ.get("PGDATABASE", "pytest_obligation"),
         "USER": os.environ.get("PGUSER", "postgres"),
         "PASSWORD": os.environ.get("PGPASSWORD", "postgres"),
         "HOST": os.environ.get("PGHOST", "localhost"),

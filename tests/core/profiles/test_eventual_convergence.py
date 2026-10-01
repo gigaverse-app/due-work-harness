@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 import pytest
 
-from due_work_harness.profiles.eventual_convergence import (
+from pytest_obligation.profiles.eventual_convergence import (
     CONVERGENT_WRITE_PROOFS,
     assert_convergence_bindings_are_production_bound,
     assert_convergent_write_contract,
@@ -23,15 +23,15 @@ from due_work_harness.profiles.eventual_convergence import (
     assert_superseded_snapshot_does_not_write,
     assert_unsettled_state_converges,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     REFERENCE_SETTLED as _SETTLED,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     GuardedWorker,
     reference_apply_evidence,
     reference_snapshot_binding,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     reference_convergence_binding as _binding,
 )
 

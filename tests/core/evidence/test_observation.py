@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from due_work_harness.evidence.observation import assert_observation, record_observations
+from pytest_obligation.evidence.observation import assert_observation, record_observations
 
 
 @dataclass(frozen=True)

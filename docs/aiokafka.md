@@ -6,7 +6,7 @@ client-independent Kafka adapter. Clients such as `confluent-kafka` require thei
 own adapter, even though the broker-level recovery principles are the same.
 
 Install `pytest-obligation[aiokafka]` and import helpers from
-`due_work_harness.integrations.aiokafka`. Pass a real `AIOKafkaConsumer` with
+`pytest_obligation.integrations.aiokafka`. Pass a real `AIOKafkaConsumer` with
 `enable_auto_commit=False` to `aiokafka_worker_killer(consumer)` or
 `aiokafka_offset_reply_breaker(consumer)`. Both return context-manager factories
 accepting a one-based offset-commit number, or `None` to count only.
@@ -41,7 +41,7 @@ commit lock to prove both the live-worker and dead-worker outcomes.
 
 ## Required adoption surface
 
-Bind these aiokafka fault boundaries into a `DueWorkContract` and a collected
+Bind these aiokafka fault boundaries into an `ObligationContract` and a collected
 `@due_work_contract_suite(CONTRACT)` class. The adapter does not generate a
 contract merely because a normal test uses it. Declare the histories and all
 profile dispositions, then execute the generated cases and retain their report;

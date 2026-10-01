@@ -16,7 +16,7 @@ normal outcome. The host detects commit boundaries; the adopter does not name
 them.
 
 ```python
-from due_work_harness import CallableDelivery, ExternalCall, HandoffHistory, assert_crash_at_every_commit_converges
+from pytest_obligation import CallableDelivery, ExternalCall, HandoffHistory, assert_crash_at_every_commit_converges
 
 
 def test_placing_an_order_survives_any_death():
@@ -33,7 +33,7 @@ def test_placing_an_order_survives_any_death():
 ```
 
 That standalone probe is useful for exploration, but a complete domain
-adoption must put its histories in a `DueWorkContract` and expose a collected
+adoption must put its histories in an `ObligationContract` and expose a collected
 class with `@due_work_contract_suite(CONTRACT)`. The decorator generates pytest
 cases at collection time; it does not write Python test files. Histories can
 declare their expected `Findings`, including a strict gap for an observed

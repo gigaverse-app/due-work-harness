@@ -19,8 +19,8 @@ from typing import Any
 import pydantic
 import pytest
 
-from due_work_harness.models import DueWorkContractDesignError
-from due_work_harness.profiles.gated_execution import (
+from pytest_obligation.models import ObligationContractDesignError
+from pytest_obligation.profiles.gated_execution import (
     ELIGIBILITY_PROOFS,
     ExecutionGate,
     assert_blocked_gate_preserves_intent,
@@ -29,7 +29,7 @@ from due_work_harness.profiles.gated_execution import (
     assert_gate_is_recovered_by_the_contract_sweep,
     assert_periodic_inspection_is_bounded,
 )
-from due_work_harness.references.eligibility import Fault, GateReference
+from pytest_obligation.references.eligibility import Fault, GateReference
 
 
 @pytest.mark.parametrize("proof", ELIGIBILITY_PROOFS, ids=lambda proof: proof.__name__)
@@ -165,7 +165,7 @@ def test_the_boundary_is_probed_twice_by_moving_the_clock_never_by_sleeping() ->
     ],
 )
 def test_invalid_gate_bounds_are_refused(changes: dict[str, Any]) -> None:
-    with pytest.raises(DueWorkContractDesignError, match="ExecutionGate"):
+    with pytest.raises(ObligationContractDesignError, match="ExecutionGate"):
         GateReference().binding().model_copy(update=changes)
 
 

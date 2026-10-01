@@ -30,11 +30,11 @@ from typing import Any
 
 import pytest
 
-from due_work_harness.helpers import contract_params, undeclared
-from due_work_harness.host import Host, ReadCost, ReadCosts, current_host, hosted, packages
-from due_work_harness.integrations.celery import celery_beat_evidence, celery_beat_interval
-from due_work_harness.models import HarnessModel
-from due_work_harness.profiles.automatic_recovery import (
+from pytest_obligation.helpers import contract_params, undeclared
+from pytest_obligation.host import Host, ReadCost, ReadCosts, current_host, hosted, packages
+from pytest_obligation.integrations.celery import celery_beat_evidence, celery_beat_interval
+from pytest_obligation.models import HarnessModel
+from pytest_obligation.profiles.automatic_recovery import (
     AMBIENT_CONTEXT_PROOFS,
     DUE_WORK_PROOFS,
     DueWorkSweep,
@@ -244,7 +244,7 @@ def _database(sweep: _InMemorySweep, **facts: Any) -> Iterator[_InMemoryInspecto
 @pytest.fixture
 def production_host() -> Iterator[Host]:
     """A host whose production code is the harness package, so ``production_call`` counts."""
-    with hosted(Host(production_packages=packages("due_work_harness"))) as host:
+    with hosted(Host(production_packages=packages("pytest_obligation"))) as host:
         yield host
 
 
@@ -1080,7 +1080,7 @@ def test_counting_statements_needs_exactly_one_inspector_or_a_named_selection() 
 # --- Schedule evidence and timing helpers --------------------------------------
 
 #: A resolvable callable standing in for a scheduled task.
-_SCHEDULED_TASK = "due_work_harness.references.in_memory.reference_apply_evidence"
+_SCHEDULED_TASK = "pytest_obligation.references.in_memory.reference_apply_evidence"
 
 
 def _beat_app(schedule: dict[str, dict[str, Any]]) -> SimpleNamespace:
@@ -1103,14 +1103,14 @@ def test_beat_evidence_rejects_a_dangling_schedule_entry() -> None:
     A beat entry pointing at a renamed task is exactly the 'nothing runs it'
     failure invariant 8 exists to catch, so the evidence must resolve the path.
     """
-    dangling = "due_work_harness.references.in_memory.renamed_away_task"
+    dangling = "pytest_obligation.references.in_memory.renamed_away_task"
     app = _beat_app({"entry": {"task": dangling, "schedule": timedelta(hours=24)}})
     with pytest.raises(AssertionError, match="does not resolve"):
         celery_beat_evidence(dangling, app=app)()
 
 
 def test_beat_evidence_rejects_a_path_that_names_no_callable() -> None:
-    constant = "due_work_harness.references.in_memory.REFERENCE_TERMINAL_STATES"
+    constant = "pytest_obligation.references.in_memory.REFERENCE_TERMINAL_STATES"
     app = _beat_app({"entry": {"task": constant, "schedule": timedelta(hours=24)}})
     with pytest.raises(AssertionError, match="neither callable nor a Celery task"):
         celery_beat_evidence(constant, app=app)()

@@ -4,7 +4,7 @@ import importlib
 import pkgutil
 import sys
 
-import due_work_harness
+import pytest_obligation
 
 FRAMEWORKS = (
     "django",
@@ -25,7 +25,7 @@ FRAMEWORKS = (
 )
 core = [
     m.name
-    for m in pkgutil.walk_packages(due_work_harness.__path__, "due_work_harness.")
+    for m in pkgutil.walk_packages(pytest_obligation.__path__, "pytest_obligation.")
     if ".integrations" not in m.name
 ]
 for name in core:

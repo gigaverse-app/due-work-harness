@@ -18,19 +18,19 @@ from typing import Any, TypeAlias
 from adopter_app.catalog import Catalog
 from pydantic import InstanceOf
 
-from due_work_harness import (
+from pytest_obligation import (
     AdmissionAtomicity,
     AdmissionPublication,
     Claim,
     Decline,
-    DueWorkContract,
     ExecutionGate,
     NotApplicable,
+    ObligationContract,
     Profile,
     ReplaySafeEffect,
 )
-from due_work_harness.host import Host, hosted
-from due_work_harness.interleavings import (
+from pytest_obligation.host import Host, hosted
+from pytest_obligation.interleavings import (
     EvidenceArrival,
     EvidenceConfluence,
     EvidenceExpectation,
@@ -41,8 +41,8 @@ from due_work_harness.interleavings import (
     Intent,
     ProviderControl,
 )
-from due_work_harness.models import HarnessModel
-from due_work_harness.profiles.catalog import ConvergenceFamily
+from pytest_obligation.models import HarnessModel
+from pytest_obligation.profiles.catalog import ConvergenceFamily
 
 # Executor implementations are external to the application and may queue this callable.
 Runner: TypeAlias = Callable[[Callable[[], None]], None]
@@ -317,9 +317,9 @@ def replay(run: Runner = inline) -> Iterator[ReplaySafeEffect]:
         )
 
 
-def catalog_contract(name: str, run: Runner = inline) -> DueWorkContract:
+def catalog_contract(name: str, run: Runner = inline) -> ObligationContract:
     """The same application guarantees through the chosen worker executor."""
-    return DueWorkContract(
+    return ObligationContract(
         name=name,
         profiles={
             Profile.A: Decline("This small example exposes reconcile explicitly; it ships no periodic scheduler."),

@@ -10,7 +10,7 @@ attribute off the production object.
 import pytest
 from sample_production.feed import event_feed
 
-from due_work_harness.binding import assert_test_binding_delegates_to_production
+from pytest_obligation.binding import assert_test_binding_delegates_to_production
 
 pytestmark = pytest.mark.usefixtures("production_host")
 

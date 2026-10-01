@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from due_work_harness.profiles.coverage import (
+from pytest_obligation.profiles.coverage import (
     Assessment,
     CaseEvidence,
     ProfileCoverage,
     SuiteCoverage,
 )
-from due_work_harness.profiles.reporting import merge_reports
+from pytest_obligation.profiles.reporting import merge_reports
 
 pytest_plugins = ["pytester"]
 
@@ -99,9 +99,9 @@ def test_executable_gap_and_decline_probes_are_reported_without_becoming_verifie
 
     pytester.makepyfile("""
 from functools import partial
-from due_work_harness import Adoption, Decline, DueWorkContract, KnownGap, NotApplicable, Profile, due_work_contract_suite
-from due_work_harness.references.in_memory import assert_the_reference_capability_exists, assert_self_test_probe_fires
-contract = DueWorkContract(
+from pytest_obligation import Adoption, Decline, ObligationContract, KnownGap, NotApplicable, Profile, due_work_contract_suite
+from pytest_obligation.references.in_memory import assert_the_reference_capability_exists, assert_self_test_probe_fires
+contract = ObligationContract(
     name="executed assessment controls", adoption=Adoption.LEGACY,
     profiles={**{p: NotApplicable("Outside this reporting control.") for p in Profile},
         Profile.A: Decline("The alternative behavior has a real probe.", prove=partial(assert_self_test_probe_fires, [])),

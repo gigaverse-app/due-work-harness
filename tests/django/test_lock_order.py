@@ -14,9 +14,9 @@ import pytest
 from django.db import connection, transaction
 from django.test.utils import CaptureQueriesContext
 
-from due_work_harness.integrations.django import lifecycle_references as ref
-from due_work_harness.integrations.django import lock_order as lock_order_module
-from due_work_harness.integrations.django.lock_order import (
+from pytest_obligation.integrations.django import lifecycle_references as ref
+from pytest_obligation.integrations.django import lock_order as lock_order_module
+from pytest_obligation.integrations.django.lock_order import (
     LockSequence,
     assert_consistent_lock_order,
     locked_tables,
@@ -25,7 +25,7 @@ from due_work_harness.integrations.django.lock_order import (
 )
 
 # The fixture the recorder ships, registered the way an adopter's conftest does.
-from due_work_harness.integrations.django.lock_order import lock_order as lock_order  # noqa: F401,PLC0414
+from pytest_obligation.integrations.django.lock_order import lock_order as lock_order  # noqa: F401,PLC0414
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

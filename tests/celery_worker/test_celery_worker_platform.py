@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from due_work_harness.integrations.celery_worker import running_worker
+from pytest_obligation.integrations.celery_worker import running_worker
 
 
 def test_the_worker_is_refused_on_windows_instead_of_timing_out(monkeypatch: pytest.MonkeyPatch) -> None:

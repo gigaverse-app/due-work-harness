@@ -10,12 +10,12 @@ from pymongo import MongoClient
 from pymongo.errors import BulkWriteError, ConnectionFailure
 from pymongo.write_concern import WriteConcern
 
-from due_work_harness import CallableDelivery, ExternalCall, HandoffHistory, assert_crash_at_every_commit_converges
-from due_work_harness.crash_histories import HistoriesDiverged
-from due_work_harness.host import hosted
-from due_work_harness.integrations.mongodb import mongodb_host, mongodb_reply_breaker, mongodb_worker_killer
-from due_work_harness.models import DueWorkContractDesignError
-from due_work_harness.worker_death import WorkerDied
+from pytest_obligation import CallableDelivery, ExternalCall, HandoffHistory, assert_crash_at_every_commit_converges
+from pytest_obligation.crash_histories import HistoriesDiverged
+from pytest_obligation.host import hosted
+from pytest_obligation.integrations.mongodb import mongodb_host, mongodb_reply_breaker, mongodb_worker_killer
+from pytest_obligation.models import ObligationContractDesignError
+from pytest_obligation.worker_death import WorkerDied
 from tests_support.mongodb_app import MongoDBOutbox
 
 
@@ -102,7 +102,7 @@ def test_transaction_counts_only_the_commit_and_abort_is_not_a_commit(client, co
 @pytest.mark.parametrize("write", ["insert", "update", "findAndModify", "bulk", "bulk_unordered"])
 def test_unacknowledged_writes_are_refused_before_they_can_escape(client, collection, write):
     with mongodb_worker_killer(client)(None):
-        with pytest.raises(DueWorkContractDesignError, match="acknowledged"):
+        with pytest.raises(ObligationContractDesignError, match="acknowledged"):
             write_owed(collection.with_options(write_concern=WriteConcern(w=0)), write)
     assert collection.find_one({"_id": "owed"}) is None
 

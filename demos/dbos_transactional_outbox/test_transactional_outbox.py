@@ -10,10 +10,10 @@ for every committed order, recovering automatically if this process crashes".
 The worker is DBOS's own executor, which a test cannot reach in-process, so the
 deaths are real: ``run_demo_process.py`` runs the demo in a child process that
 ``os._exit``\\ s at a named point, and recovery is the demo's ``main()`` starting
-again. The harness owns the verdict (:mod:`due_work_harness.process_histories`).
+again. The harness owns the verdict (:mod:`pytest_obligation.process_histories`).
 
 Where DBOS has a capability, the contract claims it and the harness proves it
-against DBOS itself, through ``due_work_harness.integrations.dbos``: its
+against DBOS itself, through ``pytest_obligation.integrations.dbos``: its
 workflow garbage collection (profile D), and the demo's notification step's
 retry budget. Each of those proofs launches the demo through its own
 ``main()``, with only its HTTP server and its queue listener held back.
@@ -36,26 +36,26 @@ import sqlalchemy as sa
 from dbos import DBOS, SetWorkflowID
 from psycopg import sql
 
-from due_work_harness import (
+from pytest_obligation import (
     AdmissionAtomicity,
     Adoption,
     BoundedRetry,
     Claim,
     Decline,
-    DueWorkContract,
     ExtraProof,
     KnownGap,
     LossIsAbsorbedElsewhere,
     NotApplicable,
+    ObligationContract,
     Profile,
     ReplaySafeEffect,
     Retention,
     due_work_contract_suite,
 )
-from due_work_harness.host import Host, hosted
-from due_work_harness.integrations.dbos import OUTSTANDING, launched, restart_until, wait_until, workflow_status
-from due_work_harness.integrations.dbos import retention as dbos_retention
-from due_work_harness.process_histories import ProcessHistory, assert_process_deaths_converge, fault_environment
+from pytest_obligation.host import Host, hosted
+from pytest_obligation.integrations.dbos import OUTSTANDING, launched, restart_until, wait_until, workflow_status
+from pytest_obligation.integrations.dbos import retention as dbos_retention
+from pytest_obligation.process_histories import ProcessHistory, assert_process_deaths_converge, fault_environment
 
 HERE = Path(__file__).resolve().parent
 DEMO_DIR = HERE.parent / ".upstream" / "dbos-demo-apps" / "python" / "transactional-outbox"
@@ -351,7 +351,7 @@ def notification_replay() -> Iterator[ReplaySafeEffect]:
         )
 
 
-PLACE_ORDER_CONTRACT = DueWorkContract(
+PLACE_ORDER_CONTRACT = ObligationContract(
     name="DBOS transactional-outbox: place order",
     adoption=Adoption.LEGACY,
     profiles={

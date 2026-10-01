@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from due_work_harness.crash_histories import (
+from pytest_obligation.crash_histories import (
     CallableDelivery,
     ExternalCall,
     HandoffHistory,
@@ -23,8 +23,8 @@ from due_work_harness.crash_histories import (
     assert_histories_converge,
     assert_pinned_outcomes,
 )
-from due_work_harness.host import Host, hosted
-from due_work_harness.references import in_memory_handoffs as ref
+from pytest_obligation.host import Host, hosted
+from pytest_obligation.references import in_memory_handoffs as ref
 
 
 def _retry(transition: Callable[[int], Any]) -> HandoffHistory[int, Any]:

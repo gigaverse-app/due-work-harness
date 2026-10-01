@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from due_work_harness import DueWorkContractDesignError, DueWorkSource
+from pytest_obligation import DueWorkSource, ObligationContractDesignError
 
 
 def place() -> None: ...
@@ -19,7 +19,7 @@ def test_a_copy_with_a_valid_change_is_the_changed_value() -> None:
 
 
 def test_a_copy_that_breaks_a_design_rule_is_refused() -> None:
-    with pytest.raises(DueWorkContractDesignError, match="sites must be at least one"):
+    with pytest.raises(ObligationContractDesignError, match="sites must be at least one"):
         DueWorkSource(place).model_copy(update={"sites": 0})
 
 

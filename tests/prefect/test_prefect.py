@@ -5,10 +5,10 @@ import pytest
 from prefect import flow
 from prefect.deployments.runner import RunnerDeployment
 
-from due_work_harness.binding import assert_binding_reaches_production
-from due_work_harness.host import Host, hosted
-from due_work_harness.integrations.prefect import assert_prefect_recurs, prefect_flow_call
-from due_work_harness.models import DueWorkContractDesignError
+from pytest_obligation.binding import assert_binding_reaches_production
+from pytest_obligation.host import Host, hosted
+from pytest_obligation.integrations.prefect import assert_prefect_recurs, prefect_flow_call
+from pytest_obligation.models import ObligationContractDesignError
 from tests_support.prefect_app import other, record
 
 
@@ -72,7 +72,7 @@ def test_binding_refuses_deferred_results_from_sync_and_async_bodies(async_body)
         return deferred()
 
     with asyncio.Runner() as runner:
-        with pytest.raises(DueWorkContractDesignError, match="deferred work"):
+        with pytest.raises(ObligationContractDesignError, match="deferred work"):
             prefect_flow_call(async_flow if async_body else sync_flow, runner)()
 
 
@@ -130,7 +130,7 @@ def test_rejected_task_cannot_resume_during_a_later_history(await_child):
         if await_child:
             assert call() == "done"
         else:
-            with pytest.raises(DueWorkContractDesignError, match="deferred work"):
+            with pytest.raises(ObligationContractDesignError, match="deferred work"):
                 call()
         runner.run(next_history())
         assert effects == (["written"] if await_child else [])
@@ -148,6 +148,6 @@ def test_rejected_task_is_cancelled_before_the_runner_is_resumed():
         return asyncio.create_task(ready_effect())
 
     with asyncio.Runner() as runner:
-        with pytest.raises(DueWorkContractDesignError, match="deferred work"):
+        with pytest.raises(ObligationContractDesignError, match="deferred work"):
             prefect_flow_call(application, runner)()
         assert effects == []

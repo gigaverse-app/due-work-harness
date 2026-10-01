@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from due_work_harness.coverage import production_sites, scan
+from pytest_obligation.coverage import production_sites, scan
 
 from .builders import write_project
 

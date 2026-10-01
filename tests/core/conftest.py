@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from due_work_harness.host import Host, hosted
-from due_work_harness.references import in_memory_handoffs
+from pytest_obligation.host import Host, hosted
+from pytest_obligation.references import in_memory_handoffs
 
 # The stand-in production package lives outside ``tests/``: the binding
 # tripwires treat any path with a ``tests`` directory as test code.

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from due_work_harness.profiles.coverage import SuiteCoverage
+from pytest_obligation.profiles.coverage import SuiteCoverage
 
 
 def read_report(path: Path) -> dict[str, SuiteCoverage]:

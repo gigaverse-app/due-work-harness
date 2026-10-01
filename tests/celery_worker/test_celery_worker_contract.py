@@ -17,9 +17,9 @@ import redis
 from celery.app.task import Task
 from celery.result import AsyncResult
 
-from due_work_harness import Claim, Findings, Profile, ReplaySafeEffect, due_work_contract_suite
-from due_work_harness.host import Host, hosted
-from due_work_harness.integrations.celery_worker import worker_contract, worker_history
+from pytest_obligation import Claim, Findings, Profile, ReplaySafeEffect, due_work_contract_suite
+from pytest_obligation.host import Host, hosted
+from pytest_obligation.integrations.celery_worker import worker_contract, worker_history
 from tests.celery_worker import app as reference
 
 pytestmark = pytest.mark.skipif(

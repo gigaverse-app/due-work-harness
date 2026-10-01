@@ -17,17 +17,17 @@ from typing import Any
 
 import pytest
 
-from due_work_harness.crash_histories import (
+from pytest_obligation.crash_histories import (
     ExternalCall,
     HandoffHistory,
     _worker,
     assert_crash_at_every_commit_converges,
 )
-from due_work_harness.host import Host, hosted
-from due_work_harness.models import DueWorkContractDesignError
-from due_work_harness.references import in_memory_handoffs as ref
-from due_work_harness.references.in_memory_handoffs import Recipient
-from due_work_harness.worker_death import WorkerDied
+from pytest_obligation.host import Host, hosted
+from pytest_obligation.models import ObligationContractDesignError
+from pytest_obligation.references import in_memory_handoffs as ref
+from pytest_obligation.references.in_memory_handoffs import Recipient
+from pytest_obligation.worker_death import WorkerDied
 
 
 def _notifying(transition: Callable[[int], Any], *seams: str) -> HandoffHistory[int, Any]:
@@ -190,7 +190,7 @@ def test_a_seam_whose_result_is_not_a_coroutine_is_refused(seam: str, invoke: Ca
     with (
         hosted(Host()),
         _worker(history, None, 1, None),
-        pytest.raises(DueWorkContractDesignError, match=rf"_Provider\.{seam} returned {kind}.*coroutine method"),
+        pytest.raises(ObligationContractDesignError, match=rf"_Provider\.{seam} returned {kind}.*coroutine method"),
     ):
         asyncio.run(_run(invoke, provider))
 
@@ -205,7 +205,7 @@ def test_declaring_the_coroutine_underneath_an_awaitable_kills_after_its_effect(
 
 def test_a_seam_declared_twice_is_refused() -> None:
     # Declared twice, it would be wrapped twice and every call counted twice.
-    with pytest.raises(DueWorkContractDesignError, match=r"declares the external call Recipient\.notify twice"):
+    with pytest.raises(ObligationContractDesignError, match=r"declares the external call Recipient\.notify twice"):
         _history(ExternalCall(ref.RECIPIENT, "notify"), ExternalCall(ref.RECIPIENT, "notify"))
 
 
@@ -242,7 +242,7 @@ def test_a_seam_returning_a_thread_pool_future_is_refused() -> None:
             hosted(Host()),
             _worker(_history(ExternalCall(provider, "submit")), None, 1, None),
             pytest.raises(
-                DueWorkContractDesignError, match=r"Submitting\.submit returned a concurrent\.futures\.Future"
+                ObligationContractDesignError, match=r"Submitting\.submit returned a concurrent\.futures\.Future"
             ),
         ):
             provider.submit(1)
@@ -254,7 +254,7 @@ def test_a_refusal_the_transition_swallows_is_still_reported(ledger_host: Host) 
     # Production's best-effort ``except Exception`` catches the refusal; the history must still report it,
     # rather than fail later as though the seam had never been called.
     history = _notifying(ref.complete_notifying_best_effort, "notify_in_chunks", "notify")
-    with pytest.raises(DueWorkContractDesignError, match=r"Recipient\.notify_in_chunks returned a generator"):
+    with pytest.raises(ObligationContractDesignError, match=r"Recipient\.notify_in_chunks returned a generator"):
         assert_crash_at_every_commit_converges(ref.NOTIFYING_DELIVERY, history)
 
 
@@ -282,7 +282,7 @@ def test_one_function_declared_through_overlapping_owners_is_refused(owners: tup
     instances = {"instance": ref.RECIPIENT, "sub-instance": _Sub()}
     first, second = (instances.get(owner, owner) if isinstance(owner, str) else owner for owner in owners)
     attribute = "notify" if first is Recipient else "send"
-    with pytest.raises(DueWorkContractDesignError, match="declares the external call .* twice"):
+    with pytest.raises(ObligationContractDesignError, match="declares the external call .* twice"):
         _history(ExternalCall(first, attribute), ExternalCall(second, attribute))
 
 
@@ -314,7 +314,7 @@ def test_an_instance_seam_is_removed_again_not_left_as_a_bound_method() -> None:
 def test_a_refusal_the_transition_wraps_is_reported_as_itself(ledger_host: Host) -> None:
     # Production re-raises its client's own error ``from`` the refusal; the refusal is what the history reports.
     history = _notifying(ref.complete_notifying_wrapping_errors, "notify_in_chunks")
-    with pytest.raises(DueWorkContractDesignError, match=r"Recipient\.notify_in_chunks returned a generator"):
+    with pytest.raises(ObligationContractDesignError, match=r"Recipient\.notify_in_chunks returned a generator"):
         assert_crash_at_every_commit_converges(ref.NOTIFYING_DELIVERY, history)
 
 

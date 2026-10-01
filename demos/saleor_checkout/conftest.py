@@ -3,9 +3,9 @@
 import runpy
 from pathlib import Path
 
-from due_work_harness import configure
-from due_work_harness.integrations.celery import celery_publication_breaker
-from due_work_harness.integrations.django import django_host
+from pytest_obligation import configure
+from pytest_obligation.integrations.celery import celery_publication_breaker
+from pytest_obligation.integrations.django import django_host
 
 SALEOR = Path(__file__).resolve().parents[1] / ".upstream" / "saleor"
 

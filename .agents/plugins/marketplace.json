@@ -8,7 +8,7 @@
       "name": "pytest-obligation",
       "source": {
         "source": "local",
-        "path": "../../plugins/due-work-harness"
+        "path": "../../plugins/pytest-obligation"
       },
       "policy": {
         "installation": "AVAILABLE",

@@ -7,8 +7,8 @@ from contextlib import contextmanager
 import pytest
 from sample_production.admission import AdmissionFault, Command, InterruptedAdmission
 
-from due_work_harness.host import Host, hosted
-from due_work_harness.profiles.indivisible_admission import (
+from pytest_obligation.host import Host, hosted
+from pytest_obligation.profiles.indivisible_admission import (
     ADMISSION_PROOFS,
     AdmissionAtomicity,
     AdmissionPublication,

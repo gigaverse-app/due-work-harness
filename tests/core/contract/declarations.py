@@ -7,7 +7,7 @@ reuse the conforming declaration without importing a test file. It lives under
 same position an adopter's declarations are in.
 
 The stand-in ``assert_*`` proofs these declarations delegate to live in
-:mod:`due_work_harness.references.in_memory`: the bespoke-assertion check
+:mod:`pytest_obligation.references.in_memory`: the bespoke-assertion check
 resolves referenced callables and only a harness-defined proof counts, so a
 test-module helper merely named ``assert_*`` is itself one of the refusals the
 self-tests pin.
@@ -17,23 +17,23 @@ from typing import Any
 
 import pytest
 
-from due_work_harness.contract import (
+from pytest_obligation.contract import (
     Claim,
     Decline,
-    DueWorkContract,
     ExtraProof,
     NotApplicable,
+    ObligationContract,
     Profile,
     SafetyContract,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     assert_self_test_probe_fires,
     assert_the_reference_capability_exists,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     reference_derivation_binding as derivation_binding,
 )
-from due_work_harness.references.in_memory import (
+from pytest_obligation.references.in_memory import (
     reference_snapshot_binding as snapshot_binding,
 )
 
@@ -96,7 +96,7 @@ def safety_contract(name: str = "self-test contract") -> SafetyContract:
 
 #: A conforming contract the child-pytest specimens run end to end: profiles E
 #: and F claimed against the in-memory references, one passing extra.
-REFERENCE_CONTRACT = DueWorkContract(
+REFERENCE_CONTRACT = ObligationContract(
     name="in-memory reference",
     profiles={
         Profile.A: NotApplicable("self-test: the conforming in-memory reference has no sweep"),

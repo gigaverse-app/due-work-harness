@@ -14,8 +14,8 @@ from textwrap import dedent, indent
 
 import pytest
 
-from due_work_harness.coverage import sites_in_transaction
-from due_work_harness.coverage.cli import main
+from pytest_obligation.coverage import sites_in_transaction
+from pytest_obligation.coverage.cli import main
 
 from .builders import write_project
 

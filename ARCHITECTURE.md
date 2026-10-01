@@ -7,13 +7,13 @@ framework-free. Frameworks reach them only through one small interface, the
 
 ## Rules the code follows
 
-1. **The core imports no framework.** Nothing under `due_work_harness/` outside
+1. **The core imports no framework.** Nothing under `pytest_obligation/` outside
    `integrations/` imports Django, SQLAlchemy, Celery, Procrastinate, DBOS, or
    any database driver, at module level or inside functions. The runtime
    dependencies are `pytest` and `pydantic`. CI proves it by importing every core module in an
    environment with none of them installed.
 2. **An integration imports its framework, and nothing imports an integration
-   implicitly.** `due_work_harness.integrations.django` may import Django; the
+   implicitly.** `pytest_obligation.integrations.django` may import Django; the
    core never imports it. Users opt in with an extra
    (`pip install pytest-obligation[django]`) and by configuring a host.
 3. **Proofs take production callables, never framework objects.** A selection is
@@ -28,7 +28,7 @@ framework-free. Frameworks reach them only through one small interface, the
 
 ## Models
 
-Structured values are Pydantic models built on `due_work_harness.models`, never
+Structured values are Pydantic models built on `pytest_obligation.models`, never
 dataclasses:
 
 - `HarnessModel` (frozen, `extra="forbid"`, arbitrary types allowed) for
@@ -39,7 +39,7 @@ dataclasses:
   `with_positional(data, field=first)`: Pydantic validates through `__init__(**fields)`,
   so the positional parameter must also accept its field by name.
 - Checks that ran in `__post_init__` run in `model_post_init` and raise
-  `DueWorkContractDesignError` (or another non-`ValueError`) so the error reaches
+  `ObligationContractDesignError` (or another non-`ValueError`) so the error reaches
   the caller as itself; Pydantic wraps `ValueError`/`AssertionError` from there.
 - Copies use `model.model_copy(update={...})`. On a `HarnessModel` that copy is
   validated like a new value (`model_post_init` runs, unknown keys are refused),
@@ -50,8 +50,8 @@ dataclasses:
 
 ## The host
 
-`due_work_harness.host.Host` (configure once per session with
-`due_work_harness.configure(...)` or the `due_work_harness_host` ini option):
+`pytest_obligation.host.Host` (configure once per session with
+`pytest_obligation.configure(...)` or the `due_work_harness_host` ini option):
 
 | Capability | Type | Used by |
 | --- | --- | --- |
@@ -72,14 +72,14 @@ dataclasses:
 `WorkerKiller.__call__(kill_after: int | None)` returns a context manager
 yielding an object with `commits: int`, `dead: bool` and `kill_now(reason: str)`.
 Inside it, every commit on the calling thread's connection is counted; the worker
-dies (raises `due_work_harness.worker_death.WorkerDied`, drops after-commit
+dies (raises `pytest_obligation.worker_death.WorkerDied`, drops after-commit
 callbacks) right after commit `kill_after`; once dead, every later statement
 raises `WorkerDied`, except rollbacks; on exit a dead worker's session is closed.
 
 ## Package layout
 
 ```
-due_work_harness/
+pytest_obligation/
   __init__.py            public API (re-exports)
   host.py                Host, configure, current_host, hosted
   models.py              HarnessModel, MutableHarnessModel, with_positional
@@ -88,7 +88,7 @@ due_work_harness/
   binding.py             adapter tripwires (authorship, delegation)
   helpers.py             contract_params, undeclared, assert_provider_call_holds_no_transaction
   coherence.py           cross-profile coherence
-  contract.py            DueWorkContract, SafetyContract, ScheduledSelection, suites
+  contract.py            ObligationContract, SafetyContract, ScheduledSelection, suites
   gap_probes.py          executable KnownGap probes
   crash_histories.py     HandoffHistory, ExternalCall, Delivery, histories and verdict
   process_histories.py   deaths of a real child process (stdlib only)

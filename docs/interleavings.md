@@ -36,18 +36,18 @@ can still hide failures.
 
 ## Binding an application
 
-Public interfaces live in `due_work_harness.interleavings`: `InFlightConvergence`,
+Public interfaces live in `pytest_obligation.interleavings`: `InFlightConvergence`,
 `InFlightSession`, `Intent`, `EvidenceConfluence`, `EvidenceSession`,
 `EvidenceArrival`, `EvidenceExpectation`, `EvidenceRetry`, `Bounds`,
 `ProviderControl`, `PendingRequest`, `Transport`, `KnownFailure`, `HistoryTrace`
 and `replay_history`. Fields and callbacks are documented on those canonical
-models in [`bindings.py`](../src/due_work_harness/interleavings/bindings.py),
-[`model.py`](../src/due_work_harness/interleavings/model.py) and
-[`ports.py`](../src/due_work_harness/interleavings/ports.py).
+models in [`bindings.py`](../src/pytest_obligation/interleavings/bindings.py),
+[`model.py`](../src/pytest_obligation/interleavings/model.py) and
+[`ports.py`](../src/pytest_obligation/interleavings/ports.py).
 
 ```python
-from due_work_harness import Claim, ConvergenceFamily, NotApplicable, Profile
-from due_work_harness.interleavings import InFlightConvergence
+from pytest_obligation import Claim, ConvergenceFamily, NotApplicable, Profile
+from pytest_obligation.interleavings import InFlightConvergence
 
 # bind_avatar yields a fresh InFlightSession for each history or search example.
 avatar = InFlightConvergence(
@@ -59,7 +59,7 @@ avatar = InFlightConvergence(
     transport=True,
 )
 
-# On the application's otherwise complete DueWorkContract:
+# On the application's otherwise complete ObligationContract:
 # profiles={..., Profile.E: Claim()},
 # in_flight={avatar.name: avatar},
 # convergence_families={
@@ -108,7 +108,7 @@ not serialized application state. Save it as a regression artifact:
 
 ```python
 from pathlib import Path
-from due_work_harness.interleavings import HistoryTrace, replay_history
+from pytest_obligation.interleavings import HistoryTrace, replay_history
 
 trace = HistoryTrace.model_validate_json(Path("avatar-regression.json").read_text())
 replay_history(avatar, trace)

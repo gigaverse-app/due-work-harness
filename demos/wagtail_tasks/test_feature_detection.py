@@ -11,8 +11,8 @@ from wagtail.images import get_image_model
 from wagtail.images.tasks import set_image_focal_point_task
 from willow import Image as WillowImage
 
-from due_work_harness import ReplaySafeEffect
-from due_work_harness.profiles.eventual_convergence import SupersededSnapshot
+from pytest_obligation import ReplaySafeEffect
+from pytest_obligation.profiles.eventual_convergence import SupersededSnapshot
 
 
 @contextmanager
