@@ -1,5 +1,7 @@
 # due-work-harness
 
+<img src="plugins/due-work-harness/assets/icon.svg" alt="Due Work Harness logo" width="96">
+
 [![CI](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gigaverse-app/due-work-harness/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/due-work-harness)](https://pypi.org/project/due-work-harness/)
 [![Python](https://img.shields.io/pypi/pyversions/due-work-harness)](https://pypi.org/project/due-work-harness/)
