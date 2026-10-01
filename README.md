@@ -7,13 +7,21 @@
 [![Python](https://img.shields.io/pypi/pyversions/due-work-harness)](https://pypi.org/project/due-work-harness/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**Generate strong, standardized tests for work your app cannot afford to lose or repeat.**
-Bind a `DueWorkContract` to your real application code and recovery path; the
-harness generates pytest cases that interrupt commits, workers, messages, and
-external calls, then check whether the work still reaches the right outcome.
-Your coding agent can use the same infrastructure to write focused tests for
-risks particular to your app. The core accepts plain Python callables, so it
-does not assume a framework, database, queue, or business domain.
+## Don’t lose orders, money, receipts, or work when the happy path breaks
+
+Your app may commit an order, charge a customer, schedule a task, send a
+receipt, publish to Kafka, or call Shopify. A worker can die one line later; a
+broker reply can be lost; a retry can run the external effect twice. Ordinary
+tests usually exercise only the path where none of that happens.
+
+**Due Work Harness gives your coding agent a repeatable way to find those
+bugs before production does.** Bind a `DueWorkContract` to your real workflow
+and recovery path, and it generates standardized pytest cases that interrupt
+commits, workers, messages, and external calls. It then checks whether the
+workflow converges on the right outcome—without lost work or duplicate effects.
+The agent can use the same fault-injection infrastructure to add focused tests
+for your application's particular risks. The core accepts plain Python
+callables: it assumes no framework, database, queue, or business domain.
 
 ## What it finds
 
@@ -104,11 +112,16 @@ claude plugin marketplace add gigaverse-app/due-work-harness
 claude plugin install due-work-harness@due-work-harness
 ```
 
-For Codex, run `codex plugin marketplace add gigaverse-app/due-work-harness`,
-then open the Plugins Directory, select the Due Work Harness marketplace, and install the
-plugin. It is not yet in the public plugin directory. The plugin works without
-a remote MCP server; tests run in your coding environment with your app and
-its required services.
+For Codex, add the repository marketplace, then open the Plugins Directory,
+select **Due Work Harness**, and install the plugin:
+
+```bash
+codex plugin marketplace add gigaverse-app/due-work-harness --sparse .agents/plugins
+```
+
+It is not yet in the public plugin directory. The plugin works without a remote
+MCP server; tests run in your coding environment with your app and its required
+services.
 
 Open your application in Claude Code or Codex and ask:
 
