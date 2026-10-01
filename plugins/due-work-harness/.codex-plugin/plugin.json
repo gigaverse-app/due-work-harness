@@ -1,7 +1,7 @@
 {
   "name": "due-work-harness",
   "version": "0.1.0",
-  "description": "Generate standardized DueWorkContract tests for lost work, duplicate effects, and recovery failures in Python applications.",
+  "description": "Generate DueWorkContract tests in Python applications and investigate lost or duplicate work in open-source projects.",
   "author": {
     "name": "Gigaverse",
     "url": "https://github.com/gigaverse-app"
@@ -9,12 +9,12 @@
   "homepage": "https://github.com/gigaverse-app/due-work-harness",
   "repository": "https://github.com/gigaverse-app/due-work-harness",
   "license": "Apache-2.0",
-  "keywords": ["dueworkcontract", "generated-tests", "background-jobs", "lost-tasks", "duplicate-processing", "idempotency", "transactional-outbox", "celery", "django", "mongodb", "postgresql", "kafka", "prefect", "queues"],
+  "keywords": ["dueworkcontract", "generated-tests", "upstream-bugs", "background-jobs", "lost-tasks", "duplicate-processing", "idempotency", "transactional-outbox", "celery", "django", "mongodb", "postgresql", "kafka", "prefect", "queues"],
   "skills": "./skills/",
   "interface": {
     "displayName": "Due Work Harness",
     "shortDescription": "Generate crash/retry tests",
-    "longDescription": "DueWorkContract turns a Python application's real workflow and recovery path into a standardized pytest suite. It generates cases for lost work, worker crashes, uncertain external calls, duplicate effects, and other lifecycle and replay-safety failures; your coding agent can also use the harness's fault-injection tools to write focused tests for your domain. Ask whether a Celery task can disappear after a Django commit, a retry can charge twice, or a Kafka consumer can process a message twice after an offset-commit failure. The core accepts plain Python callables without assuming a framework, queue, database, or business domain. Optional adapters expose specific boundaries in Django/PostgreSQL, django-tasks, Celery, RQ/Redis, MongoDB, Prefect, and aiokafka. Shopify and other external APIs can be tested through the application's real call and observable effects; no released Shopify-specific adapter is included. Proofs require a coding environment with the target repository and appropriate test services, not a hosted MCP server.",
+    "longDescription": "DueWorkContract turns a Python application's real workflow and recovery path into a standardized pytest suite. It generates cases for lost work, worker crashes, uncertain external calls, duplicate effects, and other lifecycle and replay-safety failures; your coding agent can also use the harness's fault-injection tools to write focused tests for your domain. A second skill probes external open-source projects, independently reproduces candidate bugs, and prepares upstream disclosures when requested. Ask whether a Celery task can disappear after a Django commit, a retry can charge twice, or a Kafka consumer can process a message twice after an offset-commit failure. The core accepts plain Python callables without assuming a framework, queue, database, or business domain. Optional adapters expose specific boundaries in Django/PostgreSQL, django-tasks, Celery, RQ/Redis, MongoDB, Prefect, and aiokafka. Shopify and other external APIs can be tested through the application's real call and observable effects; no released Shopify-specific adapter is included. Gigaverse-backend has a separate internal due-work harness and repo-local skill that take precedence there. Proofs require a coding environment with the target repository and appropriate test services, not a hosted MCP server.",
     "developerName": "Gigaverse",
     "category": "Developer Tools",
     "capabilities": ["Read", "Write"],
@@ -22,7 +22,7 @@
     "defaultPrompt": [
       "Can this Celery task get lost after the Django transaction commits?",
       "Could a retry charge twice or send a duplicate receipt?",
-      "Test whether this Kafka consumer repeats work after a crash."
+      "Probe this open-source project for lost background work."
     ],
     "composerIcon": "./assets/icon.svg",
     "logo": "./assets/icon.svg"

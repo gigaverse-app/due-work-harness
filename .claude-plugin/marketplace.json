@@ -1,12 +1,12 @@
 {
   "name": "due-work-harness",
-  "description": "Generate standardized crash-and-retry tests for Python workflows with DueWorkContract.",
+  "description": "Generate DueWorkContract tests and investigate lost or duplicate work in Python projects.",
   "owner": {"name": "Gigaverse"},
   "plugins": [
     {
       "name": "due-work-harness",
       "source": "./plugins/due-work-harness",
-      "description": "Generate DueWorkContract tests for lost jobs, duplicate effects, and failed recovery across Python applications."
+      "description": "Generate DueWorkContract tests in your app or verify due-work bugs in open-source projects."
     }
   ]
 }

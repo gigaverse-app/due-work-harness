@@ -1,11 +1,13 @@
 ---
 name: prove-due-work
-description: Use due-work-harness to generate a standardized DueWorkContract pytest suite, and add focused fault-injection tests, when Python work could be lost, stuck, or repeated after a commit, worker crash, retry, redelivery, or uncertain API reply. Applies across frameworks to orders, payments, queues, Celery tasks, transactional outboxes, and supported integration boundaries; not ordinary unit-test debugging.
+description: Use due-work-harness to generate a standardized DueWorkContract pytest suite, and add focused fault-injection tests, when Python work could be lost, stuck, or repeated after a commit, worker crash, retry, redelivery, or uncertain API reply. For adoption in a project; not upstream disclosure, gigaverse-backend's internal harness, or ordinary unit-test debugging.
 ---
 
 # Prove due work survives failure
 
 Use this skill when a user asks why a background task vanished, why a worker repeated an effect, or whether a database-to-queue handoff, webhook, or retry is safe. The primary deliverable is a `DueWorkContract` whose decorator generates standardized pytest tests from real application bindings; use the same fault-injection infrastructure for additional focused tests when the domain needs them. The effect may be a payment, order, receipt, email, file, cache purge, import checkpoint, or downstream message. Work through the local repository; this skill does not call a hosted service.
+
+For an external open-source project that the user wants to probe or report upstream, use [probe-upstream-due-work](../probe-upstream-due-work/SKILL.md). Before installing this package or applying its A–F lifecycle profiles, check for a repository-owned due-work harness or instructions. In gigaverse-backend, `.agents/skills/due-work/SKILL.md` and `docs/durable-work-conformance-harness.md` own the internal A–J contract and runtime policy; use those instead of this plugin's package-adoption workflow.
 
 ## Find the obligation
 

@@ -112,8 +112,12 @@ for your application's own risks. Ask it, for example, "Why did this Celery task
 disappear?", "Can this Shopify order be charged twice?", or "What happens if
 this Kafka consumer crashes before committing its offset?" It traces the real
 database-to-queue handoff, worker, or external API call rather than assuming
-that a named framework guarantees durability. The plugin contains a skill, not
-a remote service; the project under test still installs the pytest library.
+that a named framework guarantees durability. A second skill packages the
+existing [upstream weakness-finding playbook](docs/upstream-playbook.md) for
+probing external projects and preparing verified disclosures. The plugin has
+two skills, not a remote service; the project under test still installs the
+pytest library. Gigaverse-backend's own due-work skill and internal conformance
+harness remain authoritative in that repository.
 
 For Claude Code, add this repository as a marketplace and install the plugin:
 
@@ -322,8 +326,10 @@ is the cycle behind the findings above, written to be repeated: choose a target,
 the harness in a fork, confirm each finding on its own, declare the findings, improve the harness with what
 the probe needed, and disclose with the templates in
 [`docs/upstream-templates`](https://github.com/gigaverse-app/due-work-harness/tree/main/docs/upstream-templates).
-In Claude Code, the [`find-upstream-weaknesses` skill](https://github.com/gigaverse-app/due-work-harness/blob/main/.claude/skills/find-upstream-weaknesses/SKILL.md)
-runs the cycle for you.
+In this repository, the [`find-upstream-weaknesses` skill](https://github.com/gigaverse-app/due-work-harness/blob/main/.claude/skills/find-upstream-weaknesses/SKILL.md)
+runs the maintainer cycle. The portable plugin's
+[`probe-upstream-due-work` skill](plugins/due-work-harness/skills/probe-upstream-due-work/SKILL.md)
+uses the same playbook in other coding environments.
 
 ## Status
 
